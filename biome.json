@@ -1,0 +1,32 @@
+{
+  "files": {
+    "includes": [
+      "src/frontend/index.html",
+      "src/frontend/package.json",
+      "src/frontend/tsconfig.json",
+      "src/frontend/vite.config.ts",
+      "src/frontend/src/**",
+      "src/backend/package.json",
+      "src/backend/tsconfig.json",
+      "src/backend/src/**",
+      "src/shared/package.json",
+      "src/shared/tsconfig.json",
+      "src/shared/src/**"
+    ]
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space"
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "style": {
+        "noNonNullAssertion": "off"
+      },
+      "suspicious": {
+        "noControlCharactersInRegex": "off"
+      }
+    }
+  }
+}

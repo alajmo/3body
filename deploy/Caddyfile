@@ -1,0 +1,14 @@
+# Replace 3body.example.com with your real domain before installing.
+3body.example.com {
+    encode zstd gzip
+
+    handle /ws* {
+        reverse_proxy 127.0.0.1:8080
+    }
+
+    handle {
+        root * /var/www/3body
+        try_files {path} /index.html
+        file_server
+    }
+}

@@ -1,0 +1,26 @@
+{
+  "name": "3body",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "src/shared",
+    "src/frontend",
+    "src/backend"
+  ],
+  "scripts": {
+    "dev": "npm-run-all --parallel dev:*",
+    "dev:frontend": "npm run dev -w @3body/frontend",
+    "dev:backend": "npm run dev -w @3body/backend",
+    "build": "npm run build -w @3body/frontend && npm run build -w @3body/backend",
+    "lint": "biome lint src/frontend src/backend src/shared",
+    "format": "biome format --write src/frontend src/backend src/shared",
+    "format:check": "biome check --formatter-enabled=true --linter-enabled=false --assist-enabled=false src/frontend src/backend src/shared",
+    "typecheck": "tsc -b src/shared src/frontend src/backend"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.11",
+    "npm-run-all": "^4.1.5",
+    "typescript": "^5.6.3"
+  }
+}
