@@ -1,4 +1,4 @@
-import type { RocketKind } from "./entities";
+import type { RocketKind, WildcardKind } from "./entities";
 
 export interface RocketSpec {
   damage: number;
@@ -20,7 +20,6 @@ export interface BoostSpec {
   charges: number;
   cooldownSec: number;
   magnitude: number;
-  lockoutSec: number;
 }
 
 export interface DroneSpec {
@@ -48,6 +47,7 @@ export interface BlackHoleSpec {
   spawnSec: number;
   mass: number;
   killRadius: number;
+  rampSec: number;
 }
 
 export interface MatchTimerSpec {
@@ -65,6 +65,7 @@ export const ARENA_RADIUS = 2000;
 export const OUTER_RING_MIN = 1300;
 export const OUTER_RING_MAX = 1825;
 export const SIM_HZ = 120;
+export const FIXED_STEP_SEC = 1 / SIM_HZ;
 export const SNAPSHOT_HZ = 30;
 export const PLANET_HP = 100;
 export const ROOM_CAPACITY = 7;
@@ -114,10 +115,9 @@ export const SHIELD_SPEC: AbilitySpec & { arcDeg: number } = {
 };
 
 export const BOOST_SPEC: BoostSpec = {
-  charges: 2,
-  cooldownSec: 45,
+  charges: 1,
+  cooldownSec: 5,
   magnitude: 280,
-  lockoutSec: 5,
 };
 
 export const DRONE_SPEC: DroneSpec = {
@@ -143,8 +143,9 @@ export const BOUNDARY_DAMAGE_SPEC: BoundaryDamageSpec = {
 
 export const BLACK_HOLE_SPEC: BlackHoleSpec = {
   spawnSec: 300,
-  mass: 1_200_000,
+  mass: 8_000_000,
   killRadius: 150,
+  rampSec: 30,
 };
 
 export const MATCH_TIMERS: MatchTimerSpec = {
@@ -153,3 +154,27 @@ export const MATCH_TIMERS: MatchTimerSpec = {
   countdownSec: 3,
   rematchVoteSec: 20,
 };
+
+export const CACHE_RADIUS = 24;
+export const CACHE_GRAVITY_SCALE = 0.34;
+export const CACHE_DROP_SPEED_SCALE = 0.52;
+export const CACHE_TANGENTIAL_SPEED_MIN = 32;
+export const CACHE_TANGENTIAL_SPEED_MAX = 58;
+
+export const DRONE_LAUNCH_SPEED = DRONE_SPEC.speed * 0.48;
+
+export const REPAIR_AMOUNT = 40;
+export const SHIELD_EXT_MULTIPLIER = 2;
+export const FORESIGHT_EXT_MULTIPLIER = 2;
+
+export const GRAVITY_PULSE_RADIUS = 480;
+export const GRAVITY_PULSE_IMPULSE = 440;
+export const TELEPORT_SWAP_MIN_DOT = Math.cos(Math.PI / 5);
+
+export const DEBRIS_TTL_SEC = 1.35;
+
+export const WILDCARD_KINDS = [
+  "gravityPulse",
+  "cloak",
+  "teleportSwap",
+] as const satisfies readonly WildcardKind[];

@@ -54,7 +54,6 @@ export interface PlanetCooldowns {
   foresightActiveUntilTick: number;
   foresightCooldownUntilTick: number;
   shieldCooldownUntilTick: number;
-  boostLockoutUntilTick: number;
   nextBoostChargeAtTick?: number;
   droneCooldownUntilTick: number;
 }

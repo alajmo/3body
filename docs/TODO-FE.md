@@ -29,30 +29,33 @@ Runs immediately; no backend dependency beyond the workspace wiring. Anything th
 
 ## Phase 1 — Single-player physics sandbox
 
-Goal: 3 suns + 1 planet under N-body gravity, **no networking, no combat**. Depends on `TODO.md` L0 shared physics.
+Goal: default offline orbit sandbox with 3 suns + 7 planets under N-body gravity, **no networking, no combat**. Depends on `TODO.md` L0 shared physics. The retune/acceptance details for this phase live in [`ORBIT.md`](../ORBIT.md).
 
-- [ ] Instantiate 3 suns at the vertices of an equilateral triangle (small initial offsets/velocities for chaos).
-- [ ] Add 1 planet on a tangential-velocity orbit.
-- [ ] Run the sim at 120 Hz in a fixed-step accumulator loop; render at vsync.
-- [ ] Render suns + planet as simple unlit `MeshBasicNodeMaterial` spheres for now.
-- [ ] Render the arena boundary ring at `ARENA_RADIUS` from the start so the playable space is always readable.
-- [ ] Add per-frame **trail** rendering (planet last ~3s, fading alpha).
-- [ ] Tune `G` / sun mass / initial velocities until 60+ seconds of interesting orbital chaos before sun collision.
+- [x] Instantiate 3 suns near an equilateral triangle with small asymmetric offsets/velocities for chaos.
+- [x] Add a 7-planet pack with distinct inner / transfer / outer orbit profiles instead of a single safe orbit.
+- [x] Run the sim at 120 Hz in a fixed-step accumulator loop; render at vsync.
+- [x] Render suns + planets as simple filled unlit bodies for now.
+- [x] Render the arena boundary ring at `ARENA_RADIUS` from the start so the playable space is always readable.
+- [x] Add per-frame **trail** rendering (last ~3s, fading alpha) for planets.
+- [x] Tune the default preset until typical runs remain watchable for 60+ seconds of interesting orbital chaos before sun collision / reset.
+- [x] Add sandbox auto-reset when suns collide, all planets are lost, or the run becomes uninteresting too early.
+- [x] Add lightweight debug readouts during tuning (`preset`, elapsed time, alive planets, min gaps).
 
-**Done when:** you can sit and watch the system for a minute and the motion feels alive but not random-spaz.
+**Done when:** you can watch the default preset for about a minute and the motion feels unstable but readable, with mixed-risk planets still alive and making believable close solar passes.
 
 ---
 
 ## Phase 2 — Visual identity
 
-- [ ] Procedural **planet material** in TSL: simplex noise → surface bands, per-planet seed uniform, hue palette uniform. Apply to `SphereGeometry` so the planet visibly rotates.
-- [ ] Procedural **sun material** in TSL: animated noise + corona falloff. Bright emissive output for bloom.
-- [ ] Add bloom through the target renderer/post-processing path so suns and rocket exhausts glow without re-introducing a raw-GLSL-only dependency.
-- [ ] Add **starfield background**: large `Points` cloud with custom TSL point material, very subtle parallax tied to camera.
-- [ ] Add **gravity warp rings** around each sun — radial distortion material sampled over the background, intensity falls off with `1/r²`.
-- [ ] Add subtle **chromatic aberration** post-effect, intensity scaled by player's nearest-sun distance.
-- [ ] Prototype the Black Hole visual stack now: dark core, accretion band, and slight lensing/distortion. Keep it hidden until overtime so the asset/effect work is solved before networking.
-- [ ] Color-code planet trails per planet ID (palette of 7).
+- [x] Procedural **planet material** in TSL: simplex noise → surface bands, per-planet seed uniform, hue palette uniform. Apply to `SphereGeometry` so the planet visibly rotates.
+- [x] Procedural **sun material** in TSL: animated noise + corona falloff. Bright emissive output for bloom.
+- [x] Add bloom through the target renderer/post-processing path so suns and rocket exhausts glow without re-introducing a raw-GLSL-only dependency.
+- [x] Add **starfield background**: large `Points` cloud with custom TSL point material, very subtle parallax tied to camera.
+- [x] Default the sandbox camera to a smooth player-follow view instead of permanent full-map framing, with `F` toggling full view / follow view.
+- [x] Add **gravity warp rings** around each sun — radial distortion material sampled over the background, intensity falls off with `1/r²`.
+- [x] Add subtle **chromatic aberration** post-effect, intensity scaled by the sandbox's nearest live planet↔sun distance (player-distance proxy until local control exists).
+- [x] Prototype the Black Hole visual stack now: dark core, accretion band, and slight lensing/distortion. Keep it hidden until overtime so the asset/effect work is solved before networking.
+- [x] Color-code planet trails per planet ID (palette of 7).
 
 **Done when:** screenshot of the sandbox would make someone go "oh".
 
@@ -62,18 +65,18 @@ Goal: 3 suns + 1 planet under N-body gravity, **no networking, no combat**. Depe
 
 Still single-player and local-sim. Build the loop, then network it.
 
-- [ ] Implement mouse → world coordinate conversion. Render aim **reticle** at cursor + faint line planet → cursor.
-- [ ] Implement **Light rocket** firing on click. Inherit planet velocity + add muzzle velocity toward cursor. Visual: thin white bolt.
-- [ ] Add **rocket trails** via custom `Points` material in TSL with additive blending and output tuned for the renderer-native bloom threshold.
-- [ ] Implement **Heavy rocket** + **Seeker rocket** (Seeker locks on planet under cursor at fire time, applies turn-rate-limited steering). Visuals: Heavy = thicker orange-red shot, Seeker = pulsing magenta shot with readable lock feedback.
-- [ ] Render active rockets through three `InstancedMesh` pools (one per rocket kind) so high rocket counts keep draw calls flat while preserving distinct materials.
-- [ ] Implement rocket selection (`1`/`2`/`3` keys) with currently-selected indicator on the reticle.
-- [ ] Implement reload / clip rules per rocket type from constants.
-- [ ] Implement HP per planet (default 100) and damage on hit.
-- [ ] Implement **death**: planet destroyed on HP=0, sun contact, Black Hole contact, or planet↔planet collision. Spawn debris particle burst.
+- [x] Implement mouse → world coordinate conversion. Render aim **reticle** at cursor + faint line planet → cursor.
+- [x] Implement **Light rocket** firing on click. Inherit planet velocity + add muzzle velocity toward cursor. Visual: thin white bolt.
+- [x] Add **rocket trails** via custom `Points` material in TSL with additive blending and output tuned for the renderer-native bloom threshold.
+- [x] Implement **Heavy rocket** + **Seeker rocket** (Seeker locks on planet under cursor at fire time, applies turn-rate-limited steering). Visuals: Heavy = thicker orange-red shot, Seeker = pulsing magenta shot with readable lock feedback.
+- [x] Render active rockets through three `InstancedMesh` pools (one per rocket kind) so high rocket counts keep draw calls flat while preserving distinct materials.
+- [x] Implement rocket selection (`1`/`2`/`3` keys) with currently-selected indicator on the reticle.
+- [x] Implement reload / clip rules per rocket type from constants.
+- [x] Implement HP per planet (default 100) and damage on hit.
+- [x] Implement **death**: planet destroyed on HP=0, sun contact, Black Hole contact, or planet↔planet collision. Spawn debris particle burst.
 - [ ] In networked mode, render authoritative `Debris` entities from snapshots/events so remote deaths use the same visual language as local ones.
-- [ ] Implement **deep space damage** when outside arena boundary (5 HP/s ramping to 20), plus clear feedback: stronger boundary ring + subtle vignette/desaturation. No fog-of-war or hidden enemies.
-- [ ] After 5:00 elapsed combat time, reveal and render the central Black Hole from authoritative match state: readable event horizon, strong inward pull, and instant-kill radius on contact.
+- [x] Implement **deep space damage** when outside arena boundary (5 HP/s ramping to 20), plus clear feedback: stronger boundary ring + subtle vignette/desaturation. No fog-of-war or hidden enemies.
+- [x] After 5:00 elapsed combat time, reveal and render the central Black Hole from authoritative match state: readable event horizon, strong inward pull, and instant-kill radius on contact.
 
 **Done when:** you can fly around, fire all 3 rocket types, tell them apart at a glance, kill a stationary dummy planet, and die to a sun.
 
@@ -81,10 +84,10 @@ Still single-player and local-sim. Build the loop, then network it.
 
 ## Phase 4 — Abilities
 
-- [ ] **Foresight (Q):** run the shared physics forward N steps from current state, render predicted path as a polyline that fades solid → dotted → invisible across its 6s window. Active for 4s, 12s cooldown.
-- [ ] **Shield (W):** directional 120° arc on the side facing the cursor. Re-aims with cursor while active. Render as a glowing arc mesh attached to the planet. Absorb rockets that hit the arc; ignore those that hit the unshielded side. In local sandbox parity, front-side sun contact should also be negated by the shield arc. 4s active, 15s cooldown.
-- [ ] **Boost (E):** apply impulse toward cursor. Render a thrust burst (particles + brief glow). 2 charges, regen 1 per 45s.
-- [ ] HUD ability indicators (Q/W/E icons with cooldown sweep + charge count for Boost).
+- [x] **Foresight (Q):** run the shared physics forward N steps from current state, render predicted path as a polyline that fades solid → dotted → invisible across its 6s window. Active for 4s, 12s cooldown.
+- [x] **Shield (W):** directional 120° arc on the side facing the cursor. Re-aims with cursor while active. Render as a glowing arc mesh attached to the planet. Absorb rockets that hit the arc; ignore those that hit the unshielded side. In local sandbox parity, front-side sun contact should also be negated by the shield arc. 4s active, 15s cooldown.
+- [x] **Boost (E):** apply impulse toward cursor. Render a thrust burst (particles + brief glow). 2 charges, regen 1 per 5s.
+- [x] HUD ability indicators (Q/W/E icons with cooldown sweep + charge count for Boost).
 
 **Done when:** Foresight visibly predicts; Shield blocks rockets and protected-side sun contact only on its facing arc; Boost noticeably alters trajectory.
 
@@ -92,19 +95,19 @@ Still single-player and local-sim. Build the loop, then network it.
 
 ## Phase 5 — Caches & Salvage Drone
 
-- [ ] Spawn 3 Caches in the outer ring with content-typed icons (sprite atlas from Game-icons.net).
-- [ ] Add Caches to physics step (low velocity, light gravity influence).
-- [ ] **Salvage Drone:** launch on `4`/`F` toward cursor, immediately switch to **drone pilot mode**.
-  - [ ] In pilot mode: mouse steers (continuous low thrust toward cursor), left-click for short burst (limited fuel).
-  - [ ] In pilot mode: planet's rockets/abilities are disabled.
-  - [ ] Right-click / F: recall (drone self-destructs, drops cargo).
-  - [ ] Esc: snap camera back to planet view and send `droneAutoReturn`; drone enters return-to-owner autopilot until delivery, recall, death, or TTL.
-- [ ] Drone collides with Cache → picks up cargo. Touch own planet → deposits cargo.
-- [ ] Drone destroyed on rocket hit; cargo drops at death position for anyone to collect.
-- [ ] Render Cache destruction on rocket / planet / sun / Black Hole contact and remove it cleanly from the scene until respawn.
-- [ ] Implement each Cache effect on delivery: Heavy ammo +1, Seeker pack +2, Repair, Boost charge +1, Shield extender, Foresight extender.
-- [ ] Implement **Wildcard ability** roll (~10%): adds a fourth ability slot bound to `R` until used. Variants: gravity-pulse, cloak, teleport-swap. `cloak` must follow authoritative public `planet.hideTrailUntilTick`: clear that planet's current trail on activation and stop appending trail samples until the flag expires.
-- [ ] Drone cooldown: 8s between launches.
+- [x] Spawn 3 Caches in the outer ring with content-typed icons (procedural sprite atlas placeholder for now).
+- [x] Add Caches to physics step (low velocity, light gravity influence).
+- [x] **Salvage Drone:** launch on `4`/`F` toward cursor, immediately switch to **drone pilot mode**.
+  - [x] In pilot mode: mouse steers (continuous low thrust toward cursor), left-click for short burst (limited fuel).
+  - [x] In pilot mode: planet's rockets/abilities are disabled.
+  - [x] Right-click / F: recall (drone self-destructs, drops cargo).
+  - [x] Esc: snap camera back to planet view and send `droneAutoReturn`; drone enters return-to-owner autopilot until delivery, recall, death, or TTL.
+- [x] Drone collides with Cache → picks up cargo. Touch own planet → deposits cargo.
+- [x] Drone destroyed on rocket hit; cargo drops at death position for anyone to collect.
+- [x] Render Cache destruction on rocket / planet / sun / Black Hole contact and remove it cleanly from the scene until respawn.
+- [x] Implement each Cache effect on delivery: Heavy ammo +1, Seeker pack +2, Repair, Boost charge +1, Shield extender, Foresight extender.
+- [x] Implement **Wildcard ability** roll (~10%): adds a fourth ability slot bound to `R` until used. Variants: gravity-pulse, cloak, teleport-swap. `cloak` must follow authoritative public `planet.hideTrailUntilTick`: clear that planet's current trail on activation and stop appending trail samples until the flag expires.
+- [x] Drone cooldown: 8s between launches.
 
 **Done when:** you can fly a drone out, grab a Cache, deliver it, and the effect applies. Wildcards trigger on R.
 
@@ -112,9 +115,9 @@ Still single-player and local-sim. Build the loop, then network it.
 
 ## Phase 6 — Planet archetypes
 
-- [ ] Wire archetype multipliers into rocket/ability logic (damage, reload, durations, charges).
-- [ ] Distinct visual palette + trail color per archetype.
-- [ ] Special-case **Corvus** Light burst (3-shot), **Umbra** drag-on-hit, **Oculus** Seeker turn-rate buff, **Volans** extra Boost charge.
+- [x] Wire archetype multipliers into rocket/ability logic (damage, reload, durations, charges).
+- [x] Distinct visual palette + trail color per archetype.
+- [x] Special-case **Corvus** Light burst (3-shot), **Umbra** drag-on-hit, **Oculus** Seeker turn-rate buff, **Volans** extra Boost charge.
 
 ---
 
@@ -122,16 +125,16 @@ Still single-player and local-sim. Build the loop, then network it.
 
 DOM-layered over the canvas. Use React over the Three.js canvas. Can bind to local sim data until L2/L3 wire it to server state.
 
-- [ ] HUD overlay container component, transparent, pointer-events scoped to interactive elements.
-- [ ] **Combat tray** (bottom-left): own HP, selected weapon, clip ammo, Heavy/Seeker reserves, ability cooldowns/charges, drone readiness/cargo, and wildcard status when occupied.
-- [ ] **Mini-HP bars** floating above other planets in world space (project from world to screen).
-- [ ] Selected weapon is emphasized in both the combat tray and the shortcuts dock.
-- [ ] **Shortcuts dock** (bottom-right): always-visible compact legend for `1/2/3` rocket swap, `4/F` drone, `Q/W/E` abilities, `R` wildcard when present, `Shift` read mode, and contextual drone-mode actions (`LMB` burst, `RMB/F` recall, `Esc` auto-return camera snap).
-- [ ] **Default combat camera:** smooth-follow the locally controlled body and keep it near screen center; Read Mode only widens zoom; free camera is spectator-only.
-- [ ] **Read mode** (`Shift` held): smooth camera zoom-out, HUD opacity 0.2, no input changes.
-- [ ] **Connection / latency indicator** (top-right): connected/reconnecting state, RTT from app-level `ping`/`pong`, and a degraded marker when snapshot buffering is in extrapolation mode.
-- [ ] **Match timer** (top-center), including a 5:00 Black Hole warning / active overtime state.
-- [ ] **Kill feed** (top-left, fades after 4s).
+- [x] HUD overlay container component, transparent, pointer-events scoped to interactive elements.
+- [x] **Combat tray** (bottom-left): own HP, selected weapon, clip ammo, Heavy/Seeker reserves, ability cooldowns/charges, drone readiness/cargo, and wildcard status when occupied.
+- [x] **Mini-HP bars** floating above other planets in world space (project from world to screen).
+- [x] Selected weapon is emphasized in both the combat tray and the shortcuts dock.
+- [x] **Shortcuts dock** (bottom-right): always-visible compact legend for `1/2/3` rocket swap, `4/F` drone, `Q/W/E` abilities, `R` wildcard when present, `Shift` read mode, and contextual drone-mode actions (`LMB` burst, `RMB/F` recall, `Esc` auto-return camera snap).
+- [x] **Default combat camera:** smooth-follow the locally controlled body and keep it near screen center; Read Mode only widens zoom; free camera is spectator-only.
+- [x] **Read mode** (`Shift` held): smooth camera zoom-out, HUD opacity 0.2, no input changes.
+- [x] **Connection / latency indicator** (top-right): connected/reconnecting state, RTT from app-level `ping`/`pong`, and a degraded marker when snapshot buffering is in extrapolation mode.
+- [x] **Match timer** (top-center), including a 5:00 Black Hole warning / active overtime state.
+- [x] **Kill feed** (top-left, fades after 4s).
 
 ---
 
@@ -193,7 +196,7 @@ Screens can be built and styled against mock state; they go live in `TODO.md` L2
 
 ## Phase 11 — Polish
 
-- [ ] Hit effects: short screen shake, additive flash, HP bar pulse.
+- [x] Hit effects: short screen shake, additive flash, HP bar pulse.
 - [ ] Death effects: debris burst, fade-to-spectator transition.
 - [ ] Boost feedback: brief radial speed-line effect authored on the TSL renderer path.
 - [ ] Foresight visual: soft gradient fade on the predicted path, accuracy "fuzz" widening over time.

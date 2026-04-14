@@ -68,7 +68,7 @@ const wrapGravitySources = (
   blackHole?: BlackHole,
 ): GravitySource[] => (blackHole ? [...suns, blackHole] : [...suns]);
 
-const normalizeAngleDelta = (angleRad: number): number => {
+export const normalizeAngleDelta = (angleRad: number): number => {
   let normalized = angleRad;
 
   while (normalized > Math.PI) {
@@ -132,15 +132,28 @@ export const stepBody = <T extends EntityBase>(
     gravityAccel(pos, suns, blackHole),
   );
 
-export const stepSeeker = (
-  rocket: Rocket,
+export const stepBodyWithGravityScale = <T extends EntityBase>(
+  body: T,
+  suns: readonly Sun[],
+  dt: number,
+  gravityScale: number,
+  blackHole?: BlackHole,
+): T =>
+  integrateVelocityVerlet(body, dt, (pos) =>
+    scale(gravityAccel(pos, suns, blackHole), gravityScale),
+  );
+
+export const stepSeeker = <T extends Rocket>(
+  rocket: T,
   target: Pick<EntityBase, "pos"> | null | undefined,
   suns: readonly Sun[],
   dt: number,
   blackHole?: BlackHole,
-): Rocket => {
+  turnRateOverride?: number,
+): T => {
   const spec = ROCKET_SPECS[rocket.rocketKind];
-  if (!target || spec.turnRate <= 0) {
+  const turnRate = turnRateOverride ?? spec.turnRate;
+  if (!target || turnRate <= 0) {
     return stepBody(rocket, suns, dt, blackHole);
   }
 
@@ -153,14 +166,14 @@ export const stepSeeker = (
   const currentAngle =
     currentSpeed > 0 ? Math.atan2(rocket.vel.y, rocket.vel.x) : 0;
   const desiredAngle = Math.atan2(toTarget.y, toTarget.x);
-  const maxTurn = spec.turnRate * dt;
+  const maxTurn = turnRate * dt;
   const turn = Math.max(
     -maxTurn,
     Math.min(maxTurn, normalizeAngleDelta(desiredAngle - currentAngle)),
   );
   const steerAngle = currentAngle + turn;
   const steerSpeed = Math.max(currentSpeed, spec.speed);
-  const steeredRocket: Rocket = {
+  const steeredRocket: T = {
     ...rocket,
     vel: scale(fromAngle(steerAngle), steerSpeed),
   };

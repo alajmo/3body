@@ -11,10 +11,6 @@ export interface ArchetypeStats {
   boostChargeBonus: number;
   seekerTurnRateMultiplier: number;
   foresightDurationMultiplier: number;
-  corvusBurst: boolean;
-  corvusBurstCount: number;
-  corvusBurstSpreadDeg: number;
-  corvusBurstDamageMultiplier: number;
   umbraDrag: boolean;
 }
 
@@ -40,10 +36,6 @@ export const ARCHETYPES = {
     boostChargeBonus: 0,
     seekerTurnRateMultiplier: 1,
     foresightDurationMultiplier: 1,
-    corvusBurst: false,
-    corvusBurstCount: 1,
-    corvusBurstSpreadDeg: 0,
-    corvusBurstDamageMultiplier: 1,
     umbraDrag: false,
   },
   ignis: {
@@ -57,10 +49,6 @@ export const ARCHETYPES = {
     boostChargeBonus: 0,
     seekerTurnRateMultiplier: 1,
     foresightDurationMultiplier: 1,
-    corvusBurst: false,
-    corvusBurstCount: 1,
-    corvusBurstSpreadDeg: 0,
-    corvusBurstDamageMultiplier: 1,
     umbraDrag: false,
   },
   glacius: {
@@ -74,10 +62,6 @@ export const ARCHETYPES = {
     boostChargeBonus: 0,
     seekerTurnRateMultiplier: 1,
     foresightDurationMultiplier: 1,
-    corvusBurst: false,
-    corvusBurstCount: 1,
-    corvusBurstSpreadDeg: 0,
-    corvusBurstDamageMultiplier: 1,
     umbraDrag: false,
   },
   volans: {
@@ -91,10 +75,6 @@ export const ARCHETYPES = {
     boostChargeBonus: 1,
     seekerTurnRateMultiplier: 1,
     foresightDurationMultiplier: 1,
-    corvusBurst: false,
-    corvusBurstCount: 1,
-    corvusBurstSpreadDeg: 0,
-    corvusBurstDamageMultiplier: 1,
     umbraDrag: false,
   },
   oculus: {
@@ -108,10 +88,6 @@ export const ARCHETYPES = {
     boostChargeBonus: 0,
     seekerTurnRateMultiplier: 1.3,
     foresightDurationMultiplier: 2,
-    corvusBurst: false,
-    corvusBurstCount: 1,
-    corvusBurstSpreadDeg: 0,
-    corvusBurstDamageMultiplier: 1,
     umbraDrag: false,
   },
   umbra: {
@@ -125,10 +101,6 @@ export const ARCHETYPES = {
     boostChargeBonus: 0,
     seekerTurnRateMultiplier: 1,
     foresightDurationMultiplier: 1,
-    corvusBurst: false,
-    corvusBurstCount: 1,
-    corvusBurstSpreadDeg: 0,
-    corvusBurstDamageMultiplier: 1,
     umbraDrag: true,
   },
   corvus: {
@@ -142,10 +114,6 @@ export const ARCHETYPES = {
     boostChargeBonus: 0,
     seekerTurnRateMultiplier: 1,
     foresightDurationMultiplier: 1,
-    corvusBurst: true,
-    corvusBurstCount: 3,
-    corvusBurstSpreadDeg: 10,
-    corvusBurstDamageMultiplier: 0.5,
     umbraDrag: false,
   },
 } satisfies Record<ArchetypeId, ArchetypeStats>;

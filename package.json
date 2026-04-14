@@ -13,6 +13,7 @@
     "dev:frontend": "npm run dev -w @3body/frontend",
     "dev:backend": "npm run dev -w @3body/backend",
     "build": "npm run build -w @3body/frontend && npm run build -w @3body/backend",
+    "test:frontend": "npm run test -w @3body/frontend",
     "lint": "biome lint src/frontend src/backend src/shared",
     "format": "biome format --write src/frontend src/backend src/shared",
     "format:check": "biome check --formatter-enabled=true --linter-enabled=false --assist-enabled=false src/frontend src/backend src/shared",

@@ -63,6 +63,17 @@ export const distSq = (a: Vec2, b: Vec2): number => lenSq(sub(a, b));
 
 export const dist = (a: Vec2, b: Vec2): number => Math.sqrt(distSq(a, b));
 
+export const clamp = (value: number, min: number, max: number): number =>
+  Math.min(max, Math.max(min, value));
+
+export const lerp = (start: number, end: number, alpha: number): number =>
+  start + (end - start) * alpha;
+
+export const lerpVec2 = (start: Vec2, end: Vec2, alpha: number): Vec2 => ({
+  x: lerp(start.x, end.x, alpha),
+  y: lerp(start.y, end.y, alpha),
+});
+
 export const clampLen = (v: Vec2, maxLength: number): Vec2 => {
   const magnitude = len(v);
   if (magnitude === 0 || magnitude <= maxLength) {
