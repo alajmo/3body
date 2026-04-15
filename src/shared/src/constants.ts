@@ -1,4 +1,5 @@
 import type { RocketKind, WildcardKind } from "./entities";
+import { CURRENT_GAME_TUNING, type GameplayTuning } from "./tuning";
 
 export interface RocketSpec {
   damage: number;
@@ -70,69 +71,32 @@ export const SNAPSHOT_HZ = 30;
 export const PLANET_HP = 100;
 export const ROOM_CAPACITY = 7;
 
+const initialGameplay = CURRENT_GAME_TUNING.gameplay;
+
 export const ROCKET_SPECS = {
-  light: {
-    damage: 15,
-    speed: 950,
-    reloadSec: 1.5,
-    ttlSec: 8,
-    radius: 10,
-    turnRate: 0,
-    startAmmo: 5,
-    maxAmmo: 5,
-  },
-  heavy: {
-    damage: 70,
-    speed: 560,
-    reloadSec: 6,
-    ttlSec: 8,
-    radius: 14,
-    turnRate: 0,
-    startAmmo: 2,
-    maxAmmo: 2,
-  },
-  seeker: {
-    damage: 35,
-    speed: 760,
-    reloadSec: 4,
-    ttlSec: 8,
-    radius: 12,
-    turnRate: Math.PI * 0.75,
-    startAmmo: 3,
-    maxAmmo: 3,
-  },
+  light: { ...initialGameplay.rockets.light },
+  heavy: { ...initialGameplay.rockets.heavy },
+  seeker: { ...initialGameplay.rockets.seeker },
 } satisfies Record<RocketKind, RocketSpec>;
 
 export const FORESIGHT_SPEC: AbilitySpec = {
-  cooldownSec: 12,
-  durationSec: 4,
+  ...initialGameplay.abilities.foresight,
 };
 
 export const SHIELD_SPEC: AbilitySpec & { arcDeg: number } = {
-  cooldownSec: 15,
-  durationSec: 4,
-  arcDeg: 120,
+  ...initialGameplay.abilities.shield,
 };
 
 export const BOOST_SPEC: BoostSpec = {
-  charges: 1,
-  cooldownSec: 5,
-  magnitude: 280,
+  ...initialGameplay.abilities.boost,
 };
 
 export const DRONE_SPEC: DroneSpec = {
-  speed: 620,
-  thrust: 220,
-  fuel: 3,
-  ttlSec: 20,
-  cooldownSec: 8,
-  burstImpulse: 320,
+  ...initialGameplay.drone,
 };
 
 export const CACHE_SPEC: CacheSpec = {
-  count: 3,
-  respawnSec: 15,
-  wildcardChance: 0.1,
+  ...initialGameplay.cache,
 };
 
 export const BOUNDARY_DAMAGE_SPEC: BoundaryDamageSpec = {
@@ -142,17 +106,11 @@ export const BOUNDARY_DAMAGE_SPEC: BoundaryDamageSpec = {
 };
 
 export const BLACK_HOLE_SPEC: BlackHoleSpec = {
-  spawnSec: 300,
-  mass: 8_000_000,
-  killRadius: 150,
-  rampSec: 30,
+  ...initialGameplay.blackHole,
 };
 
 export const MATCH_TIMERS: MatchTimerSpec = {
-  lobbySec: 30,
-  pickSec: 30,
-  countdownSec: 3,
-  rematchVoteSec: 20,
+  ...initialGameplay.timers,
 };
 
 export const CACHE_RADIUS = 24;
@@ -161,7 +119,7 @@ export const CACHE_DROP_SPEED_SCALE = 0.52;
 export const CACHE_TANGENTIAL_SPEED_MIN = 32;
 export const CACHE_TANGENTIAL_SPEED_MAX = 58;
 
-export const DRONE_LAUNCH_SPEED = DRONE_SPEC.speed * 0.48;
+export let DRONE_LAUNCH_SPEED = DRONE_SPEC.speed * 0.48;
 
 export const REPAIR_AMOUNT = 40;
 export const SHIELD_EXT_MULTIPLIER = 2;
@@ -178,3 +136,17 @@ export const WILDCARD_KINDS = [
   "cloak",
   "teleportSwap",
 ] as const satisfies readonly WildcardKind[];
+
+export const applyGameplayTuning = (gameplay: GameplayTuning) => {
+  Object.assign(ROCKET_SPECS.light, gameplay.rockets.light);
+  Object.assign(ROCKET_SPECS.heavy, gameplay.rockets.heavy);
+  Object.assign(ROCKET_SPECS.seeker, gameplay.rockets.seeker);
+  Object.assign(FORESIGHT_SPEC, gameplay.abilities.foresight);
+  Object.assign(SHIELD_SPEC, gameplay.abilities.shield);
+  Object.assign(BOOST_SPEC, gameplay.abilities.boost);
+  Object.assign(DRONE_SPEC, gameplay.drone);
+  Object.assign(CACHE_SPEC, gameplay.cache);
+  Object.assign(BLACK_HOLE_SPEC, gameplay.blackHole);
+  Object.assign(MATCH_TIMERS, gameplay.timers);
+  DRONE_LAUNCH_SPEED = DRONE_SPEC.speed * 0.48;
+};

@@ -1,6 +1,7 @@
 import {
   BLACK_HOLE_SPEC,
   BOOST_SPEC,
+  CURRENT_GAME_TUNING,
   FORESIGHT_SPEC,
   type AbilitySpec,
   type BlackHoleSpec,
@@ -10,10 +11,14 @@ import {
 } from "@3body/shared";
 import { DEFAULT_ORBIT_PRESET } from "./orbitPresets";
 
-export const DEFAULT_PLANET_BODY_SCALE = 2;
-export const DEFAULT_PLANET_AURA_SCALE = 2.2;
-export const DEFAULT_PLANET_AURA_GAP = 0;
-export const DEFAULT_CACHE_BADGE_SCALE = 1;
+export const DEFAULT_PLANET_BODY_SCALE =
+  CURRENT_GAME_TUNING.visuals.planets.bodyScale;
+export const DEFAULT_PLANET_AURA_SCALE =
+  CURRENT_GAME_TUNING.visuals.planets.auraScale;
+export const DEFAULT_PLANET_AURA_GAP =
+  CURRENT_GAME_TUNING.visuals.planets.auraGap;
+export const DEFAULT_CACHE_BADGE_SCALE =
+  CURRENT_GAME_TUNING.visuals.caches.badgeScale;
 export const DEFAULT_FORESIGHT_SETTINGS: AbilitySpec = { ...FORESIGHT_SPEC };
 export const DEFAULT_SHIELD_SETTINGS: AbilitySpec = {
   cooldownSec: SHIELD_SPEC.cooldownSec,
@@ -77,6 +82,8 @@ export interface GameViewportShortcut {
 
 export interface GameViewportConnectionState {
   extrapolating: boolean;
+  fps: number;
+  frameTimeMs: number;
   label: string;
   rttMs: number | null;
   state: "connected" | "local" | "reconnecting";
@@ -105,6 +112,7 @@ export interface GameViewportHudState {
   planetBodyScale: number;
   planetAuraGap: number;
   planetAuraScale: number;
+  profilingEnabled: boolean;
   playerArchetype: string;
   playerHp: number;
   playerHpPulse: number;
@@ -120,6 +128,7 @@ export interface GameViewportHudState {
 }
 
 export interface GameViewportController {
+  resetProfiling: () => void;
   resetAbilitySettings: () => void;
   resetBlackHoleSettings: () => void;
   resetPlanetVisualSettings: () => void;
@@ -139,6 +148,7 @@ export interface GameViewportController {
   setPlanetBodyScale: (value: number) => void;
   setPlanetAuraGap: (value: number) => void;
   setPlanetAuraScale: (value: number) => void;
+  setProfilingEnabled: (value: boolean) => void;
   pauseSandbox: () => void;
   playSandbox: () => void;
   resetSandbox: () => void;
@@ -150,6 +160,7 @@ export interface GameViewportController {
 }
 
 export interface CreateGameViewportOptions {
+  enableSandboxStorage?: boolean;
   onControllerReady?: (controller: GameViewportController | null) => void;
   onHudStateChange?: (state: GameViewportHudState) => void;
 }
@@ -165,6 +176,8 @@ export const createInitialHudState = (): GameViewportHudState => ({
   cacheBadgeScale: DEFAULT_CACHE_BADGE_SCALE,
   connection: {
     extrapolating: false,
+    fps: 0,
+    frameTimeMs: 0,
     label: "Local sandbox",
     rttMs: 0,
     state: "local",
@@ -182,6 +195,7 @@ export const createInitialHudState = (): GameViewportHudState => ({
   planetBodyScale: DEFAULT_PLANET_BODY_SCALE,
   planetAuraGap: DEFAULT_PLANET_AURA_GAP,
   planetAuraScale: DEFAULT_PLANET_AURA_SCALE,
+  profilingEnabled: false,
   playerArchetype: "--",
   playerHp: 0,
   playerHpPulse: 0,
@@ -195,3 +209,136 @@ export const createInitialHudState = (): GameViewportHudState => ({
   totalPlayerCount: 0,
   weapons: [],
 });
+
+const areObjectsEqual = <T>(
+  current: readonly T[],
+  next: readonly T[],
+  isEqual: (left: T, right: T) => boolean,
+): boolean =>
+  current.length === next.length &&
+  current.every((item, index) => isEqual(item, next[index]!));
+
+const areConnectionStatesEqual = (
+  current: GameViewportConnectionState,
+  next: GameViewportConnectionState,
+) =>
+  current.extrapolating === next.extrapolating &&
+  current.fps === next.fps &&
+  current.frameTimeMs === next.frameTimeMs &&
+  current.label === next.label &&
+  current.rttMs === next.rttMs &&
+  current.state === next.state;
+
+const areSettingsEqual = (
+  current: AbilitySpec | BlackHoleSpec | BoostSpec,
+  next: AbilitySpec | BlackHoleSpec | BoostSpec,
+) =>
+  Object.keys(current).every(
+    (key) =>
+      current[key as keyof typeof current] === next[key as keyof typeof next],
+  );
+
+export const areHudStatesEqual = (
+  current: GameViewportHudState,
+  next: GameViewportHudState,
+): boolean =>
+  current.alivePlayerCount === next.alivePlayerCount &&
+  current.blackHoleActive === next.blackHoleActive &&
+  current.blackHoleRemainingSec === next.blackHoleRemainingSec &&
+  current.blackHoleWarning === next.blackHoleWarning &&
+  current.cacheBadgeScale === next.cacheBadgeScale &&
+  areConnectionStatesEqual(current.connection, next.connection) &&
+  current.controlMode === next.controlMode &&
+  current.currentPresetId === next.currentPresetId &&
+  current.damageFlash === next.damageFlash &&
+  current.droneCargoLabel === next.droneCargoLabel &&
+  current.hudOpacity === next.hudOpacity &&
+  current.planetBodyScale === next.planetBodyScale &&
+  current.planetAuraGap === next.planetAuraGap &&
+  current.planetAuraScale === next.planetAuraScale &&
+  current.profilingEnabled === next.profilingEnabled &&
+  current.playerArchetype === next.playerArchetype &&
+  current.playerHp === next.playerHp &&
+  current.playerHpPulse === next.playerHpPulse &&
+  current.playerLabel === next.playerLabel &&
+  current.sandboxPaused === next.sandboxPaused &&
+  current.sandboxControlsEnabled === next.sandboxControlsEnabled &&
+  current.selectedWeapon === next.selectedWeapon &&
+  current.timerElapsedSec === next.timerElapsedSec &&
+  current.totalPlayerCount === next.totalPlayerCount &&
+  areSettingsEqual(current.blackHoleSettings, next.blackHoleSettings) &&
+  areSettingsEqual(current.boostSettings, next.boostSettings) &&
+  areSettingsEqual(current.foresightSettings, next.foresightSettings) &&
+  areSettingsEqual(current.shieldSettings, next.shieldSettings) &&
+  areObjectsEqual(
+    current.abilities,
+    next.abilities,
+    (left, right) =>
+      left.accent === right.accent &&
+      left.id === right.id &&
+      left.keyLabel === right.keyLabel &&
+      left.label === right.label &&
+      left.mode === right.mode &&
+      left.progress === right.progress &&
+      left.statusText === right.statusText &&
+      left.valueText === right.valueText,
+  ) &&
+  areObjectsEqual(
+    current.contextualShortcuts,
+    next.contextualShortcuts,
+    (left, right) =>
+      left.active === right.active &&
+      left.detail === right.detail &&
+      left.id === right.id &&
+      left.keyLabel === right.keyLabel &&
+      left.label === right.label,
+  ) &&
+  areObjectsEqual(
+    current.debugItems,
+    next.debugItems,
+    (left, right) => left.label === right.label && left.value === right.value,
+  ) &&
+  areObjectsEqual(
+    current.killFeed,
+    next.killFeed,
+    (left, right) =>
+      left.accent === right.accent &&
+      left.ageSec === right.ageSec &&
+      left.id === right.id &&
+      left.text === right.text,
+  ) &&
+  areObjectsEqual(
+    current.planetBars,
+    next.planetBars,
+    (left, right) =>
+      left.color === right.color &&
+      left.hp === right.hp &&
+      left.id === right.id &&
+      left.label === right.label &&
+      left.maxHp === right.maxHp &&
+      left.pulse === right.pulse &&
+      left.screenX === right.screenX &&
+      left.screenY === right.screenY,
+  ) &&
+  areObjectsEqual(
+    current.primaryShortcuts,
+    next.primaryShortcuts,
+    (left, right) =>
+      left.active === right.active &&
+      left.detail === right.detail &&
+      left.id === right.id &&
+      left.keyLabel === right.keyLabel &&
+      left.label === right.label,
+  ) &&
+  areObjectsEqual(
+    current.weapons,
+    next.weapons,
+    (left, right) =>
+      left.accent === right.accent &&
+      left.ammo === right.ammo &&
+      left.kind === right.kind &&
+      left.label === right.label &&
+      left.maxAmmo === right.maxAmmo &&
+      left.reloadRemainingSec === right.reloadRemainingSec &&
+      left.selected === right.selected,
+  );

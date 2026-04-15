@@ -1,5 +1,9 @@
 import { config } from "./config";
 import type { ConnectionWebSocketData } from "./connection";
+import {
+  readEditorTuningDocument,
+  writeEditorTuningDocument,
+} from "./editor-tuning";
 import { log } from "./log";
 import { MatchmakingService } from "./matchmaking";
 import { isLeaderboardMetric, StatsStore } from "./stats-store";
@@ -62,7 +66,7 @@ let shuttingDown = false;
 const server: Bun.Server<ConnectionWebSocketData> = Bun.serve({
   hostname: config.host,
   port: config.port,
-  fetch(request, bunServer) {
+  async fetch(request, bunServer) {
     const url = new URL(request.url);
 
     if (request.method === "GET" && url.pathname === "/healthz") {
@@ -87,6 +91,19 @@ const server: Bun.Server<ConnectionWebSocketData> = Bun.serve({
         metric,
         entries: statsStore.getLeaderboard(metric, rawLimit),
       });
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/editor/tuning") {
+      return Response.json(await readEditorTuningDocument());
+    }
+
+    if (request.method === "PUT" && url.pathname === "/api/editor/tuning") {
+      try {
+        const body = await request.json();
+        return Response.json(await writeEditorTuningDocument(body));
+      } catch {
+        return jsonError(400, "Invalid tuning document");
+      }
     }
 
     const playerStatsMatch = url.pathname.match(

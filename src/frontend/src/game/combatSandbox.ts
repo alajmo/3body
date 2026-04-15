@@ -2,13 +2,19 @@ import type {
   ArchetypeId,
   BlackHole,
   BlackHoleSpec,
+  BotDifficulty,
   Cache,
   CacheContents,
+  CombatBotCommand,
+  CombatBotMemory,
+  CombatBotRuntime,
   Debris,
   Drone,
   EntityBase,
   PlanetDebuffs,
   PlanetPrivateAmmo,
+  PlanetPrivateState,
+  PlanetPublic,
   Rocket,
   RocketKind,
   Sun,
@@ -18,6 +24,7 @@ import type {
 import {
   ARCHETYPE_IDS,
   ARCHETYPES,
+  ARENA_RADIUS,
   add,
   BOOST_SPEC,
   CACHE_DROP_SPEED_SCALE,
@@ -29,10 +36,13 @@ import {
   clamp,
   clampLen,
   cloneCacheContents,
+  cloneCombatBotMemory,
+  createCombatBotMemory,
   createInitialAmmo,
   DEBRIS_TTL_SEC,
   DRONE_LAUNCH_SPEED,
   DRONE_SPEC,
+  decideCombatBot,
   dist,
   dot,
   FIXED_STEP_SEC,
@@ -50,8 +60,8 @@ import {
   OUTER_RING_MIN,
   PLANET_HP,
   REPAIR_AMOUNT,
-  rollCacheContents,
   ROCKET_SPECS,
+  rollCacheContents,
   SHIELD_EXT_MULTIPLIER,
   SHIELD_SPEC,
   SIM_HZ,
@@ -70,6 +80,7 @@ import {
   type OrbitRiskProfile,
 } from "./orbitPresets";
 import { findMinPlanetSunGap, findMinSunSunGap } from "./orbitSandbox";
+import { getRuntimeTuningDocument } from "./runtimeTuning";
 
 export const SUN_SWALLOW_FADE_SEC = 2.4;
 const LIGHT_RELOCK_DISTANCE = 96;
@@ -80,10 +91,11 @@ export const SEEKER_LOCK_TICKS = Math.round(
 );
 // Use a calmer outer-orbit body for the local player so combat starts are playable.
 const PLAYER_PLANET_INDEX = 4;
-// Planets are rendered larger than their simulation bodies in the local viewport,
-// so rocket impacts should line up with the visible planet edge.
-const ROCKET_PLANET_IMPACT_RADIUS_MULTIPLIER = 2;
+// Planets are rendered larger than their simulation bodies in the local viewport.
+// Keep rocket impacts aligned with the rendered body radius.
+const DEFAULT_ROCKET_PLANET_IMPACT_RADIUS_MULTIPLIER = 2;
 const PLANET_IMPACT_TTL_SEC = 0.32;
+const ROCKET_LAUNCH_BURST_TTL_SEC = 0.2;
 const DEBRIS_PIECES = 20;
 const DEBRIS_BURST_SPEED = 220;
 const DEBRIS_BURST_SPEED_VARIANCE = 170;
@@ -100,6 +112,8 @@ const DRONE_DEBRIS_BURST_SPEED = 168;
 const DRONE_DEBRIS_BURST_SPEED_VARIANCE = 104;
 const PLAYER_LOST_RESET_DELAY_SEC = 6;
 const DEFAULT_AIM_DIR = { x: 1, y: 0 } satisfies Vec2;
+const LOCAL_BOT_DIFFICULTY: BotDifficulty = "normal";
+const BOT_AIM_WORLD_DISTANCE = ARENA_RADIUS * 2.4;
 const SWALLOWED_SUN_DRIFT_ALPHA = 0.035;
 const SWALLOWED_SUN_VELOCITY_DAMPING = 0.08;
 const DRONE_RADIUS = 18;
@@ -152,20 +166,13 @@ export interface CombatSandboxSun extends Sun {
   swallowedAtSec: number | null;
 }
 
-export interface CombatSandboxPlanet extends EntityBase {
-  kind: "planet";
+export interface CombatSandboxPlanet extends PlanetPublic {
   label: string;
   color: string;
   trailColor: string;
   risk: OrbitRiskProfile;
-  archetype: ArchetypeId;
-  playerId: string;
   alive: boolean;
-  hp: number;
   deathReason?: CombatPlanetDeathReason;
-  hideTrailUntilTick: number;
-  pilotingDroneId?: number;
-  debuffs: PlanetDebuffs;
 }
 
 export interface CombatSandboxRocket extends Rocket {
@@ -174,6 +181,8 @@ export interface CombatSandboxRocket extends Rocket {
   color: string;
   dragOnHit: boolean;
   turnRateMultiplier: number;
+  launchPlanetPos: Vec2;
+  launchPlanetRadius: number;
 }
 
 export type CombatSandboxDrone = Drone;
@@ -194,7 +203,24 @@ export interface CombatSandboxImpactBurst {
   ttlUntilTick: number;
 }
 
-export interface CombatSandboxPlayerState {
+export interface CombatSandboxRocketLaunchBurst {
+  id: number;
+  ownerId: string;
+  rocketKind: RocketKind;
+  color: string;
+  trailColor: string;
+  origin: Vec2;
+  launchPlanetPos: Vec2;
+  launchPlanetRadius: number;
+  dir: Vec2;
+  speed: number;
+  startedAtSec: number;
+  startedAtTick: number;
+  ttlUntilTick: number;
+}
+
+export interface CombatSandboxControllerState {
+  playerId: string;
   planetId: number;
   selectedRocketKind: RocketKind;
   ammo: PlanetPrivateAmmo;
@@ -219,6 +245,14 @@ export interface CombatSandboxPlayerState {
   nextForesightExt: boolean;
 }
 
+export interface CombatSandboxPlayerState
+  extends CombatSandboxControllerState {}
+
+export interface CombatSandboxBotState extends CombatSandboxControllerState {
+  difficulty: BotDifficulty;
+  memory: CombatBotMemory;
+}
+
 export interface CombatSandboxState {
   tick: number;
   elapsedSec: number;
@@ -231,8 +265,10 @@ export interface CombatSandboxState {
   cacheRespawnAtTicks: number[];
   debris: CombatSandboxDebris[];
   impactBursts: CombatSandboxImpactBurst[];
+  launchBursts: CombatSandboxRocketLaunchBurst[];
   blackHole: BlackHole | null;
   player: CombatSandboxPlayerState;
+  bots: CombatSandboxBotState[];
   nextEntityId: number;
   playerLostAtSec: number | null;
   rng: () => number;
@@ -241,6 +277,29 @@ export interface CombatSandboxState {
 export interface CombatSandboxStepInput {
   aimWorld: Vec2;
   selectedRocketKind: RocketKind;
+  fireRequested: boolean;
+  foresightRequested: boolean;
+  shieldRequested: boolean;
+  boostRequested: boolean;
+  wildcardRequested: boolean;
+  droneLaunchRequested: boolean;
+  droneBurstRequested: boolean;
+  droneAutoReturnRequested: boolean;
+  droneRecallRequested: boolean;
+}
+
+export interface CombatSandboxSimulationOptions {
+  planetImpactRadiusMultiplier?: number;
+}
+
+export interface CombatSandboxInterpolationCache {
+  previousRocketMap: Map<number, CombatSandboxRocket>;
+  previousDroneMap: Map<number, CombatSandboxDrone>;
+  previousCacheMap: Map<number, CombatSandboxCache>;
+  previousDebrisMap: Map<number, CombatSandboxDebris>;
+}
+
+interface CombatSandboxControllerFrame {
   fireRequested: boolean;
   foresightRequested: boolean;
   shieldRequested: boolean;
@@ -274,36 +333,8 @@ export interface CombatSandboxDebugSnapshot {
   wildcardLabel: string | null;
 }
 
-const ARCHETYPE_VISUALS = {
-  terra: {
-    color: "#9fc66f",
-    trailColor: "#d6ef8a",
-  },
-  ignis: {
-    color: "#ff8550",
-    trailColor: "#ffb07c",
-  },
-  glacius: {
-    color: "#8ed8ff",
-    trailColor: "#d5f4ff",
-  },
-  volans: {
-    color: "#5fe7da",
-    trailColor: "#8ff7ee",
-  },
-  oculus: {
-    color: "#ffd56b",
-    trailColor: "#fff1a4",
-  },
-  umbra: {
-    color: "#8c7dff",
-    trailColor: "#b3a8ff",
-  },
-  corvus: {
-    color: "#d7e4ff",
-    trailColor: "#f3f7ff",
-  },
-} satisfies Record<ArchetypeId, { color: string; trailColor: string }>;
+const getArchetypeVisuals = (archetype: ArchetypeId) =>
+  getRuntimeTuningDocument().visuals.planets.archetypes[archetype];
 
 const getArchetypeStats = (archetype: ArchetypeId) => ARCHETYPES[archetype];
 
@@ -316,7 +347,7 @@ const clonePlanetSeed = (
   playerPlanetId: number,
 ): CombatSandboxPlanet => {
   const archetype = ARCHETYPE_IDS[index % ARCHETYPE_IDS.length]!;
-  const visuals = ARCHETYPE_VISUALS[archetype];
+  const visuals = getArchetypeVisuals(archetype);
 
   return {
     ...planetSeed,
@@ -332,6 +363,8 @@ const clonePlanetSeed = (
       planetSeed.id === playerPlanetId ? "player" : `bot-${planetSeed.id}`,
     alive: true,
     hp: PLANET_HP,
+    shieldAimDir: { ...DEFAULT_AIM_DIR },
+    shieldActiveUntilTick: 0,
     hideTrailUntilTick: 0,
     debuffs: {},
   };
@@ -374,6 +407,9 @@ const weaponReloadTicks = (
 const rocketTtlTicks = (rocketKind: RocketKind): number =>
   Math.max(1, Math.round(ROCKET_SPECS[rocketKind].ttlSec * SIM_HZ));
 
+const rocketLaunchBurstTicks = (): number =>
+  Math.max(1, Math.round(ROCKET_LAUNCH_BURST_TTL_SEC * SIM_HZ));
+
 const debrisTtlTicks = Math.max(1, Math.round(DEBRIS_TTL_SEC * SIM_HZ));
 const planetImpactTtlTicks = Math.max(
   1,
@@ -397,11 +433,22 @@ const clonePlanet = (planet: CombatSandboxPlanet): CombatSandboxPlanet => ({
   ...planet,
   pos: { x: planet.pos.x, y: planet.pos.y },
   vel: { x: planet.vel.x, y: planet.vel.y },
+  shieldAimDir: { x: planet.shieldAimDir.x, y: planet.shieldAimDir.y },
   debuffs: { ...planet.debuffs },
+});
+
+const cloneSun = (sun: CombatSandboxSun): CombatSandboxSun => ({
+  ...sun,
+  pos: { x: sun.pos.x, y: sun.pos.y },
+  vel: { x: sun.vel.x, y: sun.vel.y },
 });
 
 const cloneRocket = (rocket: CombatSandboxRocket): CombatSandboxRocket => ({
   ...rocket,
+  launchPlanetPos: {
+    x: rocket.launchPlanetPos.x,
+    y: rocket.launchPlanetPos.y,
+  },
   pos: { x: rocket.pos.x, y: rocket.pos.y },
   vel: { x: rocket.vel.x, y: rocket.vel.y },
 });
@@ -420,6 +467,174 @@ const cloneCache = (cache: CombatSandboxCache): CombatSandboxCache => ({
   vel: { x: cache.vel.x, y: cache.vel.y },
   contents: cloneCacheContents(cache.contents),
 });
+
+const cloneDebris = (piece: CombatSandboxDebris): CombatSandboxDebris => ({
+  ...piece,
+  pos: { x: piece.pos.x, y: piece.pos.y },
+  vel: { x: piece.vel.x, y: piece.vel.y },
+});
+
+const createControllerState = (
+  planet: CombatSandboxPlanet,
+): CombatSandboxControllerState => ({
+  playerId: planet.playerId,
+  planetId: planet.id,
+  selectedRocketKind: "light",
+  ammo: createInitialAmmo(),
+  reloadUntilTick: {
+    heavy: 0,
+    light: 0,
+    seeker: 0,
+  },
+  aimWorld: {
+    x: planet.pos.x + 180,
+    y: planet.pos.y,
+  },
+  lockTargetId: null,
+  seekerLockAcquiredAtTick: null,
+  foresightActiveUntilTick: 0,
+  foresightCooldownUntilTick: 0,
+  shieldAimDir: { x: DEFAULT_AIM_DIR.x, y: DEFAULT_AIM_DIR.y },
+  shieldActiveUntilTick: 0,
+  shieldCooldownUntilTick: 0,
+  boostCharges: getBoostChargeCapacity(planet.archetype),
+  nextBoostChargeAtTick: null,
+  lastBoostTick: null,
+  lastBoostAimDir: { x: DEFAULT_AIM_DIR.x, y: DEFAULT_AIM_DIR.y },
+  droneCooldownUntilTick: 0,
+  activeDroneId: null,
+  controlMode: "planet",
+  wildcardSlot: null,
+  nextShieldExt: false,
+  nextForesightExt: false,
+});
+
+const cloneControllerState = <T extends CombatSandboxControllerState>(
+  controller: T,
+): T => ({
+  ...controller,
+  ammo: { ...controller.ammo },
+  reloadUntilTick: { ...controller.reloadUntilTick },
+  aimWorld: { x: controller.aimWorld.x, y: controller.aimWorld.y },
+  shieldAimDir: {
+    x: controller.shieldAimDir.x,
+    y: controller.shieldAimDir.y,
+  },
+  lastBoostAimDir: {
+    x: controller.lastBoostAimDir.x,
+    y: controller.lastBoostAimDir.y,
+  },
+});
+
+const cloneBotState = (bot: CombatSandboxBotState): CombatSandboxBotState => ({
+  ...cloneControllerState(bot),
+  memory: cloneCombatBotMemory(bot.memory),
+});
+
+const createControllerFrame = (): CombatSandboxControllerFrame => ({
+  fireRequested: false,
+  foresightRequested: false,
+  shieldRequested: false,
+  boostRequested: false,
+  wildcardRequested: false,
+  droneLaunchRequested: false,
+  droneBurstRequested: false,
+  droneAutoReturnRequested: false,
+  droneRecallRequested: false,
+});
+
+const toBotPrivateState = (
+  controller: CombatSandboxControllerState,
+): PlanetPrivateState => ({
+  planetId: controller.planetId,
+  ammo: { ...controller.ammo },
+  cooldowns: {
+    lightReloadUntilTick: controller.reloadUntilTick.light,
+    heavyReloadUntilTick: controller.reloadUntilTick.heavy,
+    seekerReloadUntilTick: controller.reloadUntilTick.seeker,
+    foresightActiveUntilTick: controller.foresightActiveUntilTick,
+    foresightCooldownUntilTick: controller.foresightCooldownUntilTick,
+    shieldCooldownUntilTick: controller.shieldCooldownUntilTick,
+    droneCooldownUntilTick: controller.droneCooldownUntilTick,
+    nextBoostChargeAtTick: controller.nextBoostChargeAtTick ?? undefined,
+  },
+  boostCharges: controller.boostCharges,
+  wildcardSlot: controller.wildcardSlot ?? undefined,
+  nextShieldExt: controller.nextShieldExt,
+  nextForesightExt: controller.nextForesightExt,
+});
+
+const createBotWorld = (
+  state: Pick<
+    CombatSandboxState,
+    | "blackHole"
+    | "caches"
+    | "debris"
+    | "drones"
+    | "planets"
+    | "rockets"
+    | "suns"
+  >,
+): PlanetPublic[] => state.planets.filter((planet) => planet.alive);
+
+const createCombatBotWorld = (
+  state: Pick<
+    CombatSandboxState,
+    | "blackHole"
+    | "caches"
+    | "debris"
+    | "drones"
+    | "planets"
+    | "rockets"
+    | "suns"
+  >,
+): {
+  suns: CombatSandboxSun[];
+  planets: PlanetPublic[];
+  rockets: CombatSandboxRocket[];
+  drones: CombatSandboxDrone[];
+  caches: CombatSandboxCache[];
+  blackHole?: BlackHole;
+  debris: CombatSandboxDebris[];
+  arenaRadius: number;
+} => ({
+  suns: getActiveCombatSuns(state.suns),
+  planets: createBotWorld(state),
+  rockets: state.rockets,
+  drones: state.drones,
+  caches: state.caches,
+  blackHole: state.blackHole ?? undefined,
+  debris: state.debris,
+  arenaRadius: ARENA_RADIUS,
+});
+
+const getControlledBody = (
+  planets: readonly CombatSandboxPlanet[],
+  drones: readonly CombatSandboxDrone[],
+  controller: CombatSandboxControllerState,
+): Pick<EntityBase, "pos"> | null => {
+  if (controller.controlMode === "drone" && controller.activeDroneId !== null) {
+    return findActiveDrone(drones, controller.activeDroneId);
+  }
+
+  return findPlayerPlanet(planets, controller.planetId);
+};
+
+const setAimWorldFromDirection = (
+  controller: CombatSandboxControllerState,
+  origin: Pick<EntityBase, "pos"> | null,
+  dir: Vec2,
+) => {
+  const normalizedDir = normalize(dir);
+  if (origin === null || len(normalizedDir) === 0) {
+    return;
+  }
+
+  controller.aimWorld = add(
+    origin.pos,
+    scale(normalizedDir, BOT_AIM_WORLD_DISTANCE),
+  );
+};
 
 export const describeWildcard = (wildcard: WildcardKind): string => {
   switch (wildcard) {
@@ -608,8 +823,15 @@ const stepCombatSuns = (
 const findPlayerPlanet = (
   planets: readonly CombatSandboxPlanet[],
   playerPlanetId: number,
-): CombatSandboxPlanet | null =>
-  planets.find((planet) => planet.id === playerPlanetId) ?? null;
+): CombatSandboxPlanet | null => {
+  for (const planet of planets) {
+    if (planet.id === playerPlanetId) {
+      return planet;
+    }
+  }
+
+  return null;
+};
 
 const getPlayerArchetypeId = (
   planets: readonly CombatSandboxPlanet[],
@@ -617,19 +839,35 @@ const getPlayerArchetypeId = (
 ): ArchetypeId =>
   findPlayerPlanet(planets, playerPlanetId)?.archetype ?? "terra";
 
-const findOwnerPlanet = (
-  planets: readonly CombatSandboxPlanet[],
-  ownerId: string,
-): CombatSandboxPlanet | null =>
-  planets.find((planet) => planet.playerId === ownerId) ?? null;
-
 const findActiveDrone = (
   drones: readonly CombatSandboxDrone[],
   activeDroneId: number | null,
-): CombatSandboxDrone | null =>
-  activeDroneId === null
-    ? null
-    : (drones.find((drone) => drone.id === activeDroneId) ?? null);
+): CombatSandboxDrone | null => {
+  if (activeDroneId === null) {
+    return null;
+  }
+
+  for (const drone of drones) {
+    if (drone.id === activeDroneId) {
+      return drone;
+    }
+  }
+
+  return null;
+};
+
+const findDroneIndex = (
+  drones: readonly CombatSandboxDrone[],
+  droneId: number,
+): number => {
+  for (let index = 0; index < drones.length; index += 1) {
+    if (drones[index]!.id === droneId) {
+      return index;
+    }
+  }
+
+  return -1;
+};
 
 const findAliveTargetPlanet = (
   planets: readonly CombatSandboxPlanet[],
@@ -689,47 +927,52 @@ const aimDirFromWorldTarget = (
 };
 
 const refreshBoostCharges = (
-  player: CombatSandboxPlayerState,
+  controller: CombatSandboxControllerState,
   tick: number,
   maxBoostCharges: number,
 ) => {
-  if (player.boostCharges >= maxBoostCharges) {
-    player.nextBoostChargeAtTick = null;
+  if (controller.boostCharges >= maxBoostCharges) {
+    controller.nextBoostChargeAtTick = null;
     return;
   }
 
   while (
-    player.nextBoostChargeAtTick !== null &&
-    player.nextBoostChargeAtTick <= tick
+    controller.nextBoostChargeAtTick !== null &&
+    controller.nextBoostChargeAtTick <= tick
   ) {
-    player.boostCharges = Math.min(maxBoostCharges, player.boostCharges + 1);
-    player.nextBoostChargeAtTick =
-      player.boostCharges >= maxBoostCharges
+    controller.boostCharges = Math.min(
+      maxBoostCharges,
+      controller.boostCharges + 1,
+    );
+    controller.nextBoostChargeAtTick =
+      controller.boostCharges >= maxBoostCharges
         ? null
-        : player.nextBoostChargeAtTick + getBoostRechargeTicks();
+        : controller.nextBoostChargeAtTick + getBoostRechargeTicks();
   }
 };
 
 const hasActiveShield = (
-  player: CombatSandboxPlayerState,
+  controller: CombatSandboxControllerState,
   tick: number,
-): boolean => tick < player.shieldActiveUntilTick;
+): boolean => tick < controller.shieldActiveUntilTick;
 
 const shieldProtectsImpact = (
   planet: CombatSandboxPlanet,
-  player: CombatSandboxPlayerState,
+  controllers: ReadonlyMap<string, CombatSandboxControllerState>,
   sourcePos: Vec2,
   tick: number,
 ): boolean => {
+  const controller = controllers.get(planet.playerId);
   if (
-    planet.id !== player.planetId ||
+    controller === undefined ||
+    planet.id !== controller.planetId ||
     !planet.alive ||
-    !hasActiveShield(player, tick)
+    !hasActiveShield(controller, tick)
   ) {
     return false;
   }
 
-  const shieldAimDir = normalize(player.shieldAimDir);
+  const shieldAimDir = normalize(controller.shieldAimDir);
   const hitDir = normalize(sub(sourcePos, planet.pos));
   if (len(shieldAimDir) === 0 || len(hitDir) === 0) {
     return false;
@@ -802,6 +1045,33 @@ const createPlanetImpactBurst = (
   ttlUntilTick: tick + planetImpactTtlTicks,
 });
 
+const createRocketLaunchBurst = (
+  tick: number,
+  elapsedSec: number,
+  rocket: CombatSandboxRocket,
+): CombatSandboxRocketLaunchBurst => {
+  const dir = len(rocket.vel) > 0 ? normalize(rocket.vel) : DEFAULT_AIM_DIR;
+
+  return {
+    id: rocket.id,
+    ownerId: rocket.ownerId,
+    rocketKind: rocket.rocketKind,
+    color: rocket.color,
+    trailColor: rocket.trailColor,
+    origin: { x: rocket.pos.x, y: rocket.pos.y },
+    launchPlanetPos: {
+      x: rocket.launchPlanetPos.x,
+      y: rocket.launchPlanetPos.y,
+    },
+    launchPlanetRadius: rocket.launchPlanetRadius,
+    dir,
+    speed: len(rocket.vel),
+    startedAtSec: elapsedSec,
+    startedAtTick: tick,
+    ttlUntilTick: tick + rocketLaunchBurstTicks(),
+  };
+};
+
 const normalizePlanetDebuffs = (
   debuffs: PlanetDebuffs,
   tick: number,
@@ -810,7 +1080,9 @@ const normalizePlanetDebuffs = (
     ? {
         dragUntilTick: debuffs.dragUntilTick,
       }
-    : {};
+    : EMPTY_PLANET_DEBUFFS;
+
+const EMPTY_PLANET_DEBUFFS: PlanetDebuffs = {};
 
 const killPlanet = (
   planet: CombatSandboxPlanet,
@@ -847,41 +1119,47 @@ const maybeSpawnBlackHole = (
 };
 
 const maybeFireRocket = (
-  state: CombatSandboxState,
+  controller: CombatSandboxControllerState,
   planets: readonly CombatSandboxPlanet[],
-): CombatSandboxRocket[] => {
-  if (state.player.controlMode !== "planet") {
-    return [];
+  tick: number,
+  elapsedSec: number,
+  nextEntityId: number,
+): {
+  launchBursts: CombatSandboxRocketLaunchBurst[];
+  rockets: CombatSandboxRocket[];
+} => {
+  if (controller.controlMode !== "planet") {
+    return { launchBursts: [], rockets: [] };
   }
 
-  const playerPlanet = findPlayerPlanet(planets, state.player.planetId);
+  const playerPlanet = findPlayerPlanet(planets, controller.planetId);
   if (playerPlanet === null || !playerPlanet.alive) {
-    return [];
+    return { launchBursts: [], rockets: [] };
   }
 
-  if (hasActiveShield(state.player, state.tick)) {
-    return [];
+  if (hasActiveShield(controller, tick)) {
+    return { launchBursts: [], rockets: [] };
   }
 
-  const rocketKind = state.player.selectedRocketKind;
+  const rocketKind = controller.selectedRocketKind;
   if (
-    state.player.ammo[rocketKind] <= 0 ||
-    state.tick < state.player.reloadUntilTick[rocketKind]
+    controller.ammo[rocketKind] <= 0 ||
+    tick < controller.reloadUntilTick[rocketKind]
   ) {
-    return [];
+    return { launchBursts: [], rockets: [] };
   }
 
   if (rocketKind === "seeker") {
-    const lockStart = state.player.seekerLockAcquiredAtTick;
-    if (lockStart === null || state.tick - lockStart < SEEKER_LOCK_TICKS) {
-      return [];
+    const lockStart = controller.seekerLockAcquiredAtTick;
+    if (lockStart === null || tick - lockStart < SEEKER_LOCK_TICKS) {
+      return { launchBursts: [], rockets: [] };
     }
-    state.player.seekerLockAcquiredAtTick = state.tick;
+    controller.seekerLockAcquiredAtTick = tick;
   }
 
-  const aimDir = normalize(sub(state.player.aimWorld, playerPlanet.pos));
+  const aimDir = normalize(sub(controller.aimWorld, playerPlanet.pos));
   if (len(aimDir) === 0) {
-    return [];
+    return { launchBursts: [], rockets: [] };
   }
 
   const spec = ROCKET_SPECS[rocketKind];
@@ -889,58 +1167,49 @@ const maybeFireRocket = (
   const archetypeStats = getArchetypeStats(playerPlanet.archetype);
   const lockTarget =
     rocketKind === "seeker"
-      ? findAliveTargetPlanet(
-          planets,
-          state.player.planetId,
-          state.player.aimWorld,
-        )
+      ? findAliveTargetPlanet(planets, controller.planetId, controller.aimWorld)
       : null;
 
-  console.log(
-    "[fire-debug] maybeFireRocket kind=",
-    rocketKind,
-    "tick=",
-    state.tick,
-    "ammoBefore=",
-    state.player.ammo[rocketKind],
-    "reloadUntilBefore=",
-    state.player.reloadUntilTick[rocketKind],
-  );
-  state.player.ammo[rocketKind] -= 1;
-  state.player.reloadUntilTick[rocketKind] =
-    state.tick + weaponReloadTicks(rocketKind, playerPlanet.archetype);
+  controller.ammo[rocketKind] -= 1;
+  controller.reloadUntilTick[rocketKind] =
+    tick + weaponReloadTicks(rocketKind, playerPlanet.archetype);
   if (
     rocketKind === "light" &&
-    state.player.ammo.light < ROCKET_SPECS.light.maxAmmo &&
-    state.player.reloadUntilTick.light === 0
+    controller.ammo.light < ROCKET_SPECS.light.maxAmmo &&
+    controller.reloadUntilTick.light === 0
   ) {
-    state.player.reloadUntilTick.light =
-      state.tick + weaponReloadTicks("light", playerPlanet.archetype);
+    controller.reloadUntilTick.light =
+      tick + weaponReloadTicks("light", playerPlanet.archetype);
   }
-  state.player.lockTargetId = lockTarget?.id ?? null;
+  controller.lockTargetId = lockTarget?.id ?? null;
 
-  return [
-    {
-      id: state.nextEntityId,
-      kind: "rocket",
-      ownerId: playerPlanet.playerId,
-      rocketKind,
-      targetId: lockTarget?.id,
-      ttlUntilTick: state.tick + rocketTtlTicks(rocketKind),
-      pos: add(
-        playerPlanet.pos,
-        scale(aimDir, playerPlanet.radius + spec.radius + 10),
-      ),
-      vel: add(playerPlanet.vel, scale(aimDir, spec.speed)),
-      radius: spec.radius,
-      damage: spec.damage * archetypeStats.rocketDamageMultiplier,
-      color: visuals.core,
-      trailColor: visuals.trail,
-      dragOnHit: archetypeStats.umbraDrag,
-      turnRateMultiplier:
-        rocketKind === "seeker" ? archetypeStats.seekerTurnRateMultiplier : 1,
-    },
-  ];
+  const rocket: CombatSandboxRocket = {
+    id: nextEntityId,
+    kind: "rocket",
+    ownerId: playerPlanet.playerId,
+    rocketKind,
+    targetId: lockTarget?.id,
+    ttlUntilTick: tick + rocketTtlTicks(rocketKind),
+    pos: add(
+      playerPlanet.pos,
+      scale(aimDir, playerPlanet.radius + spec.radius + 10),
+    ),
+    vel: add(playerPlanet.vel, scale(aimDir, spec.speed)),
+    radius: spec.radius,
+    damage: spec.damage * archetypeStats.rocketDamageMultiplier,
+    color: visuals.core,
+    trailColor: visuals.trail,
+    dragOnHit: archetypeStats.umbraDrag,
+    turnRateMultiplier:
+      rocketKind === "seeker" ? archetypeStats.seekerTurnRateMultiplier : 1,
+    launchPlanetPos: { x: playerPlanet.pos.x, y: playerPlanet.pos.y },
+    launchPlanetRadius: playerPlanet.radius,
+  };
+
+  return {
+    launchBursts: [createRocketLaunchBurst(tick, elapsedSec, rocket)],
+    rockets: [rocket],
+  };
 };
 
 const stepCombatRocket = (
@@ -998,7 +1267,7 @@ const markEnvironmentalPlanetDeaths = (
   suns: readonly Sun[],
   blackHole: BlackHole | null,
   deathPlanetIds: Set<number>,
-  player: CombatSandboxPlayerState,
+  controllers: ReadonlyMap<string, CombatSandboxControllerState>,
   tick: number,
 ) => {
   for (let index = 0; index < planets.length; index += 1) {
@@ -1016,7 +1285,7 @@ const markEnvironmentalPlanetDeaths = (
     for (const sun of suns) {
       if (
         dist(planet.pos, sun.pos) <= planet.radius + sun.radius &&
-        !shieldProtectsImpact(planet, player, sun.pos, tick)
+        !shieldProtectsImpact(planet, controllers, sun.pos, tick)
       ) {
         planets[index] = killPlanet(planet, "sunCollision");
         deathPlanetIds.add(planet.id);
@@ -1031,18 +1300,51 @@ const stepDebris = (
   suns: readonly Sun[],
   blackHole: BlackHole | null,
   tick: number,
-): CombatSandboxDebris[] =>
-  debris
-    .filter((piece) => piece.ttlUntilTick > tick)
-    .map((piece) =>
+): CombatSandboxDebris[] => {
+  const nextDebris: CombatSandboxDebris[] = [];
+
+  for (const piece of debris) {
+    if (piece.ttlUntilTick <= tick) {
+      continue;
+    }
+
+    nextDebris.push(
       stepBody(piece, suns, FIXED_STEP_SEC, blackHole ?? undefined),
     );
+  }
+
+  return nextDebris;
+};
 
 const stepImpactBursts = (
   impactBursts: readonly CombatSandboxImpactBurst[],
   tick: number,
-): CombatSandboxImpactBurst[] =>
-  impactBursts.filter((burst) => burst.ttlUntilTick > tick);
+): CombatSandboxImpactBurst[] => {
+  const nextBursts: CombatSandboxImpactBurst[] = [];
+
+  for (const burst of impactBursts) {
+    if (burst.ttlUntilTick > tick) {
+      nextBursts.push(burst);
+    }
+  }
+
+  return nextBursts;
+};
+
+const stepLaunchBursts = (
+  launchBursts: readonly CombatSandboxRocketLaunchBurst[],
+  tick: number,
+): CombatSandboxRocketLaunchBurst[] => {
+  const nextBursts: CombatSandboxRocketLaunchBurst[] = [];
+
+  for (const burst of launchBursts) {
+    if (burst.ttlUntilTick > tick) {
+      nextBursts.push(burst);
+    }
+  }
+
+  return nextBursts;
+};
 
 const queueCacheRespawn = (
   cacheRespawnAtTicks: number[],
@@ -1053,11 +1355,11 @@ const queueCacheRespawn = (
 };
 
 const applyCacheDelivery = (
-  player: CombatSandboxPlayerState,
+  controller: CombatSandboxControllerState,
   planets: CombatSandboxPlanet[],
   contents: CacheContents,
 ) => {
-  const playerPlanet = findPlayerPlanet(planets, player.planetId);
+  const playerPlanet = findPlayerPlanet(planets, controller.planetId);
   if (playerPlanet === null) {
     return;
   }
@@ -1066,26 +1368,26 @@ const applyCacheDelivery = (
 
   switch (contents.kind) {
     case "heavyAmmo":
-      player.ammo.heavy += 1;
+      controller.ammo.heavy += 1;
       break;
     case "seekerPack":
-      player.ammo.seeker += 2;
+      controller.ammo.seeker += 2;
       break;
     case "repair":
       playerPlanet.hp = Math.min(PLANET_HP, playerPlanet.hp + REPAIR_AMOUNT);
       break;
     case "boostCharge":
-      player.boostCharges = maxBoostCharges;
-      player.nextBoostChargeAtTick = null;
+      controller.boostCharges = maxBoostCharges;
+      controller.nextBoostChargeAtTick = null;
       break;
     case "shieldExt":
-      player.nextShieldExt = true;
+      controller.nextShieldExt = true;
       break;
     case "foresightExt":
-      player.nextForesightExt = true;
+      controller.nextForesightExt = true;
       break;
     case "wildcard":
-      player.wildcardSlot = contents.wildcard.kind;
+      controller.wildcardSlot = contents.wildcard.kind;
       break;
   }
 };
@@ -1290,15 +1592,15 @@ const createCacheDebris = (
 const stepDroneEntity = (
   drone: CombatSandboxDrone,
   ownerPlanet: CombatSandboxPlanet | null,
-  player: CombatSandboxPlayerState,
-  aimWorld: Vec2,
+  controller: CombatSandboxControllerState | null,
   burstRequested: boolean,
   suns: readonly Sun[],
   blackHole: BlackHole | null,
 ): CombatSandboxDrone => {
   let nextDrone = drone;
   const isPiloted =
-    player.activeDroneId === drone.id && player.controlMode === "drone";
+    controller?.activeDroneId === drone.id &&
+    controller.controlMode === "drone";
   let thrustDir: Vec2 | null = null;
 
   if (drone.mode === "return") {
@@ -1307,7 +1609,11 @@ const stepDroneEntity = (
         ? null
         : aimDirFromWorldTarget(drone, ownerPlanet.pos, DEFAULT_AIM_DIR);
   } else if (isPiloted) {
-    thrustDir = aimDirFromWorldTarget(drone, aimWorld, DEFAULT_AIM_DIR);
+    thrustDir = aimDirFromWorldTarget(
+      drone,
+      controller?.aimWorld ?? add(drone.pos, drone.vel),
+      DEFAULT_AIM_DIR,
+    );
   }
 
   if (thrustDir !== null && len(thrustDir) > 0) {
@@ -1348,6 +1654,109 @@ const stepDroneEntity = (
   };
 };
 
+const applyBotCommand = (
+  controller: CombatSandboxBotState,
+  frame: CombatSandboxControllerFrame,
+  planets: readonly CombatSandboxPlanet[],
+  drones: readonly CombatSandboxDrone[],
+  command: CombatBotCommand,
+) => {
+  const controlledBody = getControlledBody(planets, drones, controller);
+
+  switch (command.type) {
+    case "input":
+      setAimWorldFromDirection(controller, controlledBody, command.mouseDir);
+      break;
+
+    case "shieldAim": {
+      const shieldAimDir = normalize(command.dir);
+      if (len(shieldAimDir) > 0) {
+        controller.shieldAimDir = shieldAimDir;
+      }
+      break;
+    }
+
+    case "fireRocket": {
+      controller.selectedRocketKind = command.kind;
+      const targetPlanet =
+        command.targetId === undefined
+          ? null
+          : (findPlayerPlanet(planets, command.targetId) ?? null);
+      if (targetPlanet?.alive) {
+        controller.aimWorld = {
+          x: targetPlanet.pos.x,
+          y: targetPlanet.pos.y,
+        };
+      } else {
+        setAimWorldFromDirection(controller, controlledBody, command.aimDir);
+      }
+      frame.fireRequested = true;
+      break;
+    }
+
+    case "ability":
+      if (command.aimDir !== undefined) {
+        setAimWorldFromDirection(controller, controlledBody, command.aimDir);
+      }
+      if (command.slot === "w" && command.aimDir !== undefined) {
+        const shieldAimDir = normalize(command.aimDir);
+        if (len(shieldAimDir) > 0) {
+          controller.shieldAimDir = shieldAimDir;
+        }
+      }
+      if (command.slot === "q") {
+        frame.foresightRequested = true;
+      } else if (command.slot === "w") {
+        frame.shieldRequested = true;
+      } else if (command.slot === "e") {
+        frame.boostRequested = true;
+      } else if (command.slot === "r") {
+        frame.wildcardRequested = true;
+      }
+      break;
+
+    case "launchDrone":
+      setAimWorldFromDirection(controller, controlledBody, command.aimDir);
+      frame.droneLaunchRequested = true;
+      break;
+
+    case "droneInput":
+      setAimWorldFromDirection(controller, controlledBody, command.aimDir);
+      frame.droneBurstRequested ||= command.burst;
+      break;
+
+    case "droneAutoReturn":
+      frame.droneAutoReturnRequested = true;
+      break;
+  }
+};
+
+const syncControllersToPlanets = (
+  planets: CombatSandboxPlanet[],
+  controllers: ReadonlyMap<string, CombatSandboxControllerState>,
+) => {
+  for (let index = 0; index < planets.length; index += 1) {
+    const planet = planets[index]!;
+    const controller = controllers.get(planet.playerId);
+    if (controller === undefined) {
+      continue;
+    }
+
+    planets[index] = {
+      ...planet,
+      shieldAimDir: {
+        x: controller.shieldAimDir.x,
+        y: controller.shieldAimDir.y,
+      },
+      shieldActiveUntilTick: controller.shieldActiveUntilTick,
+      pilotingDroneId:
+        controller.controlMode === "drone"
+          ? (controller.activeDroneId ?? undefined)
+          : undefined,
+    };
+  }
+};
+
 export const createSandboxState = (
   preset: OrbitPreset = DEFAULT_ORBIT_PRESET,
 ): CombatSandboxState => {
@@ -1355,9 +1764,23 @@ export const createSandboxState = (
   const planets = preset.planets.map((planetSeed, index) =>
     clonePlanetSeed(planetSeed, index, playerPlanetId),
   );
-  const playerArchetype = planets[PLAYER_PLANET_INDEX]!.archetype;
+  const player = createControllerState(planets[PLAYER_PLANET_INDEX]!);
+  const bots = planets
+    .filter((planet) => planet.id !== playerPlanetId)
+    .map(
+      (planet): CombatSandboxBotState => ({
+        ...createControllerState(planet),
+        difficulty: LOCAL_BOT_DIFFICULTY,
+        memory: createCombatBotMemory(),
+      }),
+    );
   const rng = createSandboxRng(preset);
   const initialCaches = createInitialCaches(rng, nextRocketIdBase);
+  const controllerByPlayerId = new Map<string, CombatSandboxControllerState>([
+    [player.playerId, player],
+    ...bots.map((bot) => [bot.playerId, bot] as const),
+  ]);
+  syncControllersToPlanets(planets, controllerByPlayerId);
 
   return {
     tick: 0,
@@ -1379,38 +1802,10 @@ export const createSandboxState = (
     cacheRespawnAtTicks: [],
     debris: [],
     impactBursts: [],
+    launchBursts: [],
     blackHole: null,
-    player: {
-      planetId: playerPlanetId,
-      selectedRocketKind: "light",
-      ammo: createInitialAmmo(),
-      reloadUntilTick: {
-        heavy: 0,
-        light: 0,
-        seeker: 0,
-      },
-      aimWorld: {
-        x: planets[PLAYER_PLANET_INDEX]!.pos.x + 180,
-        y: planets[PLAYER_PLANET_INDEX]!.pos.y,
-      },
-      lockTargetId: null,
-      seekerLockAcquiredAtTick: null,
-      foresightActiveUntilTick: 0,
-      foresightCooldownUntilTick: 0,
-      shieldAimDir: { x: DEFAULT_AIM_DIR.x, y: DEFAULT_AIM_DIR.y },
-      shieldActiveUntilTick: 0,
-      shieldCooldownUntilTick: 0,
-      boostCharges: getBoostChargeCapacity(playerArchetype),
-      nextBoostChargeAtTick: null,
-      lastBoostTick: null,
-      lastBoostAimDir: { x: DEFAULT_AIM_DIR.x, y: DEFAULT_AIM_DIR.y },
-      droneCooldownUntilTick: 0,
-      activeDroneId: null,
-      controlMode: "planet",
-      wildcardSlot: null,
-      nextShieldExt: false,
-      nextForesightExt: false,
-    },
+    player,
+    bots,
     nextEntityId: initialCaches.nextEntityId,
     playerLostAtSec: null,
     rng,
@@ -1421,24 +1816,42 @@ export const stepSandbox = (
   state: CombatSandboxState,
   input: CombatSandboxStepInput,
   blackHoleSpec: BlackHoleSpec,
+  options: CombatSandboxSimulationOptions = {},
 ): CombatSandboxState => {
   const blackHole = maybeSpawnBlackHole(state, blackHoleSpec);
   const nextTick = state.tick + 1;
   const nextElapsedSec = state.elapsedSec + FIXED_STEP_SEC;
-  const initialPlayerArchetypeId = getPlayerArchetypeId(
-    state.planets,
-    state.player.planetId,
-  );
-  const player = {
+  const planetImpactRadiusMultiplier =
+    options.planetImpactRadiusMultiplier ??
+    DEFAULT_ROCKET_PLANET_IMPACT_RADIUS_MULTIPLIER;
+  const player = cloneControllerState({
     ...state.player,
     aimWorld: { x: input.aimWorld.x, y: input.aimWorld.y },
     selectedRocketKind: input.selectedRocketKind,
-  };
-  refreshBoostCharges(
-    player,
-    state.tick,
-    getBoostChargeCapacity(initialPlayerArchetypeId),
+  });
+  const bots = state.bots.map(cloneBotState);
+  const controllers: CombatSandboxControllerState[] = [player, ...bots];
+  const controllerByPlayerId = new Map<string, CombatSandboxControllerState>(
+    controllers.map((controller) => [controller.playerId, controller]),
   );
+  const frameByPlayerId = new Map<string, CombatSandboxControllerFrame>([
+    [
+      player.playerId,
+      {
+        ...createControllerFrame(),
+        fireRequested: input.fireRequested,
+        foresightRequested: input.foresightRequested,
+        shieldRequested: input.shieldRequested,
+        boostRequested: input.boostRequested,
+        wildcardRequested: input.wildcardRequested,
+        droneLaunchRequested: input.droneLaunchRequested,
+        droneBurstRequested: input.droneBurstRequested,
+        droneAutoReturnRequested: input.droneAutoReturnRequested,
+        droneRecallRequested: input.droneRecallRequested,
+      },
+    ],
+    ...bots.map((bot) => [bot.playerId, createControllerFrame()] as const),
+  ]);
 
   let planets = state.planets.map(clonePlanet);
   let rockets = state.rockets.map(cloneRocket);
@@ -1446,32 +1859,62 @@ export const stepSandbox = (
   let caches = state.caches.map(cloneCache);
   const cacheRespawnAtTicks = [...state.cacheRespawnAtTicks];
   let nextEntityId = state.nextEntityId;
-  const currentPlayerPlanet = findPlayerPlanet(planets, player.planetId);
-  const currentPlayerArchetypeId =
-    currentPlayerPlanet?.archetype ?? initialPlayerArchetypeId;
-  const currentPlayerArchetype = getArchetypeStats(currentPlayerArchetypeId);
-  const currentPlayerMaxBoostCharges = getBoostChargeCapacity(
-    currentPlayerArchetypeId,
-  );
-  const currentAimDir = aimDirFromWorldTarget(
-    currentPlayerPlanet,
-    player.aimWorld,
-    player.shieldAimDir,
-  );
-  const debrisBursts: CombatSandboxDebris[] = [];
-  const impactBursts = stepImpactBursts(state.impactBursts, nextTick);
 
-  const removeDrone = (
-    droneId: number,
-    mode: "dropCargo" | "delivery" | "cleanup",
-  ) => {
-    const drone = drones.find((item) => item.id === droneId) ?? null;
-    if (drone === null) {
-      return;
+  for (const controller of controllers) {
+    const archetypeId = getPlayerArchetypeId(planets, controller.planetId);
+    refreshBoostCharges(
+      controller,
+      state.tick,
+      getBoostChargeCapacity(archetypeId),
+    );
+  }
+
+  const botWorld = createCombatBotWorld({
+    blackHole,
+    caches,
+    debris: state.debris,
+    drones,
+    planets,
+    rockets,
+    suns: state.suns,
+  });
+  for (const bot of bots) {
+    const self = findPlayerPlanet(planets, bot.planetId);
+    if (self === null || !self.alive) {
+      continue;
     }
 
-    const nextDrones = drones.filter((item) => item.id !== droneId);
-    drones = nextDrones;
+    const frame = frameByPlayerId.get(bot.playerId)!;
+    const runtime: CombatBotRuntime = {
+      activeDroneId: bot.activeDroneId,
+      controlMode: bot.controlMode,
+    };
+    const commands = decideCombatBot(
+      {
+        difficulty: bot.difficulty,
+        tick: state.tick,
+        tickHz: SIM_HZ,
+        world: botWorld,
+        self,
+        privateState: toBotPrivateState(bot),
+        runtime,
+      },
+      bot.memory,
+    );
+    for (const command of commands) {
+      applyBotCommand(bot, frame, planets, drones, command);
+    }
+  }
+
+  syncControllersToPlanets(planets, controllerByPlayerId);
+  const debrisBursts: CombatSandboxDebris[] = [];
+  const impactBursts = stepImpactBursts(state.impactBursts, nextTick);
+  const launchBursts = stepLaunchBursts(state.launchBursts, nextTick);
+
+  const finalizeDroneRemoval = (
+    drone: CombatSandboxDrone,
+    mode: "dropCargo" | "delivery" | "cleanup",
+  ) => {
     debrisBursts.push(...createDroneDebris(nextTick, nextEntityId, drone));
     nextEntityId += DRONE_DEBRIS_PIECES;
 
@@ -1480,163 +1923,223 @@ export const stepSandbox = (
       nextEntityId += 1;
     }
 
-    if (player.activeDroneId === droneId) {
-      player.activeDroneId = null;
-      player.controlMode = "planet";
+    const ownerController = controllerByPlayerId.get(drone.ownerId);
+    if (ownerController?.activeDroneId === drone.id) {
+      ownerController.activeDroneId = null;
+      ownerController.controlMode = "planet";
     }
   };
 
-  if (input.droneRecallRequested && player.activeDroneId !== null) {
-    removeDrone(player.activeDroneId, "dropCargo");
-  } else if (input.droneAutoReturnRequested && player.activeDroneId !== null) {
-    const activeDrone = findActiveDrone(drones, player.activeDroneId);
-    if (activeDrone !== null) {
-      activeDrone.mode = "return";
-      player.controlMode = "planet";
+  const removeDrone = (
+    droneId: number,
+    mode: "dropCargo" | "delivery" | "cleanup",
+  ) => {
+    const droneIndex = findDroneIndex(drones, droneId);
+    if (droneIndex < 0) {
+      return;
+    }
+
+    const [drone] = drones.splice(droneIndex, 1);
+    finalizeDroneRemoval(drone!, mode);
+  };
+
+  for (const controller of controllers) {
+    const frame = frameByPlayerId.get(controller.playerId)!;
+    if (frame.droneRecallRequested && controller.activeDroneId !== null) {
+      removeDrone(controller.activeDroneId, "dropCargo");
+      continue;
+    }
+    if (frame.droneAutoReturnRequested && controller.activeDroneId !== null) {
+      const activeDroneIndex = findDroneIndex(drones, controller.activeDroneId);
+      if (activeDroneIndex >= 0) {
+        const activeDrone = drones[activeDroneIndex]!;
+        drones[activeDroneIndex] = {
+          ...activeDrone,
+          mode: "return",
+        };
+      }
+      controller.controlMode = "planet";
     }
   }
 
-  if (
-    input.droneLaunchRequested &&
-    currentPlayerPlanet?.alive &&
-    player.controlMode === "planet" &&
-    player.activeDroneId === null &&
-    state.tick >= player.droneCooldownUntilTick &&
-    len(currentAimDir) > 0
-  ) {
-    const drone = createDroneLaunch(
-      nextEntityId,
-      currentPlayerPlanet,
-      currentAimDir,
-      state.tick,
+  for (const controller of controllers) {
+    const frame = frameByPlayerId.get(controller.playerId)!;
+    const currentPlanet = findPlayerPlanet(planets, controller.planetId);
+    const currentAimDir = aimDirFromWorldTarget(
+      currentPlanet,
+      controller.aimWorld,
+      controller.shieldAimDir,
     );
-    drones.push(drone);
-    player.activeDroneId = drone.id;
-    player.controlMode = "drone";
-    player.droneCooldownUntilTick = state.tick + DRONE_COOLDOWN_TICKS;
-    nextEntityId += 1;
+    if (
+      frame.droneLaunchRequested &&
+      currentPlanet?.alive &&
+      controller.controlMode === "planet" &&
+      controller.activeDroneId === null &&
+      state.tick >= controller.droneCooldownUntilTick &&
+      len(currentAimDir) > 0
+    ) {
+      const drone = createDroneLaunch(
+        nextEntityId,
+        currentPlanet,
+        currentAimDir,
+        state.tick,
+      );
+      drones.push(drone);
+      controller.activeDroneId = drone.id;
+      controller.controlMode = "drone";
+      controller.droneCooldownUntilTick = state.tick + DRONE_COOLDOWN_TICKS;
+      nextEntityId += 1;
+    }
   }
 
-  const playerPlanetBeforeStep = findPlayerPlanet(planets, player.planetId);
-  if (playerPlanetBeforeStep !== null) {
-    playerPlanetBeforeStep.pilotingDroneId =
-      player.controlMode === "drone"
-        ? (player.activeDroneId ?? undefined)
-        : undefined;
-  }
-
-  if (
-    input.foresightRequested &&
-    player.controlMode === "planet" &&
-    playerPlanetBeforeStep?.alive &&
-    state.tick >= player.foresightCooldownUntilTick
-  ) {
-    const durationTicks = Math.max(
-      1,
-      Math.round(
-        getForesightDurationTicks() *
-          currentPlayerArchetype.foresightDurationMultiplier *
-          (player.nextForesightExt ? FORESIGHT_EXT_MULTIPLIER : 1),
-      ),
+  const boostAimByPlayerId = new Map<string, Vec2>();
+  for (const controller of controllers) {
+    const frame = frameByPlayerId.get(controller.playerId)!;
+    const planetBeforeStep = findPlayerPlanet(planets, controller.planetId);
+    const archetypeId =
+      planetBeforeStep?.archetype ??
+      getPlayerArchetypeId(planets, controller.planetId);
+    const archetype = getArchetypeStats(archetypeId);
+    const maxBoostCharges = getBoostChargeCapacity(archetypeId);
+    const currentAimDir = aimDirFromWorldTarget(
+      planetBeforeStep,
+      controller.aimWorld,
+      controller.shieldAimDir,
     );
-    player.foresightActiveUntilTick = state.tick + durationTicks;
-    player.foresightCooldownUntilTick =
-      state.tick + getForesightCooldownTicks();
-    player.nextForesightExt = false;
-  }
 
-  if (
-    input.shieldRequested &&
-    player.controlMode === "planet" &&
-    playerPlanetBeforeStep?.alive
-  ) {
-    if (hasActiveShield(player, state.tick)) {
-      player.shieldActiveUntilTick = state.tick;
-    } else if (state.tick >= player.shieldCooldownUntilTick) {
+    if (
+      frame.foresightRequested &&
+      controller.controlMode === "planet" &&
+      planetBeforeStep?.alive &&
+      state.tick >= controller.foresightCooldownUntilTick
+    ) {
       const durationTicks = Math.max(
         1,
         Math.round(
-          getShieldDurationTicks() *
-            currentPlayerArchetype.shieldDurationMultiplier *
-            (player.nextShieldExt ? SHIELD_EXT_MULTIPLIER : 1),
+          getForesightDurationTicks() *
+            archetype.foresightDurationMultiplier *
+            (controller.nextForesightExt ? FORESIGHT_EXT_MULTIPLIER : 1),
         ),
       );
-      player.shieldActiveUntilTick = state.tick + durationTicks;
-      player.shieldCooldownUntilTick = state.tick + getShieldCooldownTicks();
-      player.shieldAimDir = currentAimDir;
-      player.nextShieldExt = false;
+      controller.foresightActiveUntilTick = state.tick + durationTicks;
+      controller.foresightCooldownUntilTick =
+        state.tick + getForesightCooldownTicks();
+      controller.nextForesightExt = false;
     }
-  }
 
-  if (
-    input.wildcardRequested &&
-    player.controlMode === "planet" &&
-    playerPlanetBeforeStep?.alive &&
-    player.wildcardSlot !== null
-  ) {
-    const wildcard = player.wildcardSlot;
-    const consumed = activateWildcard(
-      wildcard,
-      planets,
-      rockets,
-      drones,
-      caches,
-      player,
-      player.aimWorld,
-      state.tick,
-    );
-    if (consumed) {
-      player.wildcardSlot = null;
-    }
-  }
-
-  const boostRequested =
-    input.boostRequested &&
-    player.controlMode === "planet" &&
-    playerPlanetBeforeStep?.alive &&
-    player.boostCharges > 0 &&
-    len(currentAimDir) > 0;
-  const boostAimDir = boostRequested ? currentAimDir : null;
-  if (boostRequested && boostAimDir !== null) {
-    player.boostCharges -= 1;
-    player.lastBoostTick = nextTick;
-    player.lastBoostAimDir = boostAimDir;
     if (
-      player.boostCharges < currentPlayerMaxBoostCharges &&
-      player.nextBoostChargeAtTick === null
+      frame.shieldRequested &&
+      controller.controlMode === "planet" &&
+      planetBeforeStep?.alive
     ) {
-      player.nextBoostChargeAtTick = state.tick + getBoostRechargeTicks();
+      if (hasActiveShield(controller, state.tick)) {
+        controller.shieldActiveUntilTick = state.tick;
+      } else if (state.tick >= controller.shieldCooldownUntilTick) {
+        const durationTicks = Math.max(
+          1,
+          Math.round(
+            getShieldDurationTicks() *
+              archetype.shieldDurationMultiplier *
+              (controller.nextShieldExt ? SHIELD_EXT_MULTIPLIER : 1),
+          ),
+        );
+        controller.shieldActiveUntilTick = state.tick + durationTicks;
+        controller.shieldCooldownUntilTick =
+          state.tick + getShieldCooldownTicks();
+        controller.shieldAimDir = currentAimDir;
+        controller.nextShieldExt = false;
+      }
+    }
+
+    if (
+      frame.wildcardRequested &&
+      controller.controlMode === "planet" &&
+      planetBeforeStep?.alive &&
+      controller.wildcardSlot !== null
+    ) {
+      const consumed = activateWildcard(
+        controller.wildcardSlot,
+        planets,
+        rockets,
+        drones,
+        caches,
+        controller,
+        controller.aimWorld,
+        state.tick,
+      );
+      if (consumed) {
+        controller.wildcardSlot = null;
+      }
+    }
+
+    const boostRequested =
+      frame.boostRequested &&
+      controller.controlMode === "planet" &&
+      planetBeforeStep?.alive &&
+      controller.boostCharges > 0 &&
+      len(currentAimDir) > 0;
+    if (boostRequested) {
+      controller.boostCharges -= 1;
+      controller.lastBoostTick = nextTick;
+      controller.lastBoostAimDir = currentAimDir;
+      boostAimByPlayerId.set(controller.playerId, currentAimDir);
+      if (
+        controller.boostCharges < maxBoostCharges &&
+        controller.nextBoostChargeAtTick === null
+      ) {
+        controller.nextBoostChargeAtTick = state.tick + getBoostRechargeTicks();
+      }
     }
   }
+
+  syncControllersToPlanets(planets, controllerByPlayerId);
 
   const suns = stepCombatSuns(state.suns, blackHole, nextElapsedSec);
   const activeSuns = getActiveCombatSuns(suns);
-  planets = planets.map((planet) => {
+  const steppedPlanets: CombatSandboxPlanet[] = new Array(planets.length);
+  for (let index = 0; index < planets.length; index += 1) {
+    const planet = planets[index]!;
     if (!planet.alive) {
-      return planet;
+      steppedPlanets[index] = planet;
+      continue;
     }
 
+    const controller = controllerByPlayerId.get(planet.playerId);
     const debuffs = normalizePlanetDebuffs(planet.debuffs, state.tick);
+    const boostAimDir = boostAimByPlayerId.get(planet.playerId) ?? null;
     const boostedPlanet =
-      boostAimDir !== null && planet.id === player.planetId
+      boostAimDir !== null && controller !== undefined
         ? {
             ...planet,
             debuffs,
+            shieldAimDir: {
+              x: controller.shieldAimDir.x,
+              y: controller.shieldAimDir.y,
+            },
+            shieldActiveUntilTick: controller.shieldActiveUntilTick,
             vel: add(
               planet.vel,
               scale(
                 boostAimDir,
                 BOOST_SPEC.magnitude *
-                  currentPlayerArchetype.boostMagnitudeMultiplier,
+                  getArchetypeStats(planet.archetype).boostMagnitudeMultiplier,
               ),
             ),
           }
         : {
             ...planet,
             debuffs,
+            shieldAimDir:
+              controller === undefined
+                ? planet.shieldAimDir
+                : {
+                    x: controller.shieldAimDir.x,
+                    y: controller.shieldAimDir.y,
+                  },
+            shieldActiveUntilTick:
+              controller?.shieldActiveUntilTick ?? planet.shieldActiveUntilTick,
           };
     const dragActive = debuffs.dragUntilTick !== undefined;
-
     const steppedPlanet = stepBody(
       boostedPlanet,
       activeSuns,
@@ -1644,134 +2147,170 @@ export const stepSandbox = (
       blackHole ?? undefined,
     );
 
-    return dragActive
+    const nextPlanet = dragActive
       ? {
           ...steppedPlanet,
           vel: scale(steppedPlanet.vel, UMBRA_DRAG_STEP_MULTIPLIER),
         }
       : steppedPlanet;
-  });
-  const deathPlanetIds = new Set<number>();
-  const steppedPlayerPlanet = findPlayerPlanet(planets, player.planetId);
-  if (steppedPlayerPlanet?.alive) {
-    steppedPlayerPlanet.pilotingDroneId =
-      player.controlMode === "drone"
-        ? (player.activeDroneId ?? undefined)
-        : undefined;
-    player.shieldAimDir = aimDirFromWorldTarget(
-      steppedPlayerPlanet,
-      player.aimWorld,
-      player.shieldAimDir,
-    );
-  }
+    if (controller !== undefined) {
+      controller.shieldAimDir = aimDirFromWorldTarget(
+        nextPlanet,
+        controller.aimWorld,
+        controller.shieldAimDir,
+      );
+      nextPlanet.shieldAimDir = {
+        x: controller.shieldAimDir.x,
+        y: controller.shieldAimDir.y,
+      };
+      nextPlanet.shieldActiveUntilTick = controller.shieldActiveUntilTick;
+      nextPlanet.pilotingDroneId =
+        controller.controlMode === "drone"
+          ? (controller.activeDroneId ?? undefined)
+          : undefined;
+    }
 
+    steppedPlanets[index] = nextPlanet;
+  }
+  planets = steppedPlanets;
+  const deathPlanetIds = new Set<number>();
   markEnvironmentalPlanetDeaths(
     planets,
     activeSuns,
     blackHole,
     deathPlanetIds,
-    player,
+    controllerByPlayerId,
     nextTick,
   );
   applyPlanetPairCollisions(planets, deathPlanetIds);
 
-  const nextLockTargetId =
-    player.controlMode === "planet"
-      ? (findAliveTargetPlanet(planets, player.planetId, player.aimWorld)?.id ??
-        null)
-      : null;
-  if (nextLockTargetId === null) {
-    player.seekerLockAcquiredAtTick = null;
-  } else if (player.lockTargetId !== nextLockTargetId) {
-    player.seekerLockAcquiredAtTick = nextTick;
+  for (const controller of controllers) {
+    const nextLockTargetId =
+      controller.controlMode === "planet"
+        ? (findAliveTargetPlanet(
+            planets,
+            controller.planetId,
+            controller.aimWorld,
+          )?.id ?? null)
+        : null;
+    if (nextLockTargetId === null) {
+      controller.seekerLockAcquiredAtTick = null;
+    } else if (controller.lockTargetId !== nextLockTargetId) {
+      controller.seekerLockAcquiredAtTick = nextTick;
+    }
+    controller.lockTargetId = nextLockTargetId;
+
+    const archetypeId = getPlayerArchetypeId(planets, controller.planetId);
+    addLightAmmoCharge(
+      controller.ammo,
+      controller.reloadUntilTick,
+      nextTick,
+      archetypeId,
+    );
+    if (controller.reloadUntilTick.heavy <= nextTick) {
+      controller.reloadUntilTick.heavy = 0;
+    }
+    if (controller.reloadUntilTick.seeker <= nextTick) {
+      controller.reloadUntilTick.seeker = 0;
+    }
+    if (
+      controller.ammo.light >= ROCKET_SPECS.light.maxAmmo &&
+      controller.reloadUntilTick.light <= nextTick
+    ) {
+      controller.reloadUntilTick.light = 0;
+    }
   }
-  player.lockTargetId = nextLockTargetId;
 
-  addLightAmmoCharge(
-    player.ammo,
-    player.reloadUntilTick,
-    nextTick,
-    currentPlayerArchetypeId,
-  );
-  if (player.reloadUntilTick.heavy <= nextTick) {
-    player.reloadUntilTick.heavy = 0;
+  const spawnedLaunchBursts: CombatSandboxRocketLaunchBurst[] = [];
+  const spawnedRockets: CombatSandboxRocket[] = [];
+  for (const controller of controllers) {
+    const frame = frameByPlayerId.get(controller.playerId)!;
+    if (!frame.fireRequested) {
+      continue;
+    }
+
+    const fired = maybeFireRocket(
+      controller,
+      planets,
+      nextTick,
+      state.elapsedSec,
+      nextEntityId,
+    );
+    nextEntityId += fired.rockets.length;
+    spawnedLaunchBursts.push(...fired.launchBursts);
+    spawnedRockets.push(...fired.rockets);
   }
-  if (player.reloadUntilTick.seeker <= nextTick) {
-    player.reloadUntilTick.seeker = 0;
+  if (spawnedRockets.length > 0) {
+    rockets.push(...spawnedRockets);
   }
-  if (
-    player.ammo.light >= ROCKET_SPECS.light.maxAmmo &&
-    player.reloadUntilTick.light <= nextTick
-  ) {
-    player.reloadUntilTick.light = 0;
+  if (spawnedLaunchBursts.length > 0) {
+    launchBursts.push(...spawnedLaunchBursts);
   }
 
-  const stateForSpawn: CombatSandboxState = {
-    ...state,
-    tick: nextTick,
-    elapsedSec: nextElapsedSec,
-    suns,
-    planets,
-    rockets,
-    drones,
-    caches,
-    cacheRespawnAtTicks,
-    player,
-    blackHole,
-    debris: state.debris,
-    impactBursts: state.impactBursts,
-    nextEntityId,
-  };
-  const spawnedRockets = input.fireRequested
-    ? maybeFireRocket(stateForSpawn, planets)
-    : [];
-  nextEntityId += spawnedRockets.length;
+  const alivePlanetsById = new Map<number, CombatSandboxPlanet>();
+  const ownerPlanetsById = new Map<string, CombatSandboxPlanet>();
+  for (const planet of planets) {
+    if (!planet.alive) {
+      continue;
+    }
 
-  rockets = [...rockets, ...spawnedRockets]
-    .map((rocket) => {
-      if (rocket.ttlUntilTick <= nextTick) {
-        return null;
-      }
+    alivePlanetsById.set(planet.id, planet);
+    ownerPlanetsById.set(planet.playerId, planet);
+  }
 
-      const target =
-        rocket.targetId === undefined
-          ? null
-          : (planets.find(
-              (planet) => planet.id === rocket.targetId && planet.alive,
-            ) ?? null);
-      return stepCombatRocket(rocket, target, activeSuns, blackHole);
-    })
-    .filter((rocket): rocket is CombatSandboxRocket => rocket !== null);
+  const steppedRockets: CombatSandboxRocket[] = [];
+  for (const rocket of rockets) {
+    if (rocket.ttlUntilTick <= nextTick) {
+      continue;
+    }
 
-  drones = drones
-    .map((drone) => {
-      if (drone.ttlUntilTick <= nextTick) {
-        removeDrone(drone.id, "dropCargo");
-        return null;
-      }
+    const target =
+      rocket.targetId === undefined
+        ? null
+        : (alivePlanetsById.get(rocket.targetId) ?? null);
+    steppedRockets.push(
+      stepCombatRocket(rocket, target, activeSuns, blackHole),
+    );
+  }
+  rockets = steppedRockets;
 
-      const ownerPlanet = findOwnerPlanet(planets, drone.ownerId);
-      return stepDroneEntity(
+  const steppedDrones: CombatSandboxDrone[] = [];
+  for (const drone of drones) {
+    if (drone.ttlUntilTick <= nextTick) {
+      finalizeDroneRemoval(drone, "dropCargo");
+      continue;
+    }
+
+    const ownerPlanet = ownerPlanetsById.get(drone.ownerId) ?? null;
+    const ownerController = controllerByPlayerId.get(drone.ownerId) ?? null;
+    const ownerFrame =
+      ownerController === null
+        ? null
+        : (frameByPlayerId.get(ownerController.playerId) ?? null);
+    steppedDrones.push(
+      stepDroneEntity(
         drone,
         ownerPlanet,
-        player,
-        player.aimWorld,
-        input.droneBurstRequested,
+        ownerController,
+        ownerFrame?.droneBurstRequested ?? false,
         activeSuns,
         blackHole,
-      );
-    })
-    .filter((drone): drone is CombatSandboxDrone => drone !== null);
+      ),
+    );
+  }
+  drones = steppedDrones;
 
-  caches = caches.map((cache) =>
-    stepBodyWithGravityScale(
-      cache,
+  const steppedCaches: CombatSandboxCache[] = new Array(caches.length);
+  for (let index = 0; index < caches.length; index += 1) {
+    steppedCaches[index] = stepBodyWithGravityScale(
+      caches[index]!,
       activeSuns,
       FIXED_STEP_SEC,
       CACHE_GRAVITY_SCALE,
       blackHole ?? undefined,
-    ),
-  );
+    );
+  }
+  caches = steppedCaches;
 
   const survivingRockets: CombatSandboxRocket[] = [];
   const destroyedDroneModes = new Map<
@@ -1877,10 +2416,17 @@ export const stepSandbox = (
 
       if (
         dist(rocket.pos, planet.pos) <=
-        rocket.radius + planet.radius * ROCKET_PLANET_IMPACT_RADIUS_MULTIPLIER
+        rocket.radius + planet.radius * planetImpactRadiusMultiplier
       ) {
         emitPlanetImpact(planet, rocket);
-        if (shieldProtectsImpact(planet, player, rocket.pos, nextTick)) {
+        if (
+          shieldProtectsImpact(
+            planet,
+            controllerByPlayerId,
+            rocket.pos,
+            nextTick,
+          )
+        ) {
           emitRocketImpact(rocket);
           consumed = true;
           break;
@@ -1987,7 +2533,10 @@ export const stepSandbox = (
 
       if (planet.playerId === drone.ownerId) {
         if (drone.cargo !== undefined) {
-          applyCacheDelivery(player, planets, drone.cargo);
+          const ownerController = controllerByPlayerId.get(drone.ownerId);
+          if (ownerController !== undefined) {
+            applyCacheDelivery(ownerController, planets, drone.cargo);
+          }
           scheduleDroneRemoval(drone.id, "delivery");
           destroyedBySunOrPlanet = true;
           break;
@@ -2064,8 +2613,9 @@ export const stepSandbox = (
           dist(cache.pos, planet.pos) <= cache.radius + planet.radius
         ) {
           pickedUpByPlanet = true;
-          if (planet.id === player.planetId) {
-            applyCacheDelivery(player, planets, cache.contents);
+          const controller = controllerByPlayerId.get(planet.playerId);
+          if (controller !== undefined) {
+            applyCacheDelivery(controller, planets, cache.contents);
           }
           cacheIdsPickedUp.add(cache.id);
           queueCacheRespawn(
@@ -2121,19 +2671,17 @@ export const stepSandbox = (
     ...stepDebris(state.debris, activeSuns, blackHole, nextTick),
     ...debrisBursts,
   ];
-  const nextPlayerPlanet = findPlayerPlanet(planets, player.planetId);
-
-  if (
-    player.activeDroneId !== null &&
-    findActiveDrone(drones, player.activeDroneId) === null
-  ) {
-    player.activeDroneId = null;
-    player.controlMode = "planet";
-    const playerPlanet = findPlayerPlanet(planets, player.planetId);
-    if (playerPlanet !== null) {
-      playerPlanet.pilotingDroneId = undefined;
+  for (const controller of controllers) {
+    if (
+      controller.activeDroneId !== null &&
+      findActiveDrone(drones, controller.activeDroneId) === null
+    ) {
+      controller.activeDroneId = null;
+      controller.controlMode = "planet";
     }
   }
+  syncControllersToPlanets(planets, controllerByPlayerId);
+  const nextPlayerPlanet = findPlayerPlanet(planets, player.planetId);
 
   const playerLostAtSec =
     nextPlayerPlanet === null || !nextPlayerPlanet.alive
@@ -2152,8 +2700,10 @@ export const stepSandbox = (
     cacheRespawnAtTicks,
     debris,
     impactBursts,
+    launchBursts,
     blackHole,
     player,
+    bots,
     nextEntityId,
     playerLostAtSec,
     rng: state.rng,
@@ -2185,75 +2735,324 @@ export const getSandboxResetReason = (
   return null;
 };
 
-const interpolateEntity = <T extends EntityBase>(
-  previousEntity: T | undefined,
-  currentEntity: T,
+export const createSandboxInterpolationCache =
+  (): CombatSandboxInterpolationCache => ({
+    previousRocketMap: new Map<number, CombatSandboxRocket>(),
+    previousDroneMap: new Map<number, CombatSandboxDrone>(),
+    previousCacheMap: new Map<number, CombatSandboxCache>(),
+    previousDebrisMap: new Map<number, CombatSandboxDebris>(),
+  });
+
+export const createInterpolatedSandboxState = (
+  state: CombatSandboxState,
+): CombatSandboxState => ({
+  ...state,
+  player: cloneControllerState(state.player),
+  bots: state.bots.map(cloneBotState),
+  suns: state.suns.map(cloneSun),
+  planets: state.planets.map(clonePlanet),
+  rockets: state.rockets.map(cloneRocket),
+  drones: state.drones.map(cloneDrone),
+  caches: state.caches.map(cloneCache),
+  debris: state.debris.map(cloneDebris),
+});
+
+const fillEntityMap = <T extends { id: number }>(
+  targetMap: Map<number, T>,
+  entities: readonly T[],
+) => {
+  targetMap.clear();
+
+  for (const entity of entities) {
+    targetMap.set(entity.id, entity);
+  }
+};
+
+const syncLerpedVec2 = (
+  target: Vec2,
+  previous: Vec2 | undefined,
+  current: Vec2,
   alpha: number,
-): T =>
-  previousEntity === undefined
-    ? currentEntity
-    : {
-        ...currentEntity,
-        pos: lerpVec2(previousEntity.pos, currentEntity.pos, alpha),
-        vel: lerpVec2(previousEntity.vel, currentEntity.vel, alpha),
-      };
+) => {
+  if (previous === undefined) {
+    target.x = current.x;
+    target.y = current.y;
+    return;
+  }
+
+  target.x = lerp(previous.x, current.x, alpha);
+  target.y = lerp(previous.y, current.y, alpha);
+};
+
+const syncSunInto = (
+  target: CombatSandboxSun,
+  previous: CombatSandboxSun,
+  current: CombatSandboxSun,
+  alpha: number,
+) => {
+  target.id = current.id;
+  target.kind = current.kind;
+  target.mass = current.mass;
+  target.radius = current.radius;
+  target.swallowedAtSec = current.swallowedAtSec;
+  syncLerpedVec2(target.pos, previous.pos, current.pos, alpha);
+  syncLerpedVec2(target.vel, previous.vel, current.vel, alpha);
+};
+
+const syncPlanetInto = (
+  target: CombatSandboxPlanet,
+  previous: CombatSandboxPlanet,
+  current: CombatSandboxPlanet,
+  alpha: number,
+) => {
+  target.id = current.id;
+  target.kind = current.kind;
+  target.label = current.label;
+  target.color = current.color;
+  target.trailColor = current.trailColor;
+  target.risk = current.risk;
+  target.archetype = current.archetype;
+  target.playerId = current.playerId;
+  target.alive = current.alive;
+  target.hp = current.hp;
+  target.radius = current.radius;
+  target.deathReason = current.deathReason;
+  target.shieldAimDir = {
+    x: current.shieldAimDir.x,
+    y: current.shieldAimDir.y,
+  };
+  target.shieldActiveUntilTick = current.shieldActiveUntilTick;
+  target.hideTrailUntilTick = current.hideTrailUntilTick;
+  target.pilotingDroneId = current.pilotingDroneId;
+  target.debuffs = current.debuffs;
+  syncLerpedVec2(
+    target.pos,
+    previous.alive && current.alive ? previous.pos : undefined,
+    current.pos,
+    alpha,
+  );
+  syncLerpedVec2(
+    target.vel,
+    previous.alive && current.alive ? previous.vel : undefined,
+    current.vel,
+    alpha,
+  );
+};
+
+const syncRocketInto = (
+  target: CombatSandboxRocket,
+  previous: CombatSandboxRocket | undefined,
+  current: CombatSandboxRocket,
+  alpha: number,
+) => {
+  target.id = current.id;
+  target.kind = current.kind;
+  target.ownerId = current.ownerId;
+  target.rocketKind = current.rocketKind;
+  target.targetId = current.targetId;
+  target.ttlUntilTick = current.ttlUntilTick;
+  target.radius = current.radius;
+  target.damage = current.damage;
+  target.color = current.color;
+  target.trailColor = current.trailColor;
+  target.dragOnHit = current.dragOnHit;
+  target.turnRateMultiplier = current.turnRateMultiplier;
+  target.launchPlanetPos.x = current.launchPlanetPos.x;
+  target.launchPlanetPos.y = current.launchPlanetPos.y;
+  target.launchPlanetRadius = current.launchPlanetRadius;
+  syncLerpedVec2(target.pos, previous?.pos, current.pos, alpha);
+  syncLerpedVec2(target.vel, previous?.vel, current.vel, alpha);
+};
+
+const syncDroneInto = (
+  target: CombatSandboxDrone,
+  previous: CombatSandboxDrone | undefined,
+  current: CombatSandboxDrone,
+  alpha: number,
+) => {
+  target.id = current.id;
+  target.kind = current.kind;
+  target.ownerId = current.ownerId;
+  target.fuel = current.fuel;
+  target.ttlUntilTick = current.ttlUntilTick;
+  target.mode = current.mode;
+  target.cargo = current.cargo;
+  target.radius = current.radius;
+  syncLerpedVec2(target.pos, previous?.pos, current.pos, alpha);
+  syncLerpedVec2(target.vel, previous?.vel, current.vel, alpha);
+};
+
+const syncCacheInto = (
+  target: CombatSandboxCache,
+  previous: CombatSandboxCache | undefined,
+  current: CombatSandboxCache,
+  alpha: number,
+) => {
+  target.id = current.id;
+  target.kind = current.kind;
+  target.contents = current.contents;
+  target.radius = current.radius;
+  syncLerpedVec2(target.pos, previous?.pos, current.pos, alpha);
+  syncLerpedVec2(target.vel, previous?.vel, current.vel, alpha);
+};
+
+const syncDebrisInto = (
+  target: CombatSandboxDebris,
+  previous: CombatSandboxDebris | undefined,
+  current: CombatSandboxDebris,
+  alpha: number,
+) => {
+  target.id = current.id;
+  target.kind = current.kind;
+  target.ownerPlayerId = current.ownerPlayerId;
+  target.radius = current.radius;
+  target.ttlUntilTick = current.ttlUntilTick;
+  target.color = current.color;
+  syncLerpedVec2(target.pos, previous?.pos, current.pos, alpha);
+  syncLerpedVec2(target.vel, previous?.vel, current.vel, alpha);
+};
+
+const syncInterpolatedEntityArray = <T extends { id: number }>(
+  targetEntities: T[],
+  currentEntities: readonly T[],
+  getPrevious: (id: number) => T | undefined,
+  cloneEntity: (entity: T) => T,
+  syncEntity: (
+    target: T,
+    previous: T | undefined,
+    current: T,
+    alpha: number,
+  ) => void,
+  alpha: number,
+) => {
+  for (let index = 0; index < currentEntities.length; index += 1) {
+    const currentEntity = currentEntities[index]!;
+    let targetEntity = targetEntities[index];
+
+    if (targetEntity === undefined || targetEntity.id !== currentEntity.id) {
+      targetEntity = cloneEntity(currentEntity);
+      targetEntities[index] = targetEntity;
+    }
+
+    syncEntity(
+      targetEntity,
+      getPrevious(currentEntity.id),
+      currentEntity,
+      alpha,
+    );
+  }
+
+  targetEntities.length = currentEntities.length;
+};
+
+export const syncInterpolatedSandboxState = (
+  targetState: CombatSandboxState,
+  cache: CombatSandboxInterpolationCache,
+  previousState: CombatSandboxState,
+  currentState: CombatSandboxState,
+  alpha: number,
+): CombatSandboxState => {
+  fillEntityMap(cache.previousRocketMap, previousState.rockets);
+  fillEntityMap(cache.previousDroneMap, previousState.drones);
+  fillEntityMap(cache.previousCacheMap, previousState.caches);
+  fillEntityMap(cache.previousDebrisMap, previousState.debris);
+
+  targetState.tick = currentState.tick;
+  targetState.elapsedSec = lerp(
+    previousState.elapsedSec,
+    currentState.elapsedSec,
+    alpha,
+  );
+  targetState.preset = currentState.preset;
+  targetState.cacheRespawnAtTicks = currentState.cacheRespawnAtTicks;
+  targetState.impactBursts = currentState.impactBursts;
+  targetState.launchBursts = currentState.launchBursts;
+  targetState.blackHole = currentState.blackHole;
+  targetState.player = currentState.player;
+  targetState.bots = currentState.bots;
+  targetState.nextEntityId = currentState.nextEntityId;
+  targetState.playerLostAtSec = currentState.playerLostAtSec;
+  targetState.rng = currentState.rng;
+
+  for (let index = 0; index < currentState.suns.length; index += 1) {
+    const currentSun = currentState.suns[index]!;
+    let targetSun = targetState.suns[index];
+
+    if (targetSun === undefined || targetSun.id !== currentSun.id) {
+      targetSun = cloneSun(currentSun);
+      targetState.suns[index] = targetSun;
+    }
+
+    syncSunInto(targetSun, previousState.suns[index]!, currentSun, alpha);
+  }
+  targetState.suns.length = currentState.suns.length;
+
+  for (let index = 0; index < currentState.planets.length; index += 1) {
+    const currentPlanet = currentState.planets[index]!;
+    let targetPlanet = targetState.planets[index];
+
+    if (targetPlanet === undefined || targetPlanet.id !== currentPlanet.id) {
+      targetPlanet = clonePlanet(currentPlanet);
+      targetState.planets[index] = targetPlanet;
+    }
+
+    syncPlanetInto(
+      targetPlanet,
+      previousState.planets[index]!,
+      currentPlanet,
+      alpha,
+    );
+  }
+  targetState.planets.length = currentState.planets.length;
+
+  syncInterpolatedEntityArray(
+    targetState.rockets,
+    currentState.rockets,
+    (id) => cache.previousRocketMap.get(id),
+    cloneRocket,
+    syncRocketInto,
+    alpha,
+  );
+  syncInterpolatedEntityArray(
+    targetState.drones,
+    currentState.drones,
+    (id) => cache.previousDroneMap.get(id),
+    cloneDrone,
+    syncDroneInto,
+    alpha,
+  );
+  syncInterpolatedEntityArray(
+    targetState.caches,
+    currentState.caches,
+    (id) => cache.previousCacheMap.get(id),
+    cloneCache,
+    syncCacheInto,
+    alpha,
+  );
+  syncInterpolatedEntityArray(
+    targetState.debris,
+    currentState.debris,
+    (id) => cache.previousDebrisMap.get(id),
+    cloneDebris,
+    syncDebrisInto,
+    alpha,
+  );
+
+  return targetState;
+};
 
 export const interpolateSandboxState = (
   previousState: CombatSandboxState,
   currentState: CombatSandboxState,
   alpha: number,
-): CombatSandboxState => {
-  const previousRocketMap = new Map(
-    previousState.rockets.map((rocket) => [rocket.id, rocket]),
+): CombatSandboxState =>
+  syncInterpolatedSandboxState(
+    createInterpolatedSandboxState(currentState),
+    createSandboxInterpolationCache(),
+    previousState,
+    currentState,
+    alpha,
   );
-  const previousDroneMap = new Map(
-    previousState.drones.map((drone) => [drone.id, drone]),
-  );
-  const previousCacheMap = new Map(
-    previousState.caches.map((cache) => [cache.id, cache]),
-  );
-  const previousDebrisMap = new Map(
-    previousState.debris.map((piece) => [piece.id, piece]),
-  );
-
-  return {
-    ...currentState,
-    elapsedSec: lerp(previousState.elapsedSec, currentState.elapsedSec, alpha),
-    suns: currentState.suns.map((sun, index) => ({
-      ...sun,
-      pos: lerpVec2(previousState.suns[index]!.pos, sun.pos, alpha),
-      vel: lerpVec2(previousState.suns[index]!.vel, sun.vel, alpha),
-    })),
-    planets: currentState.planets.map((planet, index) => {
-      const previousPlanet = previousState.planets[index]!;
-
-      return {
-        ...planet,
-        pos:
-          previousPlanet.alive && planet.alive
-            ? lerpVec2(previousPlanet.pos, planet.pos, alpha)
-            : { x: planet.pos.x, y: planet.pos.y },
-        vel:
-          previousPlanet.alive && planet.alive
-            ? lerpVec2(previousPlanet.vel, planet.vel, alpha)
-            : { x: planet.vel.x, y: planet.vel.y },
-      };
-    }),
-    rockets: currentState.rockets.map((rocket) =>
-      interpolateEntity(previousRocketMap.get(rocket.id), rocket, alpha),
-    ),
-    drones: currentState.drones.map((drone) =>
-      interpolateEntity(previousDroneMap.get(drone.id), drone, alpha),
-    ),
-    caches: currentState.caches.map((cache) =>
-      interpolateEntity(previousCacheMap.get(cache.id), cache, alpha),
-    ),
-    debris: currentState.debris.map((piece) =>
-      interpolateEntity(previousDebrisMap.get(piece.id), piece, alpha),
-    ),
-    impactBursts: currentState.impactBursts,
-  };
-};
 
 export const getSandboxDebugSnapshot = (
   state: CombatSandboxState,
@@ -2263,9 +3062,7 @@ export const getSandboxDebugSnapshot = (
   const lockTarget =
     state.player.lockTargetId === null
       ? null
-      : (state.planets.find(
-          (planet) => planet.id === state.player.lockTargetId,
-        ) ?? null);
+      : (findPlayerPlanet(state.planets, state.player.lockTargetId) ?? null);
   const activeDrone = findActiveDrone(state.drones, state.player.activeDroneId);
   const droneCooldownRemainingSec =
     Math.max(0, state.player.droneCooldownUntilTick - state.tick) *
@@ -2278,10 +3075,16 @@ export const getSandboxDebugSnapshot = (
       : droneCooldownRemainingSec > 0
         ? "cooldown"
         : "ready";
+  let alivePlanets = 0;
+  for (const planet of state.planets) {
+    if (planet.alive) {
+      alivePlanets += 1;
+    }
+  }
 
   return {
     elapsedSec: state.elapsedSec,
-    alivePlanets: state.planets.filter((planet) => planet.alive).length,
+    alivePlanets,
     minCurrentPlanetSunGap: findMinPlanetSunGap(state.planets, activeSuns),
     minCurrentSunSunGap: findMinSunSunGap(activeSuns),
     presetLabel: state.preset.label,

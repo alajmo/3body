@@ -1,13 +1,14 @@
 import {
   BLACK_HOLE_SPEC,
+  type BlackHoleSpec,
   PLANET_HP,
   ROCKET_SPECS,
-  type BlackHoleSpec,
 } from "@3body/shared";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_ORBIT_PRESET } from "./orbitPresets";
 import {
-  SEEKER_LOCK_TICKS,
+  type CombatSandboxRocket,
+  type CombatSandboxState,
+  type CombatSandboxStepInput,
   createSandboxState,
   describeCacheContents,
   describeWildcard,
@@ -15,11 +16,10 @@ import {
   getSandboxDebugSnapshot,
   getSandboxResetReason,
   interpolateSandboxState,
+  SEEKER_LOCK_TICKS,
   stepSandbox,
-  type CombatSandboxRocket,
-  type CombatSandboxState,
-  type CombatSandboxStepInput,
 } from "./combatSandbox";
+import { DEFAULT_ORBIT_PRESET } from "./orbitPresets";
 
 const DISABLED_BLACK_HOLE_SPEC: BlackHoleSpec = {
   ...BLACK_HOLE_SPEC,
@@ -128,6 +128,8 @@ const buildRocket = (
   trailColor: "#b7e6ff",
   dragOnHit: false,
   turnRateMultiplier: 1,
+  launchPlanetPos: { x: 0, y: 0 },
+  launchPlanetRadius: 20,
   ...overrides,
 });
 
@@ -171,6 +173,37 @@ describe("combatSandbox", () => {
     expect(next.rockets[0]!.pos.x).toBeGreaterThan(0);
     expect(next.player.ammo.light).toBe(lightAmmoBefore - 1);
     expect(next.player.reloadUntilTick.light).toBeGreaterThan(next.tick);
+  });
+
+  it("lets offline bot planets acquire the player and fire back", () => {
+    const { state, enemyPlanetId } = createLinearCombatState();
+    const enemyPlanet = state.planets.find(
+      (planet) => planet.id === enemyPlanetId,
+    )!;
+    const enemyBot = state.bots.find((bot) => bot.planetId === enemyPlanetId)!;
+    enemyBot.difficulty = "hard";
+
+    let current = state;
+    for (let step = 0; step < 20; step += 1) {
+      current = stepSandbox(
+        current,
+        createStepInput({
+          aimWorld: { x: enemyPlanet.pos.x, y: enemyPlanet.pos.y },
+        }),
+        DISABLED_BLACK_HOLE_SPEC,
+      );
+      if (
+        current.rockets.some(
+          (rocket) => rocket.ownerId === enemyPlanet.playerId,
+        )
+      ) {
+        break;
+      }
+    }
+
+    expect(
+      current.rockets.some((rocket) => rocket.ownerId === enemyPlanet.playerId),
+    ).toBe(true);
   });
 
   it("recharges one light rocket when its reload timer completes", () => {
@@ -264,6 +297,87 @@ describe("combatSandbox", () => {
     expect(next.rockets).toHaveLength(0);
     expect(next.impactBursts).toHaveLength(1);
     expect(next.debris.length).toBeGreaterThan(0);
+  });
+
+  it("keeps a launch burst even when a fired rocket hits during the same simulation step", () => {
+    const { state, enemyPlanetId } = createLinearCombatState();
+    const enemyPlanetIndex = state.planets.findIndex(
+      (planet) => planet.id === enemyPlanetId,
+    );
+    state.planets[enemyPlanetIndex] = {
+      ...state.planets[enemyPlanetIndex]!,
+      pos: { x: 95, y: 0 },
+      vel: { x: 0, y: 0 },
+      radius: 20,
+      hp: PLANET_HP,
+      alive: true,
+      deathReason: undefined,
+      debuffs: {},
+    };
+
+    const next = stepSandbox(
+      state,
+      createStepInput({
+        aimWorld: { x: 95, y: 0 },
+        selectedRocketKind: "light",
+        fireRequested: true,
+      }),
+      DISABLED_BLACK_HOLE_SPEC,
+    );
+    const updatedEnemy = next.planets.find(
+      (planet) => planet.id === enemyPlanetId,
+    )!;
+
+    expect(next.launchBursts).toHaveLength(1);
+    expect(next.launchBursts[0]!.rocketKind).toBe("light");
+    expect(next.launchBursts[0]!.ownerId).toBe("player");
+    expect(next.launchBursts[0]!.launchPlanetPos).toEqual({ x: 0, y: 0 });
+    expect(next.rockets).toHaveLength(0);
+    expect(next.impactBursts).toHaveLength(1);
+    expect(updatedEnemy.hp).toBe(PLANET_HP - ROCKET_SPECS.light.damage);
+  });
+
+  it("matches rocket impact range to the configured rendered planet body scale", () => {
+    const { state, enemyPlanetId } = createLinearCombatState();
+    const enemyPlanet = state.planets.find(
+      (planet) => planet.id === enemyPlanetId,
+    )!;
+    const rocket = buildRocket({
+      pos: { x: enemyPlanet.pos.x + 60, y: enemyPlanet.pos.y },
+    });
+
+    state.rockets = [rocket];
+
+    const defaultScaleNext = stepSandbox(
+      state,
+      createStepInput({
+        aimWorld: { x: enemyPlanet.pos.x, y: enemyPlanet.pos.y },
+      }),
+      DISABLED_BLACK_HOLE_SPEC,
+    );
+    const defaultScaleEnemy = defaultScaleNext.planets.find(
+      (planet) => planet.id === enemyPlanet.id,
+    )!;
+
+    expect(defaultScaleEnemy.hp).toBe(PLANET_HP);
+    expect(defaultScaleNext.rockets).toHaveLength(1);
+
+    const enlargedVisualNext = stepSandbox(
+      state,
+      createStepInput({
+        aimWorld: { x: enemyPlanet.pos.x, y: enemyPlanet.pos.y },
+      }),
+      DISABLED_BLACK_HOLE_SPEC,
+      {
+        planetImpactRadiusMultiplier: 3,
+      },
+    );
+    const enlargedVisualEnemy = enlargedVisualNext.planets.find(
+      (planet) => planet.id === enemyPlanet.id,
+    )!;
+
+    expect(enlargedVisualEnemy.hp).toBe(PLANET_HP - ROCKET_SPECS.light.damage);
+    expect(enlargedVisualNext.rockets).toHaveLength(0);
   });
 
   it("lets the player's shield absorb rockets from the protected arc", () => {

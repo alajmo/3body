@@ -26,8 +26,11 @@ describe("createInitialHudState", () => {
     expect(first.planetAuraGap).toBe(DEFAULT_PLANET_AURA_GAP);
     expect(first.planetAuraScale).toBe(DEFAULT_PLANET_AURA_SCALE);
     expect(first.cacheBadgeScale).toBe(DEFAULT_CACHE_BADGE_SCALE);
+    expect(first.profilingEnabled).toBe(false);
     expect(first.connection).toEqual({
       extrapolating: false,
+      fps: 0,
+      frameTimeMs: 0,
       label: "Local sandbox",
       rttMs: 0,
       state: "local",

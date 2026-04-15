@@ -1,0 +1,221 @@
+{
+  "version": 1,
+  "visuals": {
+    "planets": {
+      "bodyScale": 2,
+      "auraScale": 2.2,
+      "auraGap": 0,
+      "archetypes": {
+        "terra": {
+          "color": "#9fc66f",
+          "trailColor": "#d6ef8a",
+          "forestColor": "#2c5a2a",
+          "forestDensity": 0.95
+        },
+        "ignis": {
+          "color": "#ff8550",
+          "trailColor": "#ffb07c",
+          "forestColor": "#6e3422",
+          "forestDensity": 0
+        },
+        "glacius": {
+          "color": "#8ed8ff",
+          "trailColor": "#d5f4ff",
+          "forestColor": "#6e8797",
+          "forestDensity": 0
+        },
+        "volans": {
+          "color": "#5fe7da",
+          "trailColor": "#8ff7ee",
+          "forestColor": "#1f6b5b",
+          "forestDensity": 0.55
+        },
+        "oculus": {
+          "color": "#ffd56b",
+          "trailColor": "#fff1a4",
+          "forestColor": "#786a2d",
+          "forestDensity": 0
+        },
+        "umbra": {
+          "color": "#8c7dff",
+          "trailColor": "#b3a8ff",
+          "forestColor": "#3a2a52",
+          "forestDensity": 0.4
+        },
+        "corvus": {
+          "color": "#d7e4ff",
+          "trailColor": "#f3f7ff",
+          "forestColor": "#496170",
+          "forestDensity": 0
+        }
+      }
+    },
+    "suns": {
+      "glowScale": 1.7,
+      "warpScale": 3.2
+    },
+    "blackHole": {
+      "coreRadius": 110,
+      "ringRadius": 205,
+      "lensRadius": 330
+    },
+    "rockets": {
+      "light": {
+        "core": "#f4f9ff",
+        "trail": "#b7e6ff",
+        "hudAccent": "#f5fbff",
+        "bodyScale": {
+          "x": 24,
+          "y": 4.8
+        },
+        "flameScale": {
+          "x": 22,
+          "y": 9
+        },
+        "trailScale": {
+          "x": 30,
+          "y": 6
+        }
+      },
+      "heavy": {
+        "core": "#ff8d4a",
+        "trail": "#ff6130",
+        "hudAccent": "#ff7a3d",
+        "bodyScale": {
+          "x": 31,
+          "y": 7.8
+        },
+        "flameScale": {
+          "x": 28,
+          "y": 14
+        },
+        "trailScale": {
+          "x": 36,
+          "y": 9
+        }
+      },
+      "seeker": {
+        "core": "#f564ff",
+        "trail": "#ff4dd4",
+        "hudAccent": "#ff61eb",
+        "bodyScale": {
+          "x": 27,
+          "y": 6.2
+        },
+        "flameScale": {
+          "x": 25,
+          "y": 11
+        },
+        "trailScale": {
+          "x": 33,
+          "y": 7.5
+        }
+      }
+    },
+    "abilities": {
+      "foresightColor": "#80d7ff",
+      "shieldColor": "#86ecff",
+      "boostColor": "#8bc6ff",
+      "wildcardColor": "#ffd37a"
+    },
+    "drone": {
+      "activeColor": "#91ffd2",
+      "returnColor": "#ffe08d"
+    },
+    "caches": {
+      "badgeScale": 1,
+      "badgeBaseSize": 80
+    },
+    "hud": {
+      "topInset": 20,
+      "sideInset": 20,
+      "bottomInset": 20,
+      "leftColumnWidth": 320,
+      "panelRadius": 18,
+      "pillRadius": 16,
+      "cardRadius": 14,
+      "compactCardRadius": 10,
+      "killFeedEntryRadius": 12,
+      "panelBlurPx": 14,
+      "panelGap": 12,
+      "dockGap": 10,
+      "timerWidth": 240,
+      "connectionWidth": 220
+    }
+  },
+  "gameplay": {
+    "blackHole": {
+      "spawnSec": 300,
+      "mass": 8000000,
+      "killRadius": 150,
+      "rampSec": 30
+    },
+    "rockets": {
+      "light": {
+        "damage": 15,
+        "speed": 950,
+        "reloadSec": 1.5,
+        "ttlSec": 8,
+        "radius": 10,
+        "turnRate": 0,
+        "startAmmo": 5,
+        "maxAmmo": 5
+      },
+      "heavy": {
+        "damage": 70,
+        "speed": 560,
+        "reloadSec": 6,
+        "ttlSec": 8,
+        "radius": 14,
+        "turnRate": 0,
+        "startAmmo": 2,
+        "maxAmmo": 2
+      },
+      "seeker": {
+        "damage": 35,
+        "speed": 760,
+        "reloadSec": 4,
+        "ttlSec": 8,
+        "radius": 12,
+        "turnRate": 2.356194490192345,
+        "startAmmo": 3,
+        "maxAmmo": 3
+      }
+    },
+    "abilities": {
+      "foresight": {
+        "cooldownSec": 12,
+        "durationSec": 4
+      },
+      "shield": {
+        "cooldownSec": 15,
+        "durationSec": 4,
+        "arcDeg": 120
+      },
+      "boost": {
+        "charges": 1,
+        "cooldownSec": 5,
+        "magnitude": 280
+      }
+    },
+    "drone": {
+      "speed": 620,
+      "thrust": 220,
+      "fuel": 3,
+      "ttlSec": 20,
+      "cooldownSec": 8,
+      "burstImpulse": 320
+    },
+    "cache": {
+      "count": 3,
+      "respawnSec": 15,
+      "wildcardChance": 0.1
+    },
+    "timers": {
+      "lobbySec": 30,
+      "pickSec": 30,
+      "countdownSec": 3,
+      "rematchVoteSec": 20
+    }
+  }
+}

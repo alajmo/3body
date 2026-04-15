@@ -1,0 +1,559 @@
+import {
+  DRONE_SPEC,
+  FIXED_STEP_SEC,
+  ROCKET_SPECS,
+  type AbilitySpec,
+  type BlackHoleSpec,
+  type BoostSpec,
+  type RocketKind,
+} from "@3body/shared";
+import type {
+  CombatSandboxDebugSnapshot,
+  CombatSandboxDrone,
+  CombatSandboxState,
+} from "../combatSandbox";
+import type {
+  GameViewportDebugItem,
+  GameViewportHudState,
+  GameViewportKillFeedEntry,
+  GameViewportPlanetBar,
+  GameViewportShortcut,
+  HudStatusMode,
+} from "../viewportHud";
+import type { ViewportPerformanceSnapshot } from "./performanceProfiler";
+
+interface LocalSandboxHudColors {
+  boost: string;
+  drone: string;
+  droneReturn: string;
+  foresight: string;
+  shield: string;
+  weapon: Record<RocketKind, { accent: string }>;
+  wildcard: string;
+}
+
+export interface BuildLocalSandboxHudStateParams {
+  activeDrone: CombatSandboxDrone | null;
+  blackHoleRemainingSec: number;
+  blackHoleSettings: BlackHoleSpec;
+  boostMode: HudStatusMode;
+  boostRecoveryDurationSec: number;
+  boostRecoveryRemainingSec: number;
+  boostSettings: BoostSpec;
+  cacheBadgeScale: number;
+  colors: LocalSandboxHudColors;
+  controlsEnabled: boolean;
+  currentMaxPixelRatio: number;
+  currentPresetId: string;
+  currentSsaaLevel: number;
+  currentState: Pick<
+    CombatSandboxState,
+    | "caches"
+    | "debris"
+    | "drones"
+    | "elapsedSec"
+    | "impactBursts"
+    | "planets"
+    | "player"
+    | "rockets"
+    | "tick"
+  >;
+  debug: CombatSandboxDebugSnapshot;
+  droneTtlRemainingSec: number;
+  foresightActiveRemainingSec: number;
+  foresightCooldownRemainingSec: number;
+  foresightMode: HudStatusMode;
+  foresightSettings: AbilitySpec;
+  fullViewEnabled: boolean;
+  killFeed: GameViewportKillFeedEntry[];
+  planetAuraGap: number;
+  planetAuraScale: number;
+  planetBars?: GameViewportPlanetBar[];
+  planetBodyScale: number;
+  playerDamageFlash: number;
+  playerHpPulse: number;
+  playerLabel: string;
+  profilingEnabled: boolean;
+  profilerSnapshot: ViewportPerformanceSnapshot | null;
+  readModeHeld: boolean;
+  readModeHudOpacity: number;
+  runtimeStats: {
+    fps: number;
+    frameTimeMs: number;
+  };
+  sandboxPaused: boolean;
+  selectedWeapon: RocketKind;
+  shieldActiveRemainingSec: number;
+  shieldCooldownRemainingSec: number;
+  shieldMode: HudStatusMode;
+  shieldSettings: AbilitySpec;
+}
+
+const getRemainingRatio = (remainingSec: number, totalSec: number): number => {
+  if (!(totalSec > 0)) {
+    return remainingSec > 0 ? 1 : 0;
+  }
+
+  return Math.min(Math.max(remainingSec / totalSec, 0), 1);
+};
+
+const formatSeconds = (valueSec: number): string =>
+  valueSec >= 10 ? `${Math.round(valueSec)}s` : `${valueSec.toFixed(1)}s`;
+
+const formatProfilerTiming = (
+  latestMs: number,
+  averageMs: number,
+  maxMs: number,
+): string =>
+  `${latestMs.toFixed(2)} ms · avg ${averageMs.toFixed(2)} · max ${maxMs.toFixed(2)}`;
+
+const formatProfilerScalar = (
+  latest: number,
+  average: number,
+  max: number,
+): string =>
+  `${latest.toFixed(1)} · avg ${average.toFixed(1)} · max ${max.toFixed(1)}`;
+
+const weaponLabel = (rocketKind: RocketKind): string => {
+  switch (rocketKind) {
+    case "light":
+      return "Light";
+    case "heavy":
+      return "Heavy";
+    case "seeker":
+      return "Seeker";
+  }
+};
+
+const buildProfilerDebugItems = ({
+  currentMaxPixelRatio,
+  currentSsaaLevel,
+  currentState,
+  profilerSnapshot,
+  profilingEnabled,
+}: Pick<
+  BuildLocalSandboxHudStateParams,
+  | "currentMaxPixelRatio"
+  | "currentSsaaLevel"
+  | "currentState"
+  | "profilerSnapshot"
+  | "profilingEnabled"
+>): GameViewportDebugItem[] => {
+  if (
+    !profilingEnabled ||
+    profilerSnapshot === null ||
+    profilerSnapshot.frames <= 0
+  ) {
+    return [];
+  }
+
+  return [
+    {
+      label: "Sample",
+      value: `${profilerSnapshot.frames}f · ${profilerSnapshot.sampledDurationSec.toFixed(1)}s`,
+    },
+    {
+      label: "Frame CPU",
+      value: formatProfilerTiming(
+        profilerSnapshot.frameCpu.latestMs,
+        profilerSnapshot.frameCpu.averageMs,
+        profilerSnapshot.frameCpu.maxMs,
+      ),
+    },
+    {
+      label: "Sim CPU",
+      value: formatProfilerTiming(
+        profilerSnapshot.simulation.latestMs,
+        profilerSnapshot.simulation.averageMs,
+        profilerSnapshot.simulation.maxMs,
+      ),
+    },
+    {
+      label: "Lerp CPU",
+      value: formatProfilerTiming(
+        profilerSnapshot.interpolation.latestMs,
+        profilerSnapshot.interpolation.averageMs,
+        profilerSnapshot.interpolation.maxMs,
+      ),
+    },
+    {
+      label: "Scene CPU",
+      value: formatProfilerTiming(
+        profilerSnapshot.renderCpu.latestMs,
+        profilerSnapshot.renderCpu.averageMs,
+        profilerSnapshot.renderCpu.maxMs,
+      ),
+    },
+    {
+      label: "Submit CPU",
+      value: formatProfilerTiming(
+        profilerSnapshot.submit.latestMs,
+        profilerSnapshot.submit.averageMs,
+        profilerSnapshot.submit.maxMs,
+      ),
+    },
+    {
+      label: "Steps / frame",
+      value: formatProfilerScalar(
+        profilerSnapshot.steps.latest,
+        profilerSnapshot.steps.average,
+        profilerSnapshot.steps.max,
+      ),
+    },
+    {
+      label: "Quality",
+      value: `PR ${currentMaxPixelRatio.toFixed(1)} · SSAA ${currentSsaaLevel}`,
+    },
+    {
+      label: "Entities",
+      value: `P ${currentState.planets.length} · R ${currentState.rockets.length} · D ${currentState.drones.length} · C ${currentState.caches.length}`,
+    },
+    {
+      label: "FX",
+      value: `Debris ${currentState.debris.length} · Impacts ${currentState.impactBursts.length}`,
+    },
+  ];
+};
+
+const buildPrimaryShortcuts = (
+  params: BuildLocalSandboxHudStateParams,
+): GameViewportShortcut[] =>
+  params.controlsEnabled
+    ? [
+        {
+          active: params.selectedWeapon === "light",
+          detail: `${params.currentState.player.ammo.light}/${ROCKET_SPECS.light.maxAmmo}`,
+          id: "weapon-light",
+          keyLabel: "1",
+          label: "Light",
+        },
+        {
+          active: params.selectedWeapon === "heavy",
+          detail: `${params.currentState.player.ammo.heavy}`,
+          id: "weapon-heavy",
+          keyLabel: "2",
+          label: "Heavy",
+        },
+        {
+          active: params.selectedWeapon === "seeker",
+          detail: `${params.currentState.player.ammo.seeker}`,
+          id: "weapon-seeker",
+          keyLabel: "3",
+          label: "Seeker",
+        },
+        {
+          active: params.currentState.player.controlMode === "drone",
+          detail:
+            params.debug.droneMode === "ready"
+              ? "ready"
+              : params.debug.droneMode === "cooldown"
+                ? formatSeconds(params.debug.droneCooldownRemainingSec)
+                : (params.debug.droneCargoLabel ?? params.debug.droneMode),
+          id: "drone",
+          keyLabel: "4",
+          label: "Drone",
+        },
+        {
+          active: params.fullViewEnabled,
+          detail: params.fullViewEnabled ? "arena" : "focus",
+          id: "full-view",
+          keyLabel: "F",
+          label: "Full view",
+        },
+        {
+          active: params.foresightMode === "active",
+          detail:
+            params.foresightMode === "ready"
+              ? "ready"
+              : formatSeconds(
+                  params.foresightMode === "active"
+                    ? params.foresightActiveRemainingSec
+                    : params.foresightCooldownRemainingSec,
+                ),
+          id: "foresight",
+          keyLabel: "Q",
+          label: "Foresight",
+        },
+        {
+          active: params.shieldMode === "active",
+          detail:
+            params.shieldMode === "ready"
+              ? "ready"
+              : formatSeconds(
+                  params.shieldMode === "active"
+                    ? params.shieldActiveRemainingSec
+                    : params.shieldCooldownRemainingSec,
+                ),
+          id: "shield",
+          keyLabel: "W",
+          label: "Shield",
+        },
+        {
+          active: params.boostMode === "cooldown",
+          detail:
+            params.boostMode === "ready"
+              ? "ready"
+              : formatSeconds(params.boostRecoveryRemainingSec),
+          id: "boost",
+          keyLabel: "E",
+          label: "Boost",
+        },
+        ...(params.debug.wildcardLabel === null
+          ? []
+          : [
+              {
+                active: true,
+                id: "wildcard",
+                keyLabel: "R",
+                label: params.debug.wildcardLabel,
+              },
+            ]),
+        {
+          active: params.readModeHeld,
+          id: "read-mode",
+          keyLabel: "Shift",
+          label: "Read mode",
+        },
+      ]
+    : [];
+
+const buildContextualShortcuts = (
+  params: BuildLocalSandboxHudStateParams,
+): GameViewportShortcut[] =>
+  params.controlsEnabled && params.currentState.player.controlMode === "drone"
+    ? [
+        {
+          active: false,
+          id: "drone-steer",
+          keyLabel: "Mouse",
+          label: "Steer",
+        },
+        {
+          active: false,
+          id: "drone-burst",
+          keyLabel: "LMB",
+          label: "Burst",
+        },
+        {
+          active: false,
+          id: "drone-recall",
+          keyLabel: "RMB",
+          label: "Recall",
+        },
+        {
+          active: false,
+          id: "drone-return",
+          keyLabel: "Esc",
+          label: "Auto-return",
+        },
+        {
+          active: true,
+          id: "drone-launch-disabled",
+          keyLabel: "4",
+          label: "Launch disabled",
+        },
+        {
+          active: params.readModeHeld,
+          id: "drone-read-mode",
+          keyLabel: "Shift",
+          label: "Read mode",
+        },
+      ]
+    : [];
+
+const buildAbilities = (
+  params: BuildLocalSandboxHudStateParams,
+): GameViewportHudState["abilities"] =>
+  params.controlsEnabled
+    ? [
+        {
+          accent: params.colors.foresight,
+          id: "foresight",
+          keyLabel: "Q",
+          label: "Foresight",
+          mode: params.foresightMode,
+          progress:
+            params.foresightMode === "active"
+              ? getRemainingRatio(
+                  params.foresightActiveRemainingSec,
+                  params.foresightSettings.durationSec,
+                )
+              : getRemainingRatio(
+                  params.foresightCooldownRemainingSec,
+                  params.foresightSettings.cooldownSec,
+                ),
+          statusText:
+            params.foresightMode === "active"
+              ? `active ${formatSeconds(params.foresightActiveRemainingSec)}`
+              : params.foresightMode === "cooldown"
+                ? `${formatSeconds(params.foresightCooldownRemainingSec)} cd`
+                : "ready",
+        },
+        {
+          accent: params.colors.shield,
+          id: "shield",
+          keyLabel: "W",
+          label: "Shield",
+          mode: params.shieldMode,
+          progress:
+            params.shieldMode === "active"
+              ? getRemainingRatio(
+                  params.shieldActiveRemainingSec,
+                  params.shieldSettings.durationSec,
+                )
+              : getRemainingRatio(
+                  params.shieldCooldownRemainingSec,
+                  params.shieldSettings.cooldownSec,
+                ),
+          statusText:
+            params.shieldMode === "active"
+              ? `tracking ${formatSeconds(params.shieldActiveRemainingSec)}`
+              : params.shieldMode === "cooldown"
+                ? `${formatSeconds(params.shieldCooldownRemainingSec)} cd`
+                : "ready",
+        },
+        {
+          accent: params.colors.boost,
+          id: "boost",
+          keyLabel: "E",
+          label: "Boost",
+          mode: params.boostMode,
+          progress: getRemainingRatio(
+            params.boostRecoveryRemainingSec,
+            params.boostRecoveryDurationSec,
+          ),
+          statusText:
+            params.boostMode === "cooldown"
+              ? `lock ${formatSeconds(params.boostRecoveryRemainingSec)}`
+              : "ready",
+          valueText: "INF",
+        },
+        {
+          accent:
+            params.debug.droneMode === "return"
+              ? params.colors.droneReturn
+              : params.colors.drone,
+          id: "drone",
+          keyLabel: "4",
+          label: "Drone",
+          mode:
+            params.debug.droneMode === "piloting" ||
+            params.debug.droneMode === "return"
+              ? "active"
+              : params.debug.droneMode === "cooldown"
+                ? "cooldown"
+                : "ready",
+          progress:
+            params.debug.droneMode === "cooldown"
+              ? params.debug.droneCooldownRemainingSec / DRONE_SPEC.cooldownSec
+              : params.activeDrone !== null
+                ? params.droneTtlRemainingSec / DRONE_SPEC.ttlSec
+                : 1,
+          statusText:
+            params.debug.droneMode === "cooldown"
+              ? `${formatSeconds(params.debug.droneCooldownRemainingSec)} cd`
+              : params.debug.droneMode === "return"
+                ? params.debug.droneCargoLabel === null
+                  ? `return ${formatSeconds(params.droneTtlRemainingSec)}`
+                  : `return ${params.debug.droneCargoLabel}`
+                : params.debug.droneMode === "piloting"
+                  ? params.debug.droneCargoLabel === null
+                    ? `pilot ${formatSeconds(params.droneTtlRemainingSec)}`
+                    : `cargo ${params.debug.droneCargoLabel}`
+                  : "ready",
+          valueText:
+            params.debug.droneFuel === null
+              ? undefined
+              : `x${params.debug.droneFuel}`,
+        },
+        ...(params.debug.wildcardLabel === null
+          ? []
+          : [
+              {
+                accent: params.colors.wildcard,
+                id: "wildcard" as const,
+                keyLabel: "R",
+                label: "Wildcard",
+                mode: "ready" as const,
+                progress: 1,
+                statusText: params.debug.wildcardLabel,
+                valueText: "armed",
+              },
+            ]),
+      ]
+    : [];
+
+const buildWeapons = (
+  params: BuildLocalSandboxHudStateParams,
+): GameViewportHudState["weapons"] =>
+  params.controlsEnabled
+    ? (["light", "heavy", "seeker"] as const satisfies readonly RocketKind[]).map(
+        (rocketKind) => ({
+          accent: params.colors.weapon[rocketKind].accent,
+          ammo: params.currentState.player.ammo[rocketKind],
+          kind: rocketKind,
+          label: weaponLabel(rocketKind),
+          maxAmmo: ROCKET_SPECS[rocketKind].maxAmmo,
+          reloadRemainingSec:
+            Math.max(
+              0,
+              params.currentState.player.reloadUntilTick[rocketKind] -
+                params.currentState.tick,
+            ) * FIXED_STEP_SEC,
+          selected: params.selectedWeapon === rocketKind,
+        }),
+      )
+    : [];
+
+export const buildLocalSandboxHudState = (
+  params: BuildLocalSandboxHudStateParams,
+): GameViewportHudState => ({
+  abilities: buildAbilities(params),
+  alivePlayerCount: params.debug.alivePlanets,
+  blackHoleActive: params.debug.blackHoleActive,
+  blackHoleRemainingSec: params.blackHoleRemainingSec,
+  blackHoleSettings: { ...params.blackHoleSettings },
+  blackHoleWarning:
+    !params.debug.blackHoleActive && params.blackHoleRemainingSec <= 60,
+  boostSettings: { ...params.boostSettings },
+  cacheBadgeScale: params.cacheBadgeScale,
+  connection: {
+    extrapolating: false,
+    fps: params.runtimeStats.fps,
+    frameTimeMs: params.runtimeStats.frameTimeMs,
+    label: params.controlsEnabled
+      ? "Local sandbox"
+      : "Periodic solution viewer",
+    rttMs: 0,
+    state: "local",
+  },
+  contextualShortcuts: buildContextualShortcuts(params),
+  controlMode: params.currentState.player.controlMode,
+  currentPresetId: params.currentPresetId,
+  damageFlash: params.playerDamageFlash,
+  debugItems: buildProfilerDebugItems(params),
+  droneCargoLabel: params.debug.droneCargoLabel,
+  foresightSettings: { ...params.foresightSettings },
+  hudOpacity:
+    params.readModeHeld && !params.fullViewEnabled
+      ? params.readModeHudOpacity
+      : 1,
+  killFeed: params.killFeed,
+  planetAuraGap: params.planetAuraGap,
+  planetAuraScale: params.planetAuraScale,
+  planetBars: params.planetBars ?? [],
+  planetBodyScale: params.planetBodyScale,
+  playerArchetype: params.debug.playerArchetypeName,
+  playerHp: params.debug.playerHp,
+  playerHpPulse: params.playerHpPulse,
+  playerLabel: params.playerLabel,
+  primaryShortcuts: buildPrimaryShortcuts(params),
+  profilingEnabled: params.profilingEnabled,
+  sandboxControlsEnabled: params.controlsEnabled,
+  sandboxPaused: params.sandboxPaused,
+  selectedWeapon: params.selectedWeapon,
+  shieldSettings: { ...params.shieldSettings },
+  timerElapsedSec: params.currentState.elapsedSec,
+  totalPlayerCount: params.currentState.planets.length,
+  weapons: buildWeapons(params),
+});

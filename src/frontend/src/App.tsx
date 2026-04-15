@@ -1,39 +1,31 @@
-import { startTransition, useEffect, useRef, useState } from "react";
-import { CombatHud } from "./CombatHud";
-import { createGameViewport } from "./game/createGameViewport";
-import {
-  createInitialHudState,
-  type GameViewportController,
-} from "./game/viewportHud";
+import { startTransition, useEffect, useState } from "react";
+import { EditPage } from "./EditPage";
+import { GamePage } from "./GamePage";
+import { resolveAppRoute, type AppRoute } from "./routes";
+
+const getCurrentRoute = (): AppRoute =>
+  resolveAppRoute(window.location.pathname);
 
 export function App() {
-  const viewportElementRef = useRef<HTMLDivElement | null>(null);
-  const [hudState, setHudState] = useState(createInitialHudState);
-  const [viewportController, setViewportController] =
-    useState<GameViewportController | null>(null);
+  const [route, setRoute] = useState<AppRoute>(getCurrentRoute);
 
   useEffect(() => {
-    const viewportElement = viewportElementRef.current;
-    if (viewportElement === null) {
-      return;
-    }
+    const syncRoute = () => {
+      startTransition(() => {
+        setRoute(getCurrentRoute());
+      });
+    };
 
-    return createGameViewport(viewportElement, {
-      onControllerReady: setViewportController,
-      onHudStateChange: (nextState) => {
-        startTransition(() => {
-          setHudState(nextState);
-        });
-      },
-    });
+    window.addEventListener("popstate", syncRoute);
+    return () => {
+      window.removeEventListener("popstate", syncRoute);
+    };
   }, []);
 
-  return (
-    <div className="app-shell">
-      <div ref={viewportElementRef} className="canvas-root" />
-      <div className="hud-root">
-        <CombatHud controller={viewportController} hud={hudState} />
-      </div>
-    </div>
-  );
+  switch (route) {
+    case "/edit":
+      return <EditPage />;
+    default:
+      return <GamePage />;
+  }
 }

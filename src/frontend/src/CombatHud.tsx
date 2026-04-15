@@ -1,6 +1,7 @@
 import type { CSSProperties, KeyboardEvent } from "react";
 import {
   clamp,
+  type HudVisualTuning,
   PLANET_HP,
   ROCKET_SPECS,
   type AbilitySpec,
@@ -161,6 +162,12 @@ const formatClock = (valueSec: number): string => {
 const formatRtt = (rttMs: number | null): string =>
   rttMs === null ? "--" : `${Math.max(0, Math.round(rttMs))} ms`;
 
+const formatFps = (fps: number): string =>
+  fps > 0 ? `${Math.max(0, Math.round(fps))} FPS` : "-- FPS";
+
+const formatFrameTime = (frameTimeMs: number): string =>
+  frameTimeMs > 0 ? `${frameTimeMs.toFixed(1)} ms` : "-- ms";
+
 const getAbilityMeterFill = ({
   mode,
   progress,
@@ -208,9 +215,13 @@ const WEAPON_KEY_LABELS: Record<RocketKind, string> = {
 export function CombatHud({
   controller,
   hud,
+  hudTuning,
+  showSandboxTools = true,
 }: {
   controller: GameViewportController | null;
   hud: GameViewportHudState;
+  hudTuning: HudVisualTuning;
+  showSandboxTools?: boolean;
 }) {
   const handleSandboxFieldKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key !== "Enter" || event.nativeEvent.isComposing) {
@@ -228,6 +239,20 @@ export function CombatHud({
   const hudStyle = {
     "--damage-flash-opacity": `${hud.damageFlash}`,
     "--hud-opacity": `${hud.hudOpacity}`,
+    "--hud-bottom-inset": `${hudTuning.bottomInset}px`,
+    "--hud-card-radius": `${hudTuning.cardRadius}px`,
+    "--hud-compact-card-radius": `${hudTuning.compactCardRadius}px`,
+    "--hud-connection-width": `${hudTuning.connectionWidth}px`,
+    "--hud-dock-gap": `${hudTuning.dockGap}px`,
+    "--hud-kill-feed-entry-radius": `${hudTuning.killFeedEntryRadius}px`,
+    "--hud-left-column-width": `${hudTuning.leftColumnWidth}px`,
+    "--hud-panel-blur": `${hudTuning.panelBlurPx}px`,
+    "--hud-panel-gap": `${hudTuning.panelGap}px`,
+    "--hud-panel-radius": `${hudTuning.panelRadius}px`,
+    "--hud-pill-radius": `${hudTuning.pillRadius}px`,
+    "--hud-side-inset": `${hudTuning.sideInset}px`,
+    "--hud-timer-width": `${hudTuning.timerWidth}px`,
+    "--hud-top-inset": `${hudTuning.topInset}px`,
   } as CSSProperties;
   const timerStatus = hud.blackHoleActive
     ? "Overtime active"
@@ -273,307 +298,360 @@ export function CombatHud({
         </section>
       </div>
 
-      <form
-        className="sandbox-panel sandbox-panel--dock hud-panel hud-panel--interactive hud-panel--subtle"
-        onKeyDown={handleSandboxFieldKeyDown}
-        onSubmit={(event) => event.preventDefault()}
-      >
-        <div className="sandbox-panel__header">
-          <div className="hud-panel__eyebrow">Sandbox Tools</div>
-          <div className="sandbox-panel__header-actions">
-            <button
-              type="button"
-              className="hud-button hud-button--compact"
-              disabled={controller === null}
-              onClick={() =>
-                hud.sandboxPaused
-                  ? controller?.playSandbox()
-                  : controller?.pauseSandbox()
-              }
-            >
-              {hud.sandboxPaused ? "Play" : "Pause"}
-            </button>
-            <button
-              type="button"
-              className="hud-button hud-button--compact"
-              disabled={controller === null}
-              onClick={() => controller?.resetSandbox()}
-            >
-              Reset
-            </button>
-          </div>
-        </div>
-
-        <div className="sandbox-panel__section">
-          <div className="sandbox-panel__section-header">
-            <div className="sandbox-panel__section-copy">
-              <div className="hud-panel__eyebrow">Scenario</div>
-              <div className="sandbox-panel__section-note">
-                Preset orbit configuration
-              </div>
+      {showSandboxTools ? (
+        <form
+          className="sandbox-panel sandbox-panel--dock hud-panel hud-panel--interactive hud-panel--subtle"
+          onKeyDown={handleSandboxFieldKeyDown}
+          onSubmit={(event) => event.preventDefault()}
+        >
+          <div className="sandbox-panel__header">
+            <div className="hud-panel__eyebrow">Sandbox Tools</div>
+            <div className="sandbox-panel__header-actions">
+              <button
+                type="button"
+                className="hud-button hud-button--compact"
+                disabled={controller === null}
+                onClick={() =>
+                  hud.sandboxPaused
+                    ? controller?.playSandbox()
+                    : controller?.pauseSandbox()
+                }
+              >
+                {hud.sandboxPaused ? "Play" : "Pause"}
+              </button>
+              <button
+                type="button"
+                className="hud-button hud-button--compact"
+                disabled={controller === null}
+                onClick={() => controller?.resetSandbox()}
+              >
+                Reset
+              </button>
             </div>
           </div>
-          <label className="hud-field">
-            <span className="hud-field__label">Periodic solution</span>
-            <select
-              className="hud-field__select"
-              value={hud.currentPresetId}
-              disabled={controller === null}
-              onChange={(event) =>
-                controller?.setOrbitPreset(event.currentTarget.value)
-              }
-            >
-              {PRESET_GROUPS.map((group) => (
-                <optgroup key={group.label} label={group.label}>
-                  {group.options.map((preset) => (
-                    <option key={preset.id} value={preset.id}>
-                      {preset.label}
-                    </option>
-                  ))}
-                </optgroup>
+
+          <div className="sandbox-panel__section">
+            <div className="sandbox-panel__section-header">
+              <div className="sandbox-panel__section-copy">
+                <div className="hud-panel__eyebrow">Scenario</div>
+                <div className="sandbox-panel__section-note">
+                  Preset orbit configuration
+                </div>
+              </div>
+            </div>
+            <label className="hud-field">
+              <span className="hud-field__label">Periodic solution</span>
+              <select
+                className="hud-field__select"
+                value={hud.currentPresetId}
+                disabled={controller === null}
+                onChange={(event) =>
+                  controller?.setOrbitPreset(event.currentTarget.value)
+                }
+              >
+                {PRESET_GROUPS.map((group) => (
+                  <optgroup key={group.label} label={group.label}>
+                    {group.options.map((preset) => (
+                      <option key={preset.id} value={preset.id}>
+                        {preset.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div className="sandbox-panel__section">
+            <div className="sandbox-panel__section-header">
+              <div className="sandbox-panel__section-copy">
+                <div className="hud-panel__eyebrow">Visuals</div>
+                <div className="sandbox-panel__section-note">
+                  Planet and cache presentation
+                </div>
+              </div>
+              <button
+                type="button"
+                className="hud-button hud-button--compact"
+                disabled={controller === null}
+                onClick={() => controller?.resetPlanetVisualSettings()}
+              >
+                Reset
+              </button>
+            </div>
+            <div className="sandbox-panel__settings">
+              <label className="hud-field">
+                <span className="hud-field__label">
+                  {PLANET_BODY_SCALE_FIELD.label}
+                </span>
+                <input
+                  type="number"
+                  className="hud-field__input"
+                  min={PLANET_BODY_SCALE_FIELD.min}
+                  max={PLANET_BODY_SCALE_FIELD.max}
+                  step={PLANET_BODY_SCALE_FIELD.step}
+                  value={hud.planetBodyScale}
+                  disabled={controller === null}
+                  onChange={(event) => {
+                    const nextValue = event.currentTarget.valueAsNumber;
+                    if (!Number.isFinite(nextValue)) {
+                      return;
+                    }
+
+                    controller?.setPlanetBodyScale(nextValue);
+                  }}
+                />
+              </label>
+              <label className="hud-field">
+                <span className="hud-field__label">
+                  {PLANET_AURA_SCALE_FIELD.label}
+                </span>
+                <input
+                  type="number"
+                  className="hud-field__input"
+                  min={PLANET_AURA_SCALE_FIELD.min}
+                  max={PLANET_AURA_SCALE_FIELD.max}
+                  step={PLANET_AURA_SCALE_FIELD.step}
+                  value={hud.planetAuraScale}
+                  disabled={controller === null}
+                  onChange={(event) => {
+                    const nextValue = event.currentTarget.valueAsNumber;
+                    if (!Number.isFinite(nextValue)) {
+                      return;
+                    }
+
+                    controller?.setPlanetAuraScale(nextValue);
+                  }}
+                />
+              </label>
+              <label className="hud-field">
+                <span className="hud-field__label">
+                  {PLANET_AURA_GAP_FIELD.label}
+                </span>
+                <input
+                  type="number"
+                  className="hud-field__input"
+                  min={PLANET_AURA_GAP_FIELD.min}
+                  max={PLANET_AURA_GAP_FIELD.max}
+                  step={PLANET_AURA_GAP_FIELD.step}
+                  value={hud.planetAuraGap}
+                  disabled={controller === null}
+                  onChange={(event) => {
+                    const nextValue = event.currentTarget.valueAsNumber;
+                    if (!Number.isFinite(nextValue)) {
+                      return;
+                    }
+
+                    controller?.setPlanetAuraGap(nextValue);
+                  }}
+                />
+              </label>
+              <label className="hud-field">
+                <span className="hud-field__label">
+                  {CACHE_BADGE_SCALE_FIELD.label}
+                </span>
+                <input
+                  type="number"
+                  className="hud-field__input"
+                  min={CACHE_BADGE_SCALE_FIELD.min}
+                  max={CACHE_BADGE_SCALE_FIELD.max}
+                  step={CACHE_BADGE_SCALE_FIELD.step}
+                  value={hud.cacheBadgeScale}
+                  disabled={controller === null}
+                  onChange={(event) => {
+                    const nextValue = event.currentTarget.valueAsNumber;
+                    if (!Number.isFinite(nextValue)) {
+                      return;
+                    }
+
+                    controller?.setCacheBadgeScale(nextValue);
+                  }}
+                />
+              </label>
+            </div>
+          </div>
+
+          <div className="sandbox-panel__section">
+            <div className="sandbox-panel__section-header">
+              <div className="sandbox-panel__section-copy">
+                <div className="hud-panel__eyebrow">Black Hole</div>
+                <div className="sandbox-panel__section-note">
+                  Spawn timing and collapse strength
+                </div>
+              </div>
+              <button
+                type="button"
+                className="hud-button hud-button--compact"
+                disabled={controller === null}
+                onClick={() => controller?.resetBlackHoleSettings()}
+              >
+                Reset
+              </button>
+            </div>
+            <div className="sandbox-panel__settings">
+              {BLACK_HOLE_FIELDS.map((field) => (
+                <label key={field.key} className="hud-field">
+                  <span className="hud-field__label">{field.label}</span>
+                  <input
+                    type="number"
+                    className="hud-field__input"
+                    min={field.min}
+                    step={field.step}
+                    value={hud.blackHoleSettings[field.key]}
+                    disabled={controller === null}
+                    onChange={(event) => {
+                      const nextValue = event.currentTarget.valueAsNumber;
+                      if (!Number.isFinite(nextValue)) {
+                        return;
+                      }
+
+                      controller?.setBlackHoleSetting(field.key, nextValue);
+                    }}
+                  />
+                </label>
               ))}
-            </select>
-          </label>
-        </div>
+            </div>
+          </div>
 
-        <div className="sandbox-panel__section">
-          <div className="sandbox-panel__section-header">
-            <div className="sandbox-panel__section-copy">
-              <div className="hud-panel__eyebrow">Visuals</div>
-              <div className="sandbox-panel__section-note">
-                Planet and cache presentation
+          <div className="sandbox-panel__section">
+            <div className="sandbox-panel__section-header">
+              <div className="sandbox-panel__section-copy">
+                <div className="hud-panel__eyebrow">Abilities</div>
+                <div className="sandbox-panel__section-note">
+                  Foresight, shield, and boost tuning
+                </div>
+              </div>
+              <button
+                type="button"
+                className="hud-button hud-button--compact"
+                disabled={controller === null}
+                onClick={() => controller?.resetAbilitySettings()}
+              >
+                Reset
+              </button>
+            </div>
+            <div className="sandbox-panel__settings">
+              {FORESIGHT_FIELDS.map((field) => (
+                <label key={field.key} className="hud-field">
+                  <span className="hud-field__label">{field.label}</span>
+                  <input
+                    type="number"
+                    className="hud-field__input"
+                    min={field.min}
+                    max={field.max}
+                    step={field.step}
+                    value={hud.foresightSettings[field.key]}
+                    disabled={controller === null}
+                    onChange={(event) => {
+                      const nextValue = event.currentTarget.valueAsNumber;
+                      if (!Number.isFinite(nextValue)) {
+                        return;
+                      }
+
+                      controller?.setForesightSetting(field.key, nextValue);
+                    }}
+                  />
+                </label>
+              ))}
+              {SHIELD_FIELDS.map((field) => (
+                <label key={`shield-${field.key}`} className="hud-field">
+                  <span className="hud-field__label">{field.label}</span>
+                  <input
+                    type="number"
+                    className="hud-field__input"
+                    min={field.min}
+                    max={field.max}
+                    step={field.step}
+                    value={hud.shieldSettings[field.key]}
+                    disabled={controller === null}
+                    onChange={(event) => {
+                      const nextValue = event.currentTarget.valueAsNumber;
+                      if (!Number.isFinite(nextValue)) {
+                        return;
+                      }
+
+                      controller?.setShieldSetting(field.key, nextValue);
+                    }}
+                  />
+                </label>
+              ))}
+              {BOOST_FIELDS.map((field) => (
+                <label key={field.key} className="hud-field">
+                  <span className="hud-field__label">{field.label}</span>
+                  <input
+                    type="number"
+                    className="hud-field__input"
+                    min={field.min}
+                    max={field.max}
+                    step={field.step}
+                    value={hud.boostSettings[field.key]}
+                    disabled={controller === null}
+                    onChange={(event) => {
+                      const nextValue = event.currentTarget.valueAsNumber;
+                      if (!Number.isFinite(nextValue)) {
+                        return;
+                      }
+
+                      controller?.setBoostSetting(field.key, nextValue);
+                    }}
+                  />
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div className="sandbox-panel__section">
+            <div className="sandbox-panel__section-header">
+              <div className="sandbox-panel__section-copy">
+                <div className="hud-panel__eyebrow">Performance</div>
+                <div className="sandbox-panel__section-note">
+                  CPU-side sim and render timings for this viewport
+                </div>
+              </div>
+              <div className="sandbox-panel__header-actions">
+                <button
+                  type="button"
+                  className="hud-button hud-button--compact"
+                  disabled={controller === null}
+                  onClick={() =>
+                    controller?.setProfilingEnabled(!hud.profilingEnabled)
+                  }
+                >
+                  {hud.profilingEnabled ? "Disable" : "Enable"}
+                </button>
+                <button
+                  type="button"
+                  className="hud-button hud-button--compact"
+                  disabled={controller === null || !hud.profilingEnabled}
+                  onClick={() => controller?.resetProfiling()}
+                >
+                  Reset
+                </button>
               </div>
             </div>
-            <button
-              type="button"
-              className="hud-button hud-button--compact"
-              disabled={controller === null}
-              onClick={() => controller?.resetPlanetVisualSettings()}
-            >
-              Reset
-            </button>
-          </div>
-          <div className="sandbox-panel__settings">
-            <label className="hud-field">
-              <span className="hud-field__label">
-                {PLANET_BODY_SCALE_FIELD.label}
-              </span>
-              <input
-                type="number"
-                className="hud-field__input"
-                min={PLANET_BODY_SCALE_FIELD.min}
-                max={PLANET_BODY_SCALE_FIELD.max}
-                step={PLANET_BODY_SCALE_FIELD.step}
-                value={hud.planetBodyScale}
-                disabled={controller === null}
-                onChange={(event) => {
-                  const nextValue = event.currentTarget.valueAsNumber;
-                  if (!Number.isFinite(nextValue)) {
-                    return;
-                  }
-
-                  controller?.setPlanetBodyScale(nextValue);
-                }}
-              />
-            </label>
-            <label className="hud-field">
-              <span className="hud-field__label">
-                {PLANET_AURA_SCALE_FIELD.label}
-              </span>
-              <input
-                type="number"
-                className="hud-field__input"
-                min={PLANET_AURA_SCALE_FIELD.min}
-                max={PLANET_AURA_SCALE_FIELD.max}
-                step={PLANET_AURA_SCALE_FIELD.step}
-                value={hud.planetAuraScale}
-                disabled={controller === null}
-                onChange={(event) => {
-                  const nextValue = event.currentTarget.valueAsNumber;
-                  if (!Number.isFinite(nextValue)) {
-                    return;
-                  }
-
-                  controller?.setPlanetAuraScale(nextValue);
-                }}
-              />
-            </label>
-            <label className="hud-field">
-              <span className="hud-field__label">
-                {PLANET_AURA_GAP_FIELD.label}
-              </span>
-              <input
-                type="number"
-                className="hud-field__input"
-                min={PLANET_AURA_GAP_FIELD.min}
-                max={PLANET_AURA_GAP_FIELD.max}
-                step={PLANET_AURA_GAP_FIELD.step}
-                value={hud.planetAuraGap}
-                disabled={controller === null}
-                onChange={(event) => {
-                  const nextValue = event.currentTarget.valueAsNumber;
-                  if (!Number.isFinite(nextValue)) {
-                    return;
-                  }
-
-                  controller?.setPlanetAuraGap(nextValue);
-                }}
-              />
-            </label>
-            <label className="hud-field">
-              <span className="hud-field__label">
-                {CACHE_BADGE_SCALE_FIELD.label}
-              </span>
-              <input
-                type="number"
-                className="hud-field__input"
-                min={CACHE_BADGE_SCALE_FIELD.min}
-                max={CACHE_BADGE_SCALE_FIELD.max}
-                step={CACHE_BADGE_SCALE_FIELD.step}
-                value={hud.cacheBadgeScale}
-                disabled={controller === null}
-                onChange={(event) => {
-                  const nextValue = event.currentTarget.valueAsNumber;
-                  if (!Number.isFinite(nextValue)) {
-                    return;
-                  }
-
-                  controller?.setCacheBadgeScale(nextValue);
-                }}
-              />
-            </label>
-          </div>
-        </div>
-
-        <div className="sandbox-panel__section">
-          <div className="sandbox-panel__section-header">
-            <div className="sandbox-panel__section-copy">
-              <div className="hud-panel__eyebrow">Black Hole</div>
-              <div className="sandbox-panel__section-note">
-                Spawn timing and collapse strength
+            {hud.profilingEnabled && hud.debugItems.length > 0 ? (
+              <div className="sandbox-panel__stats">
+                <div className="sandbox-panel__stats-grid">
+                  {hud.debugItems.map((item) => (
+                    <div key={item.label} className="sandbox-stat">
+                      <span className="sandbox-stat__label">{item.label}</span>
+                      <strong className="sandbox-stat__value">
+                        {item.value}
+                      </strong>
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
-            <button
-              type="button"
-              className="hud-button hud-button--compact"
-              disabled={controller === null}
-              onClick={() => controller?.resetBlackHoleSettings()}
-            >
-              Reset
-            </button>
-          </div>
-          <div className="sandbox-panel__settings">
-            {BLACK_HOLE_FIELDS.map((field) => (
-              <label key={field.key} className="hud-field">
-                <span className="hud-field__label">{field.label}</span>
-                <input
-                  type="number"
-                  className="hud-field__input"
-                  min={field.min}
-                  step={field.step}
-                  value={hud.blackHoleSettings[field.key]}
-                  disabled={controller === null}
-                  onChange={(event) => {
-                    const nextValue = event.currentTarget.valueAsNumber;
-                    if (!Number.isFinite(nextValue)) {
-                      return;
-                    }
-
-                    controller?.setBlackHoleSetting(field.key, nextValue);
-                  }}
-                />
-              </label>
-            ))}
-          </div>
-        </div>
-
-        <div className="sandbox-panel__section">
-          <div className="sandbox-panel__section-header">
-            <div className="sandbox-panel__section-copy">
-              <div className="hud-panel__eyebrow">Abilities</div>
-              <div className="sandbox-panel__section-note">
-                Foresight, shield, and boost tuning
+            ) : (
+              <div className="sandbox-panel__hint">
+                {hud.profilingEnabled
+                  ? "Collecting samples..."
+                  : "Enable the profiler to inspect CPU-side frame costs and entity counts."}
               </div>
-            </div>
-            <button
-              type="button"
-              className="hud-button hud-button--compact"
-              disabled={controller === null}
-              onClick={() => controller?.resetAbilitySettings()}
-            >
-              Reset
-            </button>
+            )}
           </div>
-          <div className="sandbox-panel__settings">
-            {FORESIGHT_FIELDS.map((field) => (
-              <label key={field.key} className="hud-field">
-                <span className="hud-field__label">{field.label}</span>
-                <input
-                  type="number"
-                  className="hud-field__input"
-                  min={field.min}
-                  max={field.max}
-                  step={field.step}
-                  value={hud.foresightSettings[field.key]}
-                  disabled={controller === null}
-                  onChange={(event) => {
-                    const nextValue = event.currentTarget.valueAsNumber;
-                    if (!Number.isFinite(nextValue)) {
-                      return;
-                    }
-
-                    controller?.setForesightSetting(field.key, nextValue);
-                  }}
-                />
-              </label>
-            ))}
-            {SHIELD_FIELDS.map((field) => (
-              <label key={`shield-${field.key}`} className="hud-field">
-                <span className="hud-field__label">{field.label}</span>
-                <input
-                  type="number"
-                  className="hud-field__input"
-                  min={field.min}
-                  max={field.max}
-                  step={field.step}
-                  value={hud.shieldSettings[field.key]}
-                  disabled={controller === null}
-                  onChange={(event) => {
-                    const nextValue = event.currentTarget.valueAsNumber;
-                    if (!Number.isFinite(nextValue)) {
-                      return;
-                    }
-
-                    controller?.setShieldSetting(field.key, nextValue);
-                  }}
-                />
-              </label>
-            ))}
-            {BOOST_FIELDS.map((field) => (
-              <label key={field.key} className="hud-field">
-                <span className="hud-field__label">{field.label}</span>
-                <input
-                  type="number"
-                  className="hud-field__input"
-                  min={field.min}
-                  max={field.max}
-                  step={field.step}
-                  value={hud.boostSettings[field.key]}
-                  disabled={controller === null}
-                  onChange={(event) => {
-                    const nextValue = event.currentTarget.valueAsNumber;
-                    if (!Number.isFinite(nextValue)) {
-                      return;
-                    }
-
-                    controller?.setBoostSetting(field.key, nextValue);
-                  }}
-                />
-              </label>
-            ))}
-          </div>
-        </div>
-      </form>
+        </form>
+      ) : null}
 
       <section className="match-timer hud-pill">
         <div className="hud-pill__label">Match</div>
@@ -601,9 +679,17 @@ export function CombatHud({
           >
             {hud.connection.state}
           </span>
-          <span className="connection-indicator__rtt">
-            {formatRtt(hud.connection.rttMs)}
-          </span>
+          <div className="connection-indicator__metrics">
+            <span className="connection-indicator__metric">
+              {formatRtt(hud.connection.rttMs)}
+            </span>
+            <span className="connection-indicator__metric">
+              {formatFps(hud.connection.fps)}
+            </span>
+            <span className="connection-indicator__metric">
+              {formatFrameTime(hud.connection.frameTimeMs)}
+            </span>
+          </div>
         </div>
         <div className="connection-indicator__label">
           {hud.connection.label}

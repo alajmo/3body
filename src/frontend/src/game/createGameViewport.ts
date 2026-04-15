@@ -1,20 +1,9 @@
-import type {
-  AbilitySpec,
-  BlackHoleSpec,
-  BoostSpec,
-  CacheContents,
-  RocketKind,
-  Vec2,
-} from "@3body/shared";
+import type { CacheContents, RocketKind, Vec2 } from "@3body/shared";
 import {
   ARENA_RADIUS,
   add,
-  BLACK_HOLE_SPEC,
-  BOOST_SPEC,
   clamp,
-  DRONE_SPEC,
   FIXED_STEP_SEC,
-  FORESIGHT_SPEC,
   len,
   lerp,
   mulberry32,
@@ -61,7 +50,6 @@ import {
   viewportSharedTexture,
 } from "three/tsl";
 import {
-  ACESFilmicToneMapping,
   AdditiveBlending,
   BoxGeometry,
   BufferGeometry,
@@ -102,42 +90,63 @@ import {
   type CombatPlanetDeathReason,
   type CombatSandboxPlanet,
   type CombatSandboxRocket,
+  type CombatSandboxRocketLaunchBurst,
   createSandboxState,
+  createInterpolatedSandboxState,
+  createSandboxInterpolationCache,
   getActiveCombatSuns,
   getSandboxDebugSnapshot,
   getSandboxResetReason,
-  interpolateSandboxState,
   SEEKER_LOCK_TICKS,
+  syncInterpolatedSandboxState,
   stepSandbox,
   SUN_SWALLOW_FADE_SEC,
 } from "./combatSandbox";
-import { DEFAULT_ORBIT_PRESET, ORBIT_PRESET_BY_ID } from "./orbitPresets";
 import {
-  DEFAULT_BOOST_SETTINGS,
-  DEFAULT_CACHE_BADGE_SCALE,
-  DEFAULT_FORESIGHT_SETTINGS,
-  DEFAULT_PLANET_BODY_SCALE,
-  DEFAULT_PLANET_AURA_GAP,
-  DEFAULT_PLANET_AURA_SCALE,
-  DEFAULT_SHIELD_SETTINGS,
+  getCannonMuzzleDistance,
+  getCannonMuzzleOrigin,
+  getLaunchBurstHandoffDuration,
+  getLaunchBurstTravelDistance,
+  getMinScreenAxisScale,
+  getRocketVisibleDistanceThreshold,
+  ROCKET_MIN_SCREEN_WIDTH_PX,
+  ROCKET_RENDER_INSTANCE_LIMITS,
+} from "./rocketVisibility";
+import {
+  createCacheSpriteAssets,
+  createCacheVisual as createSharedCacheVisual,
+  disposeCacheSpriteAssets,
+  getCacheIconKey as getSharedCacheIconKey,
+  type CacheSpriteMaterialMap,
+  updateCacheVisualBadge as updateSharedCacheVisualBadge,
+} from "./viewport/cacheVisuals";
+import { buildLocalSandboxHudState } from "./viewport/localHud";
+import { createGameViewportInputController } from "./viewport/localInput";
+import { createViewportPerformanceProfiler } from "./viewport/performanceProfiler";
+import { createAdaptiveQualityController } from "./viewport/renderQuality";
+import { createRuntimeStatsTracker } from "./viewport/runtimeStats";
+import {
+  createGameViewportSandboxSettingsStore,
+  sandboxControlsEnabled as sandboxSettingsControlsEnabled,
+} from "./viewport/sandboxSettingsStore";
+import {
+  createViewportRendererBootstrap,
+  showViewportRendererFailure,
+} from "./viewport/rendererBootstrap";
+import {
+  areHudStatesEqual,
   createInitialHudState,
   type CreateGameViewportOptions,
-  type GameViewportController,
   type GameViewportHudState,
-  type GameViewportKillFeedEntry,
-  type GameViewportPlanetBar,
-  type GameViewportShortcut,
 } from "./viewportHud";
+import { getRuntimeTuningDocument } from "./runtimeTuning";
 
 const CAMERA_DISTANCE = 100;
-const MAX_PIXEL_RATIO = 3;
-const FORCE_WEBGL_BACKEND = true;
 const FULL_VIEW_WORLD_HEIGHT = ARENA_RADIUS * 2.25;
 const FOLLOW_VIEW_WORLD_HEIGHT = ARENA_RADIUS * 0.92;
 const READ_MODE_WORLD_HEIGHT = ARENA_RADIUS * 1.52;
 const MAX_FRAME_DELTA_SEC = 0.1;
 const MAX_STEPS_PER_FRAME = 12;
-const SCENE_SSAA_LEVEL = 2;
 const CAMERA_FOLLOW_LERP = 6.4;
 const CAMERA_ZOOM_LERP = 5.2;
 const READ_MODE_HUD_OPACITY = 0.2;
@@ -145,8 +154,6 @@ const FULL_VIEW_PADDING = 260;
 const TRAIL_DURATION_SEC = 3.5;
 const TRAIL_POINT_SIZE = 12;
 const MAX_TRAIL_SAMPLES = Math.ceil(TRAIL_DURATION_SEC * 180) + 8;
-const SUN_GLOW_SCALE = 1.7;
-const SUN_WARP_SCALE = 3.2;
 const BLOOM_STRENGTH = 1.02;
 const BLOOM_RADIUS = 0.18;
 const BLOOM_THRESHOLD = 0.82;
@@ -154,25 +161,26 @@ const CHROMATIC_ABERRATION_MAX = 0.0012;
 const CHROMATIC_DISTANCE_FALLOFF = 720;
 const STARFIELD_RADIUS = ARENA_RADIUS * 2.35;
 const STARFIELD_TILE_SIZE = STARFIELD_RADIUS * 2;
-const BLACK_HOLE_CORE_RADIUS = 110;
-const BLACK_HOLE_RING_RADIUS = 205;
-const BLACK_HOLE_LENS_RADIUS = 330;
+const SUN_GEOMETRY_SEGMENTS = 40;
+const GLOW_GEOMETRY_SEGMENTS = 52;
+const WARP_GEOMETRY_SEGMENTS = 72;
+const PLANET_GEOMETRY_SEGMENTS = 80;
 const KILL_FEED_DURATION_SEC = 4;
 const MAX_KILL_FEED_ENTRIES = 6;
-const CACHE_BADGE_BASE_SIZE = 80;
-const MAX_ROCKET_INSTANCES = {
-  heavy: 48,
-  light: 160,
-  seeker: 64,
-} satisfies Record<RocketKind, number>;
+const HUD_UPDATE_INTERVAL_SEC = 1 / 12;
 const ROCKET_TRAIL_DURATION_SEC = 0.18;
 const ROCKET_TRAIL_SAMPLE_DISTANCE = 18;
 const MAX_ROCKET_TRAIL_SAMPLES = 9;
 const MAX_ROCKET_TRAIL_SEGMENTS = MAX_ROCKET_TRAIL_SAMPLES - 1;
 const MAX_ROCKET_TRAIL_INSTANCES = {
-  heavy: MAX_ROCKET_INSTANCES.heavy * MAX_ROCKET_TRAIL_SEGMENTS,
-  light: MAX_ROCKET_INSTANCES.light * MAX_ROCKET_TRAIL_SEGMENTS,
-  seeker: MAX_ROCKET_INSTANCES.seeker * MAX_ROCKET_TRAIL_SEGMENTS,
+  heavy: ROCKET_RENDER_INSTANCE_LIMITS.heavy * MAX_ROCKET_TRAIL_SEGMENTS,
+  light: ROCKET_RENDER_INSTANCE_LIMITS.light * MAX_ROCKET_TRAIL_SEGMENTS,
+  seeker: ROCKET_RENDER_INSTANCE_LIMITS.seeker * MAX_ROCKET_TRAIL_SEGMENTS,
+} satisfies Record<RocketKind, number>;
+const MAX_ROCKET_LAUNCH_BURST_INSTANCES = {
+  heavy: 24,
+  light: 24,
+  seeker: 24,
 } satisfies Record<RocketKind, number>;
 const MAX_DEBRIS_SAMPLES = 512;
 const FORESIGHT_WINDOW_SEC = 6;
@@ -183,8 +191,6 @@ const MAX_FORESIGHT_SAMPLES =
 const FORESIGHT_POINT_SIZE = 9;
 const FORESIGHT_SOLID_FRACTION = 0.28;
 const FORESIGHT_FADE_FRACTION = 0.92;
-const SHIELD_COLOR = "#86ecff";
-const BOOST_COLOR = "#8bc6ff";
 const SHIELD_INNER_SCALE = 1.22;
 const SHIELD_OUTER_SCALE = 1.7;
 const SHIELD_GLOW_OUTER_SCALE = 2.06;
@@ -217,52 +223,40 @@ const CANNON_MUZZLE_LENGTH_PX = 4;
 const CANNON_MUZZLE_RADIUS_PX = 5.6;
 const CANNON_FLASH_RADIUS_PX = 16;
 const CANNON_FLASH_DURATION_SEC = 0.14;
-const DRONE_COLOR = "#91ffd2";
-const DRONE_RETURN_COLOR = "#ffe08d";
-const WEAPON_COLORS = {
+const WEAPON_KINDS = [
+  "light",
+  "heavy",
+  "seeker",
+] as const satisfies readonly RocketKind[];
+const getRuntimeVisuals = () => getRuntimeTuningDocument().visuals;
+const getSunGlowScale = () => getRuntimeVisuals().suns.glowScale;
+const getSunWarpScale = () => getRuntimeVisuals().suns.warpScale;
+const getBlackHoleCoreRadius = () => getRuntimeVisuals().blackHole.coreRadius;
+const getBlackHoleRingRadius = () => getRuntimeVisuals().blackHole.ringRadius;
+const getBlackHoleLensRadius = () => getRuntimeVisuals().blackHole.lensRadius;
+const getCacheBadgeBaseSize = () => getRuntimeVisuals().caches.badgeBaseSize;
+const getShieldColor = () => getRuntimeVisuals().abilities.shieldColor;
+const getBoostColor = () => getRuntimeVisuals().abilities.boostColor;
+const getForesightColor = () => getRuntimeVisuals().abilities.foresightColor;
+const getWildcardColor = () => getRuntimeVisuals().abilities.wildcardColor;
+const getDroneColor = () => getRuntimeVisuals().drone.activeColor;
+const getDroneReturnColor = () => getRuntimeVisuals().drone.returnColor;
+const getWeaponColors = (): Record<RocketKind, { accent: string }> => ({
   heavy: {
-    accent: "#ff7a3d",
+    accent: getRuntimeVisuals().rockets.heavy.hudAccent,
   },
   light: {
-    accent: "#f5fbff",
+    accent: getRuntimeVisuals().rockets.light.hudAccent,
   },
   seeker: {
-    accent: "#ff61eb",
+    accent: getRuntimeVisuals().rockets.seeker.hudAccent,
   },
-} satisfies Record<RocketKind, { accent: string }>;
-const ROCKET_RENDER_PROFILES = {
-  heavy: {
-    bodyScale: { x: 31, y: 7.8 },
-    core: "#ff8d4a",
-    flameScale: { x: 28, y: 14 },
-    trail: "#ff6130",
-    trailScale: { x: 36, y: 9 },
-  },
-  light: {
-    bodyScale: { x: 24, y: 4.8 },
-    core: "#f4f9ff",
-    flameScale: { x: 22, y: 9 },
-    trail: "#b7e6ff",
-    trailScale: { x: 30, y: 6 },
-  },
-  seeker: {
-    bodyScale: { x: 27, y: 6.2 },
-    core: "#f564ff",
-    flameScale: { x: 25, y: 11 },
-    trail: "#ff4dd4",
-    trailScale: { x: 33, y: 7.5 },
-  },
-} satisfies Record<
-  RocketKind,
-  {
-    bodyScale: Vec2;
-    core: string;
-    flameScale: Vec2;
-    trail: string;
-    trailScale: Vec2;
-  }
->;
+});
+const getRocketRenderProfiles = () => getRuntimeVisuals().rockets;
 const SCENE_BACKGROUND = new Color("#05070b");
+const CACHED_COLORS = new Map<string, Color>();
+const TINTED_COLORS = new Map<string, Color>();
+const IMPACT_CORE_BASE = new Color("#fff5dd");
 const STARFIELD_LAYERS = [
   {
     count: 320,
@@ -339,6 +333,12 @@ interface RocketPoolVisual {
   flameMesh: InstancedMesh;
   flameOffset: number;
   flameScale: Vec2;
+}
+
+interface RocketLaunchBurstPoolVisual {
+  activeCount: number;
+  mesh: InstancedMesh;
+  scale: Vec2;
 }
 
 interface RocketTrailState {
@@ -446,8 +446,6 @@ type CacheBadgeShape =
   | "star";
 
 interface CacheVisual {
-  badgeMap: CanvasTexture;
-  badgeMaterial: SpriteMaterial;
   badgeSprite: Sprite;
   bobPhase: number;
   group: Group;
@@ -464,47 +462,6 @@ interface DroneVisual {
   noseMesh: Mesh;
   cargoSprite: Sprite;
 }
-
-const ORBIT_PRESET_STORAGE_KEY = "3body.orbitPresetId";
-const BLACK_HOLE_SETTINGS_STORAGE_KEY = "3body.blackHoleSettings";
-const FORESIGHT_SETTINGS_STORAGE_KEY = "3body.foresightSettings";
-const SHIELD_SETTINGS_STORAGE_KEY = "3body.shieldSettings";
-const BOOST_SETTINGS_STORAGE_KEY = "3body.boostSettings";
-const PLANET_BODY_SCALE_STORAGE_KEY = "3body.planetBodyScale";
-const PLANET_AURA_GAP_STORAGE_KEY = "3body.planetAuraGap";
-const PLANET_AURA_SCALE_STORAGE_KEY = "3body.planetAuraScale";
-const CACHE_BADGE_SCALE_STORAGE_KEY = "3body.cacheBadgeScale";
-const BLACK_HOLE_SETTING_LIMITS = {
-  killRadius: { max: 1_200, min: 1 },
-  mass: { max: 50_000_000, min: 0 },
-  rampSec: { max: 600, min: 1 },
-  spawnSec: { max: 600, min: 0 },
-} satisfies Record<keyof BlackHoleSpec, { min: number; max: number }>;
-const PLANET_BODY_SCALE_LIMITS = {
-  max: 10,
-  min: 0.75,
-} as const;
-const PLANET_AURA_GAP_LIMITS = {
-  max: 10,
-  min: 0,
-} as const;
-const PLANET_AURA_SCALE_LIMITS = {
-  max: 10,
-  min: 1,
-} as const;
-const CACHE_BADGE_SCALE_LIMITS = {
-  max: 2.25,
-  min: 0.5,
-} as const;
-const ABILITY_SETTING_LIMITS = {
-  cooldownSec: { max: 60, min: 0 },
-  durationSec: { max: 30, min: 0.25 },
-} satisfies Record<keyof AbilitySpec, { min: number; max: number }>;
-const BOOST_SETTING_LIMITS = {
-  charges: { max: 1, min: 1 },
-  cooldownSec: { max: 60, min: 0.25 },
-  magnitude: { max: 1_200, min: 0 },
-} satisfies Record<keyof BoostSpec, { min: number; max: number }>;
 
 interface KillFeedState {
   accent: string;
@@ -527,102 +484,6 @@ const registerDisposables = (
   }
 };
 
-const sanitizeBlackHoleSettings = (
-  value: Partial<BlackHoleSpec> | null | undefined,
-): BlackHoleSpec => {
-  const nextSettings = { ...BLACK_HOLE_SPEC };
-
-  if (value === null || value === undefined) {
-    return nextSettings;
-  }
-
-  for (const key of Object.keys(BLACK_HOLE_SETTING_LIMITS) as Array<
-    keyof BlackHoleSpec
-  >) {
-    const candidate = value[key];
-    if (typeof candidate !== "number" || !Number.isFinite(candidate)) {
-      continue;
-    }
-
-    const limits = BLACK_HOLE_SETTING_LIMITS[key];
-    nextSettings[key] = clamp(candidate, limits.min, limits.max);
-  }
-
-  return nextSettings;
-};
-
-const sanitizeAbilitySettings = (
-  value: Partial<AbilitySpec> | null | undefined,
-  defaults: AbilitySpec,
-): AbilitySpec => {
-  const nextSettings = { ...defaults };
-
-  if (value === null || value === undefined) {
-    return nextSettings;
-  }
-
-  for (const key of Object.keys(ABILITY_SETTING_LIMITS) as Array<
-    keyof AbilitySpec
-  >) {
-    const candidate = value[key];
-    if (typeof candidate !== "number" || !Number.isFinite(candidate)) {
-      continue;
-    }
-
-    const limits = ABILITY_SETTING_LIMITS[key];
-    nextSettings[key] = clamp(candidate, limits.min, limits.max);
-  }
-
-  return nextSettings;
-};
-
-const sanitizeBoostSettings = (
-  value: Partial<BoostSpec> | null | undefined,
-): BoostSpec => {
-  const nextSettings = { ...DEFAULT_BOOST_SETTINGS };
-
-  if (value === null || value === undefined) {
-    return nextSettings;
-  }
-
-  for (const key of Object.keys(BOOST_SETTING_LIMITS) as Array<
-    keyof BoostSpec
-  >) {
-    const candidate = value[key];
-    if (typeof candidate !== "number" || !Number.isFinite(candidate)) {
-      continue;
-    }
-
-    const limits = BOOST_SETTING_LIMITS[key];
-    nextSettings[key] =
-      key === "charges"
-        ? Math.round(clamp(candidate, limits.min, limits.max))
-        : clamp(candidate, limits.min, limits.max);
-  }
-
-  return nextSettings;
-};
-
-const sanitizePlanetAuraScale = (value: unknown): number =>
-  typeof value === "number" && Number.isFinite(value)
-    ? clamp(value, PLANET_AURA_SCALE_LIMITS.min, PLANET_AURA_SCALE_LIMITS.max)
-    : DEFAULT_PLANET_AURA_SCALE;
-
-const sanitizePlanetAuraGap = (value: unknown): number =>
-  typeof value === "number" && Number.isFinite(value)
-    ? clamp(value, PLANET_AURA_GAP_LIMITS.min, PLANET_AURA_GAP_LIMITS.max)
-    : DEFAULT_PLANET_AURA_GAP;
-
-const sanitizePlanetBodyScale = (value: unknown): number =>
-  typeof value === "number" && Number.isFinite(value)
-    ? clamp(value, PLANET_BODY_SCALE_LIMITS.min, PLANET_BODY_SCALE_LIMITS.max)
-    : DEFAULT_PLANET_BODY_SCALE;
-
-const sanitizeCacheBadgeScale = (value: unknown): number =>
-  typeof value === "number" && Number.isFinite(value)
-    ? clamp(value, CACHE_BADGE_SCALE_LIMITS.min, CACHE_BADGE_SCALE_LIMITS.max)
-    : DEFAULT_CACHE_BADGE_SCALE;
-
 const decayUnitValue = (
   value: number,
   deltaSec: number,
@@ -632,32 +493,6 @@ const decayUnitValue = (
 
 const easingAlpha = (rate: number, dtSec: number): number =>
   1 - Math.exp(-rate * dtSec);
-
-const getRemainingRatio = (remainingSec: number, totalSec: number): number => {
-  if (!(remainingSec > 0)) {
-    return 0;
-  }
-
-  if (!(totalSec > 0)) {
-    return 1;
-  }
-
-  return clamp(remainingSec / totalSec, 0, 1);
-};
-
-const formatSeconds = (valueSec: number): string =>
-  `${Math.max(0, valueSec).toFixed(1)}s`;
-
-const weaponLabel = (rocketKind: RocketKind): string => {
-  switch (rocketKind) {
-    case "light":
-      return "Light";
-    case "heavy":
-      return "Heavy";
-    case "seeker":
-      return "Seeker";
-  }
-};
 
 const describePlanetDeath = (
   planet: Pick<CombatSandboxPlanet, "deathReason" | "label">,
@@ -700,28 +535,19 @@ const createPlanetSpinAxis = (seed: number): Vector3 => {
   ).normalize();
 };
 
-interface ForestProfile {
-  baseDensity: number;
-  color: string;
-}
-
-const FOREST_PROFILES: Record<string, ForestProfile> = {
-  terra: { baseDensity: 0.95, color: "#2c5a2a" },
-  volans: { baseDensity: 0.55, color: "#1f6b5b" },
-  umbra: { baseDensity: 0.4, color: "#3a2a52" },
-};
-
 const getPlanetForestProfile = (
   archetype: string,
   planetId: number,
 ): { color: string; density: number } => {
-  const profile = FOREST_PROFILES[archetype];
+  const archetypeProfiles = getRuntimeVisuals().planets.archetypes;
+  const profile =
+    archetypeProfiles[archetype as keyof typeof archetypeProfiles];
   if (!profile) {
     return { color: "#2c5a2a", density: 0 };
   }
   const jitter = mulberry32(Math.imul(planetId + 1, 0xc2b2ae35) >>> 0)();
-  const density = clamp(profile.baseDensity * (0.6 + jitter * 0.7), 0, 1);
-  return { color: profile.color, density };
+  const density = clamp(profile.forestDensity * (0.6 + jitter * 0.7), 0, 1);
+  return { color: profile.forestColor, density };
 };
 
 const tintColor = (
@@ -733,6 +559,32 @@ const tintColor = (
   const result = new Color(value);
   result.offsetHSL(hueOffset, saturationOffset, lightnessOffset);
   return result;
+};
+
+const getCachedColor = (value: string): Color => {
+  let cached = CACHED_COLORS.get(value);
+  if (cached === undefined) {
+    cached = new Color(value);
+    CACHED_COLORS.set(value, cached);
+  }
+
+  return cached;
+};
+
+const getTintedColor = (
+  value: string,
+  hueOffset: number,
+  saturationOffset: number,
+  lightnessOffset: number,
+): Color => {
+  const cacheKey = `${value}|${hueOffset}|${saturationOffset}|${lightnessOffset}`;
+  let cached = TINTED_COLORS.get(cacheKey);
+  if (cached === undefined) {
+    cached = tintColor(value, hueOffset, saturationOffset, lightnessOffset);
+    TINTED_COLORS.set(cacheKey, cached);
+  }
+
+  return cached;
 };
 
 const createRocketMaterial = (
@@ -801,6 +653,26 @@ const createRocketFlameMaterial = (
   return material;
 };
 
+const createRocketLaunchBurstMaterial = (
+  _coreColor: string,
+  trailColor: string,
+): MeshBasicNodeMaterial => {
+  const material = new MeshBasicNodeMaterial({
+    transparent: true,
+    depthWrite: false,
+    blending: AdditiveBlending,
+  });
+  const burstUv = uv();
+  const lateral = abs(burstUv.y.sub(0.5)).mul(2);
+  const head = pow(burstUv.x, float(0.42));
+  const widthMask = float(1).sub(smoothstep(float(0.28), float(1.0), lateral));
+  const mask = widthMask.mul(head);
+  material.colorNode = color(trailColor).mul(0.9);
+  material.opacityNode = mask.mul(0.9);
+  material.alphaTest = 0.01;
+  return material;
+};
+
 const getRenderedPlanetRadius = (
   planet: Pick<CombatSandboxPlanet, "radius">,
   planetBodyScale: number,
@@ -848,13 +720,11 @@ const getPlanetAuraRingStops = (
 
 const getBoostBurstAnchor = (
   burst: BoostBurstState,
-  planets: readonly CombatSandboxPlanet[],
+  planetsById: ReadonlyMap<number, CombatSandboxPlanet>,
   planetBodyScale: number,
 ): { origin: Vec2; radius: number } => {
-  const boostedPlanet =
-    planets.find((planet) => planet.id === burst.planetId && planet.alive) ??
-    null;
-  if (boostedPlanet !== null) {
+  const boostedPlanet = planetsById.get(burst.planetId) ?? null;
+  if (boostedPlanet?.alive) {
     return {
       origin: boostedPlanet.pos,
       radius: getRenderedPlanetRadius(boostedPlanet, planetBodyScale),
@@ -1471,7 +1341,7 @@ const updateForesightVisual = (
 const updateBoostBurstVisual = (
   boostVisual: BoostBurstVisual,
   bursts: readonly BoostBurstState[],
-  planets: readonly CombatSandboxPlanet[],
+  planetsById: ReadonlyMap<number, CombatSandboxPlanet>,
   nowSec: number,
   planetBodyScale: number,
 ) => {
@@ -1494,7 +1364,7 @@ const updateBoostBurstVisual = (
     const burstProgress = clamp(ageSec / BOOST_BURST_DURATION_SEC, 0, 1);
     const { origin, radius } = getBoostBurstAnchor(
       burst,
-      planets,
+      planetsById,
       planetBodyScale,
     );
     if (burstAlpha > brightestAlpha) {
@@ -1574,7 +1444,7 @@ const hideImpactBurstVisual = (visual: ImpactBurstVisual) => {
 const updateImpactBurstVisuals = (
   visuals: readonly ImpactBurstVisual[],
   bursts: readonly CombatSandboxImpactBurst[],
-  planets: readonly CombatSandboxPlanet[],
+  planetsById: ReadonlyMap<number, CombatSandboxPlanet>,
   elapsedSec: number,
   planetBodyScale: number,
 ) => {
@@ -1587,8 +1457,7 @@ const updateImpactBurstVisuals = (
     burstIndex += 1
   ) {
     const burst = bursts[burstIndex]!;
-    const planet =
-      planets.find((candidate) => candidate.id === burst.planetId) ?? null;
+    const planet = planetsById.get(burst.planetId) ?? null;
     if (planet === null) {
       continue;
     }
@@ -1618,9 +1487,8 @@ const updateImpactBurstVisuals = (
     const glowMaterial = visual.glowMesh.material as MeshBasicMaterial;
     const coreMaterial = visual.coreMesh.material as MeshBasicMaterial;
     const ringMaterial = visual.ringMesh.material as MeshBasicMaterial;
-    const glowTint = tintColor(burst.color, -0.02, 0.12, 0.14);
-    const ringTint = tintColor(burst.color, -0.01, 0.18, 0.28);
-    const coreTint = new Color("#fff5dd").lerp(new Color(burst.color), 0.28);
+    const glowTint = getTintedColor(burst.color, -0.02, 0.12, 0.14);
+    const ringTint = getTintedColor(burst.color, -0.01, 0.18, 0.28);
 
     visual.glowMesh.visible = glowAlpha > 0.01;
     visual.coreMesh.visible = flashAlpha > 0.01;
@@ -1639,7 +1507,9 @@ const updateImpactBurstVisuals = (
 
     glowMaterial.color.copy(glowTint);
     glowMaterial.opacity = glowAlpha;
-    coreMaterial.color.copy(coreTint);
+    coreMaterial.color
+      .copy(IMPACT_CORE_BASE)
+      .lerp(getCachedColor(burst.color), 0.28);
     coreMaterial.opacity = flashAlpha;
     ringMaterial.color.copy(ringTint);
     ringMaterial.opacity = ringAlpha;
@@ -1929,9 +1799,10 @@ const createPlanetGlowMaterial = (
   const outerGlow = tintColor(planetColor, -0.04, 0.04, 0.2);
   const innerGlow = tintColor(planetColor, -0.08, 0.1, 0.28);
   const seedNode = uniform(seed);
+  const planetVisuals = getRuntimeVisuals().planets;
   const initialRingStops = getPlanetAuraRingStops(
-    DEFAULT_PLANET_AURA_SCALE,
-    DEFAULT_PLANET_AURA_GAP,
+    planetVisuals.auraScale,
+    planetVisuals.auraGap,
   );
   const contactStartNode = uniform(initialRingStops.contactStart);
   const riseStartNode = uniform(initialRingStops.riseStart);
@@ -2342,8 +2213,9 @@ const createBoostWakeMaterial = (): {
   const tailFade = pow(fromPlanet, float(0.78));
   const coreBand = float(1).sub(smoothstep(0.0, 0.24, lateral));
   const mask = widthMask.mul(frontFade).mul(tailFade);
-  const hotGlow = tintColor(BOOST_COLOR, -0.03, -0.05, 0.28);
-  const coolGlow = tintColor(BOOST_COLOR, 0.01, 0.03, -0.04);
+  const boostColor = getBoostColor();
+  const hotGlow = tintColor(boostColor, -0.03, -0.05, 0.28);
+  const coolGlow = tintColor(boostColor, 0.01, 0.03, -0.04);
   const trailBlend = smoothstep(0.12, 1.0, tailProgress);
   const glowColor = mix(color(hotGlow), color(coolGlow), trailBlend).mul(
     mask.mul(1.78).add(coreBand.mul(mask).mul(0.82)),
@@ -2665,7 +2537,7 @@ const updateDebrisGeometry = (
   for (let index = 0; index < drawCount; index += 1) {
     const piece = debris[index]!;
     const offset = index * 3;
-    const tint = new Color(piece.color);
+    const tint = getCachedColor(piece.color);
 
     positionArray[offset] = piece.pos.x;
     positionArray[offset + 1] = piece.pos.y;
@@ -2705,72 +2577,30 @@ const hideInstancedMeshRange = (
 
 const createCacheVisual = (
   cache: CombatSandboxCache,
-  document: Document,
-): CacheVisual => {
-  const key = getCacheIconKey(cache.contents);
-  const { map, material } = createCacheBadgeSpriteMaterial(document, key);
-  const group = new Group();
-  const badgeSprite = new Sprite(material);
-  badgeSprite.position.z = 0.35;
-  badgeSprite.renderOrder = 7;
-  badgeSprite.scale.set(CACHE_BADGE_BASE_SIZE, CACHE_BADGE_BASE_SIZE, 1);
-  group.add(badgeSprite);
-
-  return {
-    badgeMap: map,
-    badgeMaterial: material,
-    group,
-    badgeSprite,
-    bobPhase: cache.id * 0.71,
-    key,
-    pulseRate: 2.2 + (cache.id % 4) * 0.25,
-    wobbleRate: 1.1 + (cache.id % 5) * 0.08,
-  };
-};
+  badgeMaterials: CacheSpriteMaterialMap,
+): CacheVisual => createSharedCacheVisual(cache, badgeMaterials) as CacheVisual;
 
 const updateCacheVisualBadge = (
   visual: CacheVisual,
-  document: Document,
+  badgeMaterials: CacheSpriteMaterialMap,
   key: CacheIconKey,
-) => {
-  if (visual.key === key) {
-    return;
-  }
+) => updateSharedCacheVisualBadge(visual, badgeMaterials, key);
 
-  const previousMap = visual.badgeMap;
-  const previousMaterial = visual.badgeMaterial;
-  const { map, material } = createCacheBadgeSpriteMaterial(document, key);
-  visual.badgeMap = map;
-  visual.badgeMaterial = material;
-  visual.badgeSprite.material = material;
-  visual.key = key;
-  previousMaterial.dispose();
-  previousMap.dispose();
-};
-
-const disposeCacheVisual = (visual: CacheVisual) => {
-  visual.badgeMaterial.dispose();
-  visual.badgeMap.dispose();
-};
+const disposeCacheVisual = (_visual: CacheVisual) => {};
 
 const updateDroneVisual = (
   visual: DroneVisual,
   drone: CombatSandboxDrone | null,
   nowSec: number,
-  spriteMaterials: Record<
-    CacheIconKey,
-    {
-      map: CanvasTexture;
-      material: SpriteMaterial;
-    }
-  >,
+  spriteMaterials: CacheSpriteMaterialMap,
 ) => {
   visual.group.visible = drone !== null;
   if (drone === null) {
     return;
   }
 
-  const accent = drone.mode === "return" ? DRONE_RETURN_COLOR : DRONE_COLOR;
+  const accent =
+    drone.mode === "return" ? getDroneReturnColor() : getDroneColor();
   const hullMaterial = visual.hullMesh.material as MeshBasicMaterial;
   const wingMaterial = visual.wingMesh.material as MeshBasicMaterial;
   const glowMaterial = visual.glowMesh.material as MeshBasicMaterial;
@@ -2793,7 +2623,7 @@ const updateDroneVisual = (
   visual.noseMesh.scale.set(5.5, 5.5, 1);
   visual.cargoSprite.visible = drone.cargo !== undefined;
   if (drone.cargo !== undefined) {
-    const key = getCacheIconKey(drone.cargo);
+    const key = getSharedCacheIconKey(drone.cargo);
     visual.cargoSprite.material = spriteMaterials[key].material;
     visual.cargoSprite.position.set(0, 21, 0.25);
     visual.cargoSprite.scale.set(20, 20, 1);
@@ -2977,387 +2807,58 @@ export function createGameViewport(
   hostElement: HTMLDivElement,
   options: CreateGameViewportOptions = {},
 ): () => void {
-  const storage = hostElement.ownerDocument.defaultView?.localStorage ?? null;
-  const storedPresetId = (() => {
-    try {
-      return storage?.getItem(ORBIT_PRESET_STORAGE_KEY) ?? null;
-    } catch {
-      return null;
-    }
-  })();
-  const storedBlackHoleSettings = (() => {
-    try {
-      const storedValue = storage?.getItem(BLACK_HOLE_SETTINGS_STORAGE_KEY);
-      return storedValue == null
-        ? { ...BLACK_HOLE_SPEC }
-        : sanitizeBlackHoleSettings(
-            JSON.parse(storedValue) as Partial<BlackHoleSpec>,
-          );
-    } catch {
-      return { ...BLACK_HOLE_SPEC };
-    }
-  })();
-  const storedForesightSettings = (() => {
-    try {
-      const storedValue = storage?.getItem(FORESIGHT_SETTINGS_STORAGE_KEY);
-      return storedValue == null
-        ? { ...DEFAULT_FORESIGHT_SETTINGS }
-        : sanitizeAbilitySettings(
-            JSON.parse(storedValue) as Partial<AbilitySpec>,
-            DEFAULT_FORESIGHT_SETTINGS,
-          );
-    } catch {
-      return { ...DEFAULT_FORESIGHT_SETTINGS };
-    }
-  })();
-  const storedShieldSettings = (() => {
-    try {
-      const storedValue = storage?.getItem(SHIELD_SETTINGS_STORAGE_KEY);
-      return storedValue == null
-        ? { ...DEFAULT_SHIELD_SETTINGS }
-        : sanitizeAbilitySettings(
-            JSON.parse(storedValue) as Partial<AbilitySpec>,
-            DEFAULT_SHIELD_SETTINGS,
-          );
-    } catch {
-      return { ...DEFAULT_SHIELD_SETTINGS };
-    }
-  })();
-  const storedBoostSettings = (() => {
-    try {
-      const storedValue = storage?.getItem(BOOST_SETTINGS_STORAGE_KEY);
-      return storedValue == null
-        ? { ...DEFAULT_BOOST_SETTINGS }
-        : sanitizeBoostSettings(JSON.parse(storedValue) as Partial<BoostSpec>);
-    } catch {
-      return { ...DEFAULT_BOOST_SETTINGS };
-    }
-  })();
-  const storedPlanetBodyScale = (() => {
-    try {
-      const storedValue = storage?.getItem(PLANET_BODY_SCALE_STORAGE_KEY);
-      return storedValue == null
-        ? DEFAULT_PLANET_BODY_SCALE
-        : sanitizePlanetBodyScale(Number(storedValue));
-    } catch {
-      return DEFAULT_PLANET_BODY_SCALE;
-    }
-  })();
-  const storedPlanetAuraGap = (() => {
-    try {
-      const storedValue = storage?.getItem(PLANET_AURA_GAP_STORAGE_KEY);
-      return storedValue == null
-        ? DEFAULT_PLANET_AURA_GAP
-        : sanitizePlanetAuraGap(Number(storedValue));
-    } catch {
-      return DEFAULT_PLANET_AURA_GAP;
-    }
-  })();
-  const storedPlanetAuraScale = (() => {
-    try {
-      const storedValue = storage?.getItem(PLANET_AURA_SCALE_STORAGE_KEY);
-      return storedValue == null
-        ? DEFAULT_PLANET_AURA_SCALE
-        : sanitizePlanetAuraScale(Number(storedValue));
-    } catch {
-      return DEFAULT_PLANET_AURA_SCALE;
-    }
-  })();
-  const storedCacheBadgeScale = (() => {
-    try {
-      const storedValue = storage?.getItem(CACHE_BADGE_SCALE_STORAGE_KEY);
-      return storedValue == null
-        ? DEFAULT_CACHE_BADGE_SCALE
-        : sanitizeCacheBadgeScale(Number(storedValue));
-    } catch {
-      return DEFAULT_CACHE_BADGE_SCALE;
-    }
-  })();
+  const sandboxStorageEnabled = options.enableSandboxStorage === true;
+  const storage = sandboxStorageEnabled
+    ? (hostElement.ownerDocument.defaultView?.localStorage ?? null)
+    : null;
+  const qualityController = createAdaptiveQualityController();
+  let renderQuality = qualityController.getProfile();
+  let currentMaxPixelRatio = renderQuality.maxPixelRatio;
+  let currentSsaaLevel = renderQuality.ssaaLevel;
   let disposed = false;
   let renderer: WebGPURenderer | null = null;
+  let rendererBootstrap:
+    | Awaited<ReturnType<typeof createViewportRendererBootstrap>>
+    | null = null;
   let camera: OrthographicCamera | null = null;
   let backdropMesh: Mesh | null = null;
-  let handleKeyDown: ((event: KeyboardEvent) => void) | null = null;
-  let handleKeyUp: ((event: KeyboardEvent) => void) | null = null;
-  let handlePointerMove: ((event: PointerEvent) => void) | null = null;
-  let handlePointerDown: ((event: PointerEvent) => void) | null = null;
-  let handleContextMenu: ((event: MouseEvent) => void) | null = null;
-  let handleWindowBlur: (() => void) | null = null;
-  let activePreset =
-    (storedPresetId !== null
-      ? ORBIT_PRESET_BY_ID.get(storedPresetId)
-      : undefined) ?? DEFAULT_ORBIT_PRESET;
-  let blackHoleSettings = storedBlackHoleSettings;
-  let foresightSettings = storedForesightSettings;
-  let shieldSettings = storedShieldSettings;
-  let boostSettings = storedBoostSettings;
-  let planetBodyScale = storedPlanetBodyScale;
-  let planetAuraGap = storedPlanetAuraGap;
-  let planetAuraScale = storedPlanetAuraScale;
-  let cacheBadgeScale = storedCacheBadgeScale;
-  const applyAbilitySettingsToSpecs = () => {
-    FORESIGHT_SPEC.cooldownSec = foresightSettings.cooldownSec;
-    FORESIGHT_SPEC.durationSec = foresightSettings.durationSec;
-    SHIELD_SPEC.cooldownSec = shieldSettings.cooldownSec;
-    SHIELD_SPEC.durationSec = shieldSettings.durationSec;
-    BOOST_SPEC.charges = boostSettings.charges;
-    BOOST_SPEC.cooldownSec = boostSettings.cooldownSec;
-    BOOST_SPEC.magnitude = boostSettings.magnitude;
-  };
-  applyAbilitySettingsToSpecs();
-  const sandboxControlsEnabled = () =>
-    activePreset.id === DEFAULT_ORBIT_PRESET.id;
-  let sandboxPaused = false;
+  let inputController: ReturnType<typeof createGameViewportInputController> | null =
+    null;
   let resetSimulationAccumulator = false;
   let resetSandbox: (() => void) | null = null;
   let clearPlanetExplosions = () => {};
   let syncAimWorldToPointer: (() => void) | null = null;
   const disposables: Array<{ dispose: () => void }> = [];
   let lastHudState = createInitialHudState();
-  let lastHudSignature: string | null = null;
-  const persistBlackHoleSettings = () => {
-    try {
-      storage?.setItem(
-        BLACK_HOLE_SETTINGS_STORAGE_KEY,
-        JSON.stringify(blackHoleSettings),
-      );
-    } catch {
-      // Ignore storage failures so the viewport still works in restricted contexts.
-    }
-  };
-  const persistForesightSettings = () => {
-    try {
-      storage?.setItem(
-        FORESIGHT_SETTINGS_STORAGE_KEY,
-        JSON.stringify(foresightSettings),
-      );
-    } catch {
-      // Ignore storage failures so the viewport still works in restricted contexts.
-    }
-  };
-  const persistShieldSettings = () => {
-    try {
-      storage?.setItem(
-        SHIELD_SETTINGS_STORAGE_KEY,
-        JSON.stringify(shieldSettings),
-      );
-    } catch {
-      // Ignore storage failures so the viewport still works in restricted contexts.
-    }
-  };
-  const persistBoostSettings = () => {
-    try {
-      storage?.setItem(
-        BOOST_SETTINGS_STORAGE_KEY,
-        JSON.stringify(boostSettings),
-      );
-    } catch {
-      // Ignore storage failures so the viewport still works in restricted contexts.
-    }
-  };
-  const persistPlanetBodyScale = () => {
-    try {
-      storage?.setItem(
-        PLANET_BODY_SCALE_STORAGE_KEY,
-        planetBodyScale.toString(),
-      );
-    } catch {
-      // Ignore storage failures so the viewport still works in restricted contexts.
-    }
-  };
-  const persistPlanetAuraGap = () => {
-    try {
-      storage?.setItem(PLANET_AURA_GAP_STORAGE_KEY, planetAuraGap.toString());
-    } catch {
-      // Ignore storage failures so the viewport still works in restricted contexts.
-    }
-  };
-  const persistPlanetAuraScale = () => {
-    try {
-      storage?.setItem(
-        PLANET_AURA_SCALE_STORAGE_KEY,
-        planetAuraScale.toString(),
-      );
-    } catch {
-      // Ignore storage failures so the viewport still works in restricted contexts.
-    }
-  };
-  const persistCacheBadgeScale = () => {
-    try {
-      storage?.setItem(
-        CACHE_BADGE_SCALE_STORAGE_KEY,
-        cacheBadgeScale.toString(),
-      );
-    } catch {
-      // Ignore storage failures so the viewport still works in restricted contexts.
-    }
-  };
+  let resetProfiling = () => {};
   const emitHudState = (nextState: GameViewportHudState) => {
-    const nextSignature = JSON.stringify(nextState);
-    if (nextSignature === lastHudSignature) {
+    if (areHudStatesEqual(lastHudState, nextState)) {
       return;
     }
-    lastHudSignature = nextSignature;
     lastHudState = nextState;
     if (!disposed) {
       options.onHudStateChange?.(nextState);
     }
   };
-  const emitSandboxToolsHudState = () => {
-    emitHudState({
-      ...lastHudState,
-      blackHoleSettings,
-      boostSettings: { ...boostSettings },
-      cacheBadgeScale,
-      currentPresetId: activePreset.id,
-      foresightSettings: { ...foresightSettings },
-      planetBodyScale,
-      planetAuraGap,
-      planetAuraScale,
-      sandboxPaused,
-      sandboxControlsEnabled: sandboxControlsEnabled(),
-      shieldSettings: { ...shieldSettings },
-    });
-  };
-  const setOrbitPreset = (presetId: string) => {
-    const nextPreset = ORBIT_PRESET_BY_ID.get(presetId);
-    if (!nextPreset) {
-      return;
-    }
-
-    activePreset = nextPreset;
-    try {
-      storage?.setItem(ORBIT_PRESET_STORAGE_KEY, nextPreset.id);
-    } catch {
-      // Ignore storage failures so the viewport still works in restricted contexts.
-    }
-    emitSandboxToolsHudState();
-    resetSandbox?.();
-  };
-  const controller: GameViewportController = {
-    resetAbilitySettings: () => {
-      foresightSettings = { ...DEFAULT_FORESIGHT_SETTINGS };
-      shieldSettings = { ...DEFAULT_SHIELD_SETTINGS };
-      boostSettings = { ...DEFAULT_BOOST_SETTINGS };
-      applyAbilitySettingsToSpecs();
-      persistForesightSettings();
-      persistShieldSettings();
-      persistBoostSettings();
-      emitSandboxToolsHudState();
+  const sandboxSettingsStore = createGameViewportSandboxSettingsStore({
+    emitHudState,
+    getCurrentHudState: () => lastHudState,
+    onResetProfilingRequested: () => {
+      resetProfiling();
+    },
+    onResetSandboxRequested: () => {
       resetSandbox?.();
     },
-    resetBlackHoleSettings: () => {
-      blackHoleSettings = { ...BLACK_HOLE_SPEC };
-      persistBlackHoleSettings();
-      emitSandboxToolsHudState();
-      resetSandbox?.();
-    },
-    resetPlanetVisualSettings: () => {
-      planetBodyScale = DEFAULT_PLANET_BODY_SCALE;
-      planetAuraGap = DEFAULT_PLANET_AURA_GAP;
-      planetAuraScale = DEFAULT_PLANET_AURA_SCALE;
-      cacheBadgeScale = DEFAULT_CACHE_BADGE_SCALE;
-      persistPlanetBodyScale();
-      persistPlanetAuraGap();
-      persistPlanetAuraScale();
-      persistCacheBadgeScale();
-      emitSandboxToolsHudState();
-    },
-    setBlackHoleSetting: (key, value) => {
-      blackHoleSettings = sanitizeBlackHoleSettings({
-        ...blackHoleSettings,
-        [key]: value,
-      });
-      persistBlackHoleSettings();
-      emitSandboxToolsHudState();
-      resetSandbox?.();
-    },
-    setBoostSetting: (key, value) => {
-      boostSettings = sanitizeBoostSettings({
-        ...boostSettings,
-        [key]: value,
-      });
-      applyAbilitySettingsToSpecs();
-      persistBoostSettings();
-      emitSandboxToolsHudState();
-      resetSandbox?.();
-    },
-    setCacheBadgeScale: (value) => {
-      cacheBadgeScale = sanitizeCacheBadgeScale(value);
-      persistCacheBadgeScale();
-      emitSandboxToolsHudState();
-    },
-    setForesightSetting: (key, value) => {
-      foresightSettings = sanitizeAbilitySettings(
-        {
-          ...foresightSettings,
-          [key]: value,
-        },
-        DEFAULT_FORESIGHT_SETTINGS,
-      );
-      applyAbilitySettingsToSpecs();
-      persistForesightSettings();
-      emitSandboxToolsHudState();
-      resetSandbox?.();
-    },
-    setPlanetBodyScale: (value) => {
-      planetBodyScale = sanitizePlanetBodyScale(value);
-      persistPlanetBodyScale();
-      emitSandboxToolsHudState();
-    },
-    setPlanetAuraGap: (value) => {
-      planetAuraGap = sanitizePlanetAuraGap(value);
-      persistPlanetAuraGap();
-      emitSandboxToolsHudState();
-    },
-    setPlanetAuraScale: (value) => {
-      planetAuraScale = sanitizePlanetAuraScale(value);
-      persistPlanetAuraScale();
-      emitSandboxToolsHudState();
-    },
-    setShieldSetting: (key, value) => {
-      shieldSettings = sanitizeAbilitySettings(
-        {
-          ...shieldSettings,
-          [key]: value,
-        },
-        DEFAULT_SHIELD_SETTINGS,
-      );
-      applyAbilitySettingsToSpecs();
-      persistShieldSettings();
-      emitSandboxToolsHudState();
-      resetSandbox?.();
-    },
-    pauseSandbox: () => {
-      sandboxPaused = true;
+    onSimulationAccumulatorResetRequested: () => {
       resetSimulationAccumulator = true;
-      emitSandboxToolsHudState();
     },
-    playSandbox: () => {
-      sandboxPaused = false;
-      resetSimulationAccumulator = true;
-      emitSandboxToolsHudState();
-    },
-    resetSandbox: () => {
-      resetSandbox?.();
-    },
-    setOrbitPreset,
-  };
-  options.onControllerReady?.(controller);
-  emitHudState({
-    ...createInitialHudState(),
-    blackHoleSettings,
-    boostSettings: { ...boostSettings },
-    cacheBadgeScale,
-    currentPresetId: activePreset.id,
-    foresightSettings: { ...foresightSettings },
-    planetBodyScale,
-    planetAuraGap,
-    planetAuraScale,
-    sandboxPaused,
-    sandboxControlsEnabled: sandboxControlsEnabled(),
-    shieldSettings: { ...shieldSettings },
+    storage,
   });
+  const sandboxSettings = sandboxSettingsStore.state;
+  const sandboxControlsEnabled = () =>
+    sandboxSettingsControlsEnabled(sandboxSettings);
+  options.onControllerReady?.(sandboxSettingsStore.controller);
+  sandboxSettingsStore.emitInitialHudState();
   const cameraState = {
     centerX: 0,
     centerY: 0,
@@ -3411,7 +2912,7 @@ export function createGameViewport(
     const height = Math.max(1, hostElement.clientHeight);
 
     renderer.setPixelRatio(
-      Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO),
+      Math.min(window.devicePixelRatio || 1, currentMaxPixelRatio),
     );
     renderer.setSize(width, height, false);
     applyCameraFrame();
@@ -3420,22 +2921,22 @@ export function createGameViewport(
 
   void (async () => {
     try {
-      const nextRenderer = new WebGPURenderer({
-        antialias: true,
-        forceWebGL: FORCE_WEBGL_BACKEND,
-        powerPreference: "high-performance",
+      const bootstrap = await createViewportRendererBootstrap({
+        hostElement,
+        onContextRecovered: () => {
+          resetSimulationAccumulator = true;
+        },
+        target: "combatSandbox",
       });
-      await nextRenderer.init();
+      const nextRenderer = bootstrap.renderer;
 
       if (disposed) {
+        bootstrap.dispose();
         nextRenderer.dispose();
         return;
       }
 
-      nextRenderer.outputColorSpace = SRGBColorSpace;
-      nextRenderer.toneMapping = ACESFilmicToneMapping;
-      nextRenderer.toneMappingExposure = 1.05;
-      nextRenderer.domElement.className = "game-canvas";
+      rendererBootstrap = bootstrap;
       renderer = nextRenderer;
 
       const scene = new Scene();
@@ -3483,11 +2984,19 @@ export function createGameViewport(
         return layer;
       });
 
-      const initialState = createSandboxState(activePreset);
-      const sunGeometry = new SphereGeometry(1, 48, 48);
-      const glowGeometry = new CircleGeometry(1, 64);
-      const warpGeometry = new RingGeometry(0.55, 1, 96);
-      const planetGeometry = new SphereGeometry(1, 128, 128);
+      const initialState = createSandboxState(sandboxSettings.activePreset);
+      const sunGeometry = new SphereGeometry(
+        1,
+        SUN_GEOMETRY_SEGMENTS,
+        SUN_GEOMETRY_SEGMENTS,
+      );
+      const glowGeometry = new CircleGeometry(1, GLOW_GEOMETRY_SEGMENTS);
+      const warpGeometry = new RingGeometry(0.55, 1, WARP_GEOMETRY_SEGMENTS);
+      const planetGeometry = new SphereGeometry(
+        1,
+        PLANET_GEOMETRY_SEGMENTS,
+        PLANET_GEOMETRY_SEGMENTS,
+      );
       const sunVisuals = initialState.suns.map((sun, index) => {
         const presetSun = initialState.preset.suns[index]!;
         const coreMaterial = createSunCoreMaterial(
@@ -3605,7 +3114,7 @@ export function createGameViewport(
           planet.hideTrailUntilTick,
         ]),
       );
-      const cacheSpriteMaterials = createCacheSpriteMaterials(
+      const cacheSpriteAssets = createCacheSpriteAssets(
         hostElement.ownerDocument,
       );
       const cacheVisuals = new Map<number, CacheVisual>();
@@ -3618,22 +3127,25 @@ export function createGameViewport(
           }
           cacheVisuals.clear();
           renderedCacheKeysById.clear();
+          disposeCacheSpriteAssets(cacheSpriteAssets);
         },
       });
 
+      const droneColor = getDroneColor();
+      const rocketRenderProfiles = getRocketRenderProfiles();
       const droneGlowMaterial = new MeshBasicMaterial({
         blending: AdditiveBlending,
-        color: DRONE_COLOR,
+        color: droneColor,
         depthWrite: false,
         opacity: 0.28,
         transparent: true,
       });
       const droneHullMaterial = new MeshBasicMaterial({
-        color: DRONE_COLOR,
+        color: droneColor,
         depthWrite: false,
       });
       const droneWingMaterial = new MeshBasicMaterial({
-        color: DRONE_COLOR,
+        color: droneColor,
         depthWrite: false,
         opacity: 0.92,
         transparent: true,
@@ -3652,7 +3164,7 @@ export function createGameViewport(
       const droneHullMesh = new Mesh(droneHullGeometry, droneHullMaterial);
       const droneNoseMesh = new Mesh(droneNoseGeometry, droneNoseMaterial);
       const droneCargoSprite = new Sprite(
-        cacheSpriteMaterials.heavyAmmo.material,
+        cacheSpriteAssets.iconMaterials.heavyAmmo.material,
       );
       droneGlowMesh.position.z = 0.1;
       droneWingMesh.position.z = 0.2;
@@ -3686,11 +3198,10 @@ export function createGameViewport(
       rocketGeometry.rotateZ(-Math.PI / 2);
       const rocketTrailGeometry = new PlaneGeometry(1, 1);
       const rocketFlameGeometry = new PlaneGeometry(1, 1);
-      const rocketPools = (
-        Object.keys(MAX_ROCKET_INSTANCES) as RocketKind[]
-      ).reduce(
+      const rocketLaunchBurstGeometry = new PlaneGeometry(1, 1);
+      const rocketPools = WEAPON_KINDS.reduce(
         (pools, rocketKind) => {
-          const profile = ROCKET_RENDER_PROFILES[rocketKind];
+          const profile = rocketRenderProfiles[rocketKind];
           const material = createRocketMaterial(profile.core, profile.trail);
           const trailMaterial = createRocketTrailMaterial(
             profile.core,
@@ -3703,7 +3214,7 @@ export function createGameViewport(
           const mesh = new InstancedMesh(
             rocketGeometry,
             material,
-            MAX_ROCKET_INSTANCES[rocketKind],
+            ROCKET_RENDER_INSTANCE_LIMITS[rocketKind],
           );
           const trailMesh = new InstancedMesh(
             rocketTrailGeometry,
@@ -3713,7 +3224,7 @@ export function createGameViewport(
           const flameMesh = new InstancedMesh(
             rocketFlameGeometry,
             flameMaterial,
-            MAX_ROCKET_INSTANCES[rocketKind],
+            ROCKET_RENDER_INSTANCE_LIMITS[rocketKind],
           );
           mesh.instanceMatrix.setUsage(DynamicDrawUsage);
           trailMesh.instanceMatrix.setUsage(DynamicDrawUsage);
@@ -3723,7 +3234,11 @@ export function createGameViewport(
             new Quaternion(),
             new Vector3(0.001, 0.001, 0.001),
           );
-          for (let i = 0; i < MAX_ROCKET_INSTANCES[rocketKind]; i += 1) {
+          for (
+            let i = 0;
+            i < ROCKET_RENDER_INSTANCE_LIMITS[rocketKind];
+            i += 1
+          ) {
             mesh.setMatrixAt(i, hiddenInit);
             flameMesh.setMatrixAt(i, hiddenInit);
           }
@@ -3733,16 +3248,16 @@ export function createGameViewport(
           mesh.instanceMatrix.needsUpdate = true;
           trailMesh.instanceMatrix.needsUpdate = true;
           flameMesh.instanceMatrix.needsUpdate = true;
-          mesh.count = MAX_ROCKET_INSTANCES[rocketKind];
-          mesh.visible = true;
+          mesh.count = 0;
+          mesh.visible = false;
           mesh.frustumCulled = false;
           mesh.renderOrder = 9;
-          trailMesh.count = MAX_ROCKET_TRAIL_INSTANCES[rocketKind];
-          trailMesh.visible = true;
+          trailMesh.count = 0;
+          trailMesh.visible = false;
           trailMesh.frustumCulled = false;
           trailMesh.renderOrder = 7;
-          flameMesh.count = MAX_ROCKET_INSTANCES[rocketKind];
-          flameMesh.visible = true;
+          flameMesh.count = 0;
+          flameMesh.visible = false;
           flameMesh.frustumCulled = false;
           flameMesh.renderOrder = 8;
           scene.add(trailMesh);
@@ -3769,6 +3284,49 @@ export function createGameViewport(
           return pools;
         },
         {} as Record<RocketKind, RocketPoolVisual>,
+      );
+      const rocketLaunchBurstPools = WEAPON_KINDS.reduce(
+        (pools, rocketKind) => {
+          const profile = rocketRenderProfiles[rocketKind];
+          const material = createRocketLaunchBurstMaterial(
+            profile.core,
+            profile.trail,
+          );
+          const mesh = new InstancedMesh(
+            rocketLaunchBurstGeometry,
+            material,
+            MAX_ROCKET_LAUNCH_BURST_INSTANCES[rocketKind],
+          );
+          mesh.instanceMatrix.setUsage(DynamicDrawUsage);
+          const hiddenInit = new Matrix4().compose(
+            new Vector3(1e8, 1e8, 1e8),
+            new Quaternion(),
+            new Vector3(0.001, 0.001, 0.001),
+          );
+          for (
+            let i = 0;
+            i < MAX_ROCKET_LAUNCH_BURST_INSTANCES[rocketKind];
+            i += 1
+          ) {
+            mesh.setMatrixAt(i, hiddenInit);
+          }
+          mesh.instanceMatrix.needsUpdate = true;
+          mesh.count = 0;
+          mesh.visible = false;
+          mesh.frustumCulled = false;
+          mesh.renderOrder = 21;
+          scene.add(mesh);
+          disposables.push(material);
+
+          pools[rocketKind] = {
+            activeCount: 0,
+            mesh,
+            scale: profile.trailScale,
+          };
+
+          return pools;
+        },
+        {} as Record<RocketKind, RocketLaunchBurstPoolVisual>,
       );
 
       const debrisGeometry = new BufferGeometry();
@@ -3973,7 +3531,7 @@ export function createGameViewport(
           ),
         );
         const chargingColor = color("#ffb347");
-        const lockedColor = color(WEAPON_COLORS.seeker.accent);
+        const lockedColor = color(getWeaponColors().seeker.accent);
         const pulse = sin(lockRingTimeUniform.mul(float(11)))
           .mul(0.22)
           .add(1);
@@ -4003,8 +3561,9 @@ export function createGameViewport(
       scene.add(foresightVisual.line, foresightVisual.points);
 
       const shieldArcRadians = (SHIELD_SPEC.arcDeg * Math.PI) / 180;
+      const shieldColor = getShieldColor();
       const shieldGlowMaterial = new MeshBasicMaterial({
-        color: SHIELD_COLOR,
+        color: shieldColor,
         depthWrite: false,
         opacity: 0.22,
         transparent: true,
@@ -4025,7 +3584,7 @@ export function createGameViewport(
       shieldGlowMesh.position.z = 2.6;
 
       const shieldArcMaterial = new MeshBasicMaterial({
-        color: SHIELD_COLOR,
+        color: shieldColor,
         depthWrite: false,
         opacity: 0.58,
         transparent: true,
@@ -4074,7 +3633,7 @@ export function createGameViewport(
         depthWrite: false,
         blending: AdditiveBlending,
       });
-      boostBurstMaterial.colorNode = color(BOOST_COLOR);
+      boostBurstMaterial.colorNode = color(getBoostColor());
       boostBurstMaterial.opacityNode = attribute(
         "boostBurstOpacity",
         "float",
@@ -4194,8 +3753,8 @@ export function createGameViewport(
         createBlackHoleLensMaterial(),
       );
       blackHoleLens.scale.set(
-        BLACK_HOLE_LENS_RADIUS,
-        BLACK_HOLE_LENS_RADIUS,
+        getBlackHoleLensRadius(),
+        getBlackHoleLensRadius(),
         1,
       );
       blackHoleLens.position.z = -2;
@@ -4206,8 +3765,8 @@ export function createGameViewport(
         createBlackHoleRingMaterial(),
       );
       blackHoleRing.scale.set(
-        BLACK_HOLE_RING_RADIUS,
-        BLACK_HOLE_RING_RADIUS,
+        getBlackHoleRingRadius(),
+        getBlackHoleRingRadius(),
         1,
       );
       blackHoleRing.renderOrder = 5;
@@ -4217,8 +3776,8 @@ export function createGameViewport(
         createBlackHoleCoreMaterial(),
       );
       blackHoleCore.scale.set(
-        BLACK_HOLE_CORE_RADIUS,
-        BLACK_HOLE_CORE_RADIUS,
+        getBlackHoleCoreRadius(),
+        getBlackHoleCoreRadius(),
         1,
       );
       blackHoleCore.renderOrder = 6;
@@ -4234,8 +3793,6 @@ export function createGameViewport(
         glowGeometry,
         warpGeometry,
         planetGeometry,
-        Object.values(cacheSpriteMaterials).map(({ map }) => map),
-        Object.values(cacheSpriteMaterials).map(({ material }) => material),
         droneGlowGeometry,
         droneHullGeometry,
         droneWingGeometry,
@@ -4247,6 +3804,7 @@ export function createGameViewport(
         rocketGeometry,
         rocketTrailGeometry,
         rocketFlameGeometry,
+        rocketLaunchBurstGeometry,
         cannonStemGeometry,
         cannonBreechGeometry,
         cannonBarrelGeometry,
@@ -4285,7 +3843,7 @@ export function createGameViewport(
       const scenePass = ssaaPass(scene, nextCamera) as ReturnType<
         typeof pass
       > & { sampleLevel: number };
-      scenePass.sampleLevel = SCENE_SSAA_LEVEL;
+      scenePass.sampleLevel = currentSsaaLevel;
       const bloomNode = bloom(
         scenePass,
         BLOOM_STRENGTH,
@@ -4302,33 +3860,6 @@ export function createGameViewport(
       postProcessing.outputColorTransform = false;
       disposables.push(scenePass, bloomNode);
 
-      const inputState = {
-        aimWorld: {
-          x: initialState.player.aimWorld.x,
-          y: initialState.player.aimWorld.y,
-        },
-        selectedRocketKind: initialState.player.selectedRocketKind,
-      };
-      const pendingAbilityRequests = {
-        foresight: false,
-        shield: false,
-        boost: false,
-        wildcard: false,
-      };
-      const pendingDroneRequests = {
-        autoReturn: false,
-        burst: false,
-        launch: false,
-        recall: false,
-      };
-      const pointerState = {
-        clientX: 0,
-        clientY: 0,
-        hasPointer: false,
-      };
-      let fullViewEnabled = false;
-      let readModeHeld = false;
-      let pendingShots = 0;
       let foresightPath: Vec2[] = [];
       let lastBoostVisualTick = initialState.player.lastBoostTick;
       const killFeedEntries: KillFeedState[] = [];
@@ -4403,6 +3934,27 @@ export function createGameViewport(
           pool.flameMesh.instanceMatrix.needsUpdate = true;
         }
       };
+      const flushRocketLaunchBurstPool = (
+        pool: RocketLaunchBurstPoolVisual,
+        capacity: number,
+        fromIndex = 0,
+      ) => {
+        const didHide = hideInstancedMeshRange(
+          pool.mesh,
+          fromIndex,
+          capacity,
+          hiddenRocketMatrix,
+          hiddenRocketPosition,
+          hiddenRocketRotation,
+          hiddenRocketScale,
+        );
+        pool.mesh.count = 0;
+        pool.mesh.visible = false;
+        pool.activeCount = 0;
+        if (didHide) {
+          pool.mesh.instanceMatrix.needsUpdate = true;
+        }
+      };
 
       clearPlanetExplosions = () => {
         while (activePlanetExplosions.length > 0) {
@@ -4415,21 +3967,78 @@ export function createGameViewport(
 
       let previousState = initialState;
       let currentState = previousState;
+      let renderState = createInterpolatedSandboxState(currentState);
       let accumulatorSec = 0;
       let previousFrameTimeSec: number | null = null;
+      let nextHudUpdateSec = 0;
+      const runtimeStats = {
+        fps: 0,
+        frameTimeMs: 0,
+      };
+      const runtimeStatsTracker = createRuntimeStatsTracker();
+      const performanceProfiler = createViewportPerformanceProfiler();
+      const renderInterpolationCache = createSandboxInterpolationCache();
+      inputController = createGameViewportInputController({
+        canvasElement: nextRenderer.domElement,
+        getPlayerControlState: () => currentState.player,
+        initialPlayer: initialState.player,
+        isSandboxPaused: () => sandboxSettings.sandboxPaused,
+        sandboxControlsEnabled,
+        syncAimWorldToPointer: () => {
+          syncAimWorldToPointer?.();
+        },
+        windowTarget: window,
+      });
+      const inputRuntime = inputController.state;
+      const inputState = inputRuntime.inputState;
+      const pendingAbilityRequests = inputRuntime.pendingAbilityRequests;
+      const pendingDroneRequests = inputRuntime.pendingDroneRequests;
+      const pointerState = inputRuntime.pointerState;
+      const renderPlanetsById = new Map<number, CombatSandboxPlanet>();
+      const renderDronesById = new Map<number, CombatSandboxDrone>();
+      const activeCacheIds = new Set<number>();
+      const activeRocketTrailIds = new Set<number>();
+      const launchBurstsByKind = {
+        heavy: [] as CombatSandboxRocketLaunchBurst[],
+        light: [] as CombatSandboxRocketLaunchBurst[],
+        seeker: [] as CombatSandboxRocketLaunchBurst[],
+      };
+      const rocketsByKind = {
+        heavy: [] as CombatSandboxRocket[],
+        light: [] as CombatSandboxRocket[],
+        seeker: [] as CombatSandboxRocket[],
+      };
+      const syncRenderEntityLookups = (state: {
+        drones: readonly CombatSandboxDrone[];
+        planets: readonly CombatSandboxPlanet[];
+      }) => {
+        renderPlanetsById.clear();
+        for (const planet of state.planets) {
+          renderPlanetsById.set(planet.id, planet);
+        }
+
+        renderDronesById.clear();
+        for (const drone of state.drones) {
+          renderDronesById.set(drone.id, drone);
+        }
+      };
 
       const getCameraFrame = (state: typeof currentState) => {
-        if (fullViewEnabled) {
+        if (inputRuntime.fullViewEnabled) {
           const width = Math.max(1, hostElement.clientWidth);
           const height = Math.max(1, hostElement.clientHeight);
-          return getFullViewFrame(state, width / height, planetBodyScale);
+          return getFullViewFrame(
+            state,
+            width / height,
+            sandboxSettings.planetBodyScale,
+          );
         }
 
         const focusBody = getSandboxFocusBody(state);
         return {
           centerX: focusBody !== null ? focusBody.pos.x : 0,
           centerY: focusBody !== null ? focusBody.pos.y : 0,
-          visibleWorldHeight: readModeHeld
+          visibleWorldHeight: inputRuntime.readModeHeld
             ? READ_MODE_WORLD_HEIGHT
             : FOLLOW_VIEW_WORLD_HEIGHT,
         };
@@ -4498,24 +4107,14 @@ export function createGameViewport(
       };
 
       resetSandbox = () => {
-        previousState = createSandboxState(activePreset);
+        previousState = createSandboxState(sandboxSettings.activePreset);
         currentState = previousState;
+        renderState = createInterpolatedSandboxState(currentState);
         accumulatorSec = 0;
         previousFrameTimeSec = null;
-        inputState.aimWorld = {
-          x: currentState.player.aimWorld.x,
-          y: currentState.player.aimWorld.y,
-        };
-        inputState.selectedRocketKind = currentState.player.selectedRocketKind;
-        pendingShots = 0;
-        pendingAbilityRequests.foresight = false;
-        pendingAbilityRequests.shield = false;
-        pendingAbilityRequests.boost = false;
-        pendingAbilityRequests.wildcard = false;
-        pendingDroneRequests.autoReturn = false;
-        pendingDroneRequests.burst = false;
-        pendingDroneRequests.launch = false;
-        pendingDroneRequests.recall = false;
+        nextHudUpdateSec = 0;
+        inputController?.resetForPlayer(currentState.player);
+        resetProfiling();
         foresightPath = [];
         lastBoostVisualTick = currentState.player.lastBoostTick;
         activeBoostBursts.length = 0;
@@ -4535,28 +4134,33 @@ export function createGameViewport(
         for (const trail of trailVisuals) {
           resetTrail(trail);
         }
-        for (const rocketKind of Object.keys(rocketPools) as RocketKind[]) {
+        for (const rocketKind of WEAPON_KINDS) {
           flushRocketPool(
             rocketPools[rocketKind],
-            MAX_ROCKET_INSTANCES[rocketKind],
+            ROCKET_RENDER_INSTANCE_LIMITS[rocketKind],
+          );
+          flushRocketLaunchBurstPool(
+            rocketLaunchBurstPools[rocketKind],
+            MAX_ROCKET_LAUNCH_BURST_INSTANCES[rocketKind],
           );
         }
         updateDebrisGeometry(debrisVisual, []);
         debrisVisual.points.visible = false;
         updateForesightVisual(foresightVisual, []);
+        syncRenderEntityLookups(currentState);
         updateBoostBurstVisual(
           boostBurstVisual,
           activeBoostBursts,
-          currentState.planets,
+          renderPlanetsById,
           0,
-          planetBodyScale,
+          sandboxSettings.planetBodyScale,
         );
         updateImpactBurstVisuals(
           impactBurstVisuals,
           [],
-          currentState.planets,
+          renderPlanetsById,
           currentState.elapsedSec,
-          planetBodyScale,
+          sandboxSettings.planetBodyScale,
         );
         shieldGroup.visible = false;
         droneVisual.group.visible = false;
@@ -4569,185 +4173,37 @@ export function createGameViewport(
         syncCameraToFocus(currentState);
         syncAimWorldToPointer?.();
       };
-
-      handleKeyDown = (event: KeyboardEvent) => {
-        const target = event.target;
-        if (
-          target instanceof HTMLElement &&
-          (target.isContentEditable ||
-            target.tagName === "INPUT" ||
-            target.tagName === "TEXTAREA" ||
-            target.tagName === "SELECT")
-        ) {
-          return;
-        }
-
-        if (event.code === "ShiftLeft" || event.code === "ShiftRight") {
-          readModeHeld = true;
-          event.preventDefault();
-          return;
-        }
-
-        if (event.code === "KeyF" && !event.repeat) {
-          fullViewEnabled = !fullViewEnabled;
-          event.preventDefault();
-          return;
-        }
-
-        if (!sandboxControlsEnabled()) {
-          return;
-        }
-
-        if (sandboxPaused) {
-          event.preventDefault();
-          return;
-        }
-
-        if (event.code === "Digit1") {
-          inputState.selectedRocketKind = "light";
-          event.preventDefault();
-          return;
-        }
-
-        if (event.code === "Digit2") {
-          inputState.selectedRocketKind = "heavy";
-          event.preventDefault();
-          return;
-        }
-
-        if (event.code === "Digit3") {
-          inputState.selectedRocketKind = "seeker";
-          event.preventDefault();
-          return;
-        }
-
-        if (event.code === "Digit4" && !event.repeat) {
-          if (currentState.player.activeDroneId !== null) {
-            pendingDroneRequests.recall = true;
-          } else {
-            pendingDroneRequests.launch = true;
-          }
-          event.preventDefault();
-          return;
-        }
-
-        if (event.code === "KeyQ" && !event.repeat) {
-          pendingAbilityRequests.foresight = true;
-          event.preventDefault();
-          return;
-        }
-
-        if (event.code === "KeyW" && !event.repeat) {
-          pendingAbilityRequests.shield = true;
-          event.preventDefault();
-          return;
-        }
-
-        if (event.code === "KeyE" && !event.repeat) {
-          pendingAbilityRequests.boost = true;
-          event.preventDefault();
-          return;
-        }
-
-        if (event.code === "KeyR" && !event.repeat) {
-          pendingAbilityRequests.wildcard = true;
-          event.preventDefault();
-          return;
-        }
-
-        if (
-          event.code === "Escape" &&
-          !event.repeat &&
-          currentState.player.controlMode === "drone"
-        ) {
-          pendingDroneRequests.autoReturn = true;
-          event.preventDefault();
-        }
-      };
-      handleKeyUp = (event: KeyboardEvent) => {
-        if (event.code === "ShiftLeft" || event.code === "ShiftRight") {
-          readModeHeld = false;
-          event.preventDefault();
-        }
-      };
-      handleWindowBlur = () => {
-        readModeHeld = false;
-      };
-
-      handlePointerMove = (event: PointerEvent) => {
-        pointerState.clientX = event.clientX;
-        pointerState.clientY = event.clientY;
-        pointerState.hasPointer = true;
-        syncAimWorldToPointer?.();
-      };
-
-      handlePointerDown = (event: PointerEvent) => {
-        if (event.button !== 0 && event.button !== 2) {
-          return;
-        }
-
-        pointerState.clientX = event.clientX;
-        pointerState.clientY = event.clientY;
-        pointerState.hasPointer = true;
-        syncAimWorldToPointer?.();
-
-        if (!sandboxControlsEnabled()) {
-          event.preventDefault();
-          return;
-        }
-
-        if (sandboxPaused) {
-          event.preventDefault();
-          return;
-        }
-
-        if (event.button === 2) {
-          if (currentState.player.activeDroneId !== null) {
-            pendingDroneRequests.recall = true;
-          }
-          event.preventDefault();
-          return;
-        }
-
-        if (currentState.player.controlMode === "drone") {
-          pendingDroneRequests.burst = true;
-        } else {
-          pendingShots += 1;
-          console.log(
-            "[fire-debug] pointerdown pendingShots=",
-            pendingShots,
-            "selected=",
-            inputState.selectedRocketKind,
-          );
-        }
-        event.preventDefault();
-      };
-      handleContextMenu = (event: MouseEvent) => {
-        event.preventDefault();
+      resetProfiling = () => {
+        performanceProfiler.reset();
+        nextHudUpdateSec = 0;
+        emitHudState({
+          ...lastHudState,
+          debugItems: [],
+          profilingEnabled: sandboxSettings.profilingEnabled,
+        });
       };
 
       hostElement.replaceChildren(nextRenderer.domElement);
       resizeViewport();
       window.addEventListener("resize", resizeViewport);
-      window.addEventListener("keydown", handleKeyDown);
-      window.addEventListener("keyup", handleKeyUp);
-      window.addEventListener("blur", handleWindowBlur);
-      nextRenderer.domElement.addEventListener(
-        "pointermove",
-        handlePointerMove,
-      );
-      nextRenderer.domElement.addEventListener(
-        "pointerdown",
-        handlePointerDown,
-      );
-      nextRenderer.domElement.addEventListener(
-        "contextmenu",
-        handleContextMenu,
-      );
       syncCameraToFocus(currentState);
 
       nextRenderer.setAnimationLoop((timeMs = performance.now()) => {
         const nowSec = timeMs * 0.001;
+        const activePreset = sandboxSettings.activePreset;
+        const blackHoleSettings = sandboxSettings.blackHoleSettings;
+        const boostSettings = sandboxSettings.boostSettings;
+        const cacheBadgeScale = sandboxSettings.cacheBadgeScale;
+        const foresightSettings = sandboxSettings.foresightSettings;
+        const fullViewEnabled = inputRuntime.fullViewEnabled;
+        const planetAuraGap = sandboxSettings.planetAuraGap;
+        const planetAuraScale = sandboxSettings.planetAuraScale;
+        const planetBodyScale = sandboxSettings.planetBodyScale;
+        const profilingEnabled = sandboxSettings.profilingEnabled;
+        const readModeHeld = inputRuntime.readModeHeld;
+        const sandboxPaused = sandboxSettings.sandboxPaused;
+        const shieldSettings = sandboxSettings.shieldSettings;
+        const frameProfilerStartMs = profilingEnabled ? performance.now() : 0;
 
         if (resetSimulationAccumulator) {
           accumulatorSec = 0;
@@ -4765,23 +4221,32 @@ export function createGameViewport(
           MAX_FRAME_DELTA_SEC,
         );
         previousFrameTimeSec = nowSec;
+        const sampledRuntimeStats = runtimeStatsTracker.sample(frameDeltaSec);
+        runtimeStats.fps = sampledRuntimeStats.fps;
+        runtimeStats.frameTimeMs = sampledRuntimeStats.frameTimeMs;
+        const nextRenderQuality = qualityController.update(
+          nowSec,
+          runtimeStats.frameTimeMs,
+        );
+        if (nextRenderQuality.changed) {
+          renderQuality = nextRenderQuality.profile;
+          currentMaxPixelRatio = renderQuality.maxPixelRatio;
+          currentSsaaLevel = renderQuality.ssaaLevel;
+          scenePass.sampleLevel = currentSsaaLevel;
+          resizeViewport();
+        }
         if (sandboxPaused) {
           accumulatorSec = 0;
-          pendingShots = 0;
-          pendingAbilityRequests.foresight = false;
-          pendingAbilityRequests.shield = false;
-          pendingAbilityRequests.boost = false;
-          pendingAbilityRequests.wildcard = false;
-          pendingDroneRequests.autoReturn = false;
-          pendingDroneRequests.burst = false;
-          pendingDroneRequests.launch = false;
-          pendingDroneRequests.recall = false;
+          inputController?.clearPendingGameplayRequests();
         } else {
           accumulatorSec += frameDeltaSec;
         }
         syncAimWorldToPointer?.();
 
         let stepCount = 0;
+        const simulationProfilerStartMs = profilingEnabled
+          ? performance.now()
+          : 0;
 
         while (
           accumulatorSec >= FIXED_STEP_SEC &&
@@ -4789,17 +4254,8 @@ export function createGameViewport(
         ) {
           const previousControlMode = currentState.player.controlMode;
           const previousActiveDroneId = currentState.player.activeDroneId;
-          const fireRequestedThisStep = pendingShots > 0;
-          if (fireRequestedThisStep) {
-            console.log(
-              "[fire-debug] stepSandbox fireRequested=true tick=",
-              currentState.tick,
-              "pendingShots=",
-              pendingShots,
-              "rocketsInStateBefore=",
-              currentState.rockets.length,
-            );
-          }
+          const fireRequestedThisStep =
+            inputController?.consumeShotRequest() ?? false;
           const nextState = stepSandbox(
             currentState,
             {
@@ -4816,28 +4272,11 @@ export function createGameViewport(
               wildcardRequested: pendingAbilityRequests.wildcard,
             },
             blackHoleSettings,
+            {
+              planetImpactRadiusMultiplier: planetBodyScale,
+            },
           );
-          if (fireRequestedThisStep) {
-            console.log(
-              "[fire-debug] stepSandbox after tick=",
-              nextState.tick,
-              "rocketsInStateAfter=",
-              nextState.rockets.length,
-              "rocketKinds=",
-              nextState.rockets.map((r) => r.rocketKind).join(","),
-            );
-          }
-          if (pendingShots > 0) {
-            pendingShots -= 1;
-          }
-          pendingAbilityRequests.foresight = false;
-          pendingAbilityRequests.shield = false;
-          pendingAbilityRequests.boost = false;
-          pendingAbilityRequests.wildcard = false;
-          pendingDroneRequests.autoReturn = false;
-          pendingDroneRequests.burst = false;
-          pendingDroneRequests.launch = false;
-          pendingDroneRequests.recall = false;
+          inputController?.clearStepScopedRequests();
           const resetReason = getSandboxResetReason(nextState);
           previousState = currentState;
           currentState = nextState;
@@ -4951,21 +4390,30 @@ export function createGameViewport(
           accumulatorSec = 0;
         }
 
-        const renderState = interpolateSandboxState(
+        const simulationProfilerEndMs = profilingEnabled
+          ? performance.now()
+          : 0;
+        const interpolationProfilerStartMs = profilingEnabled
+          ? performance.now()
+          : 0;
+        syncInterpolatedSandboxState(
+          renderState,
+          renderInterpolationCache,
           previousState,
           currentState,
           clamp(accumulatorSec / FIXED_STEP_SEC, 0, 1),
         );
+        syncRenderEntityLookups(renderState);
+        const interpolationProfilerEndMs = profilingEnabled
+          ? performance.now()
+          : 0;
+        const renderProfilerStartMs = profilingEnabled ? performance.now() : 0;
         const playerPlanet =
-          renderState.planets.find(
-            (planet) => planet.id === renderState.player.planetId,
-          ) ?? null;
+          renderPlanetsById.get(renderState.player.planetId) ?? null;
         const activeDrone =
           renderState.player.activeDroneId === null
             ? null
-            : (renderState.drones.find(
-                (drone) => drone.id === renderState.player.activeDroneId,
-              ) ?? null);
+            : (renderDronesById.get(renderState.player.activeDroneId) ?? null);
         const controlsEnabled = sandboxControlsEnabled();
         const cameraFrame = getCameraFrame(renderState);
         const cameraTargetX = cameraFrame.centerX;
@@ -5072,13 +4520,13 @@ export function createGameViewport(
             sun.radius * swallowScale,
           );
           visual.glowMesh.scale.set(
-            sun.radius * SUN_GLOW_SCALE * swallowScale,
-            sun.radius * SUN_GLOW_SCALE * swallowScale,
+            sun.radius * getSunGlowScale() * swallowScale,
+            sun.radius * getSunGlowScale() * swallowScale,
             1,
           );
           visual.warpMesh.scale.set(
-            sun.radius * SUN_WARP_SCALE * swallowScale,
-            sun.radius * SUN_WARP_SCALE * swallowScale,
+            sun.radius * getSunWarpScale() * swallowScale,
+            sun.radius * getSunWarpScale() * swallowScale,
             1,
           );
           visual.coreMesh.rotation.x = 0.38;
@@ -5123,18 +4571,17 @@ export function createGameViewport(
           }
         }
 
-        const activeCacheIds = new Set(
-          renderState.caches.map((cache) => cache.id),
-        );
+        activeCacheIds.clear();
         for (const cache of renderState.caches) {
+          activeCacheIds.add(cache.id);
           let visual = cacheVisuals.get(cache.id);
           if (visual === undefined) {
-            visual = createCacheVisual(cache, hostElement.ownerDocument);
+            visual = createCacheVisual(cache, cacheSpriteAssets.badgeMaterials);
             cacheVisuals.set(cache.id, visual);
             scene.add(visual.group);
           }
 
-          const key = getCacheIconKey(cache.contents);
+          const key = getSharedCacheIconKey(cache.contents);
           const previousKey = renderedCacheKeysById.get(cache.id);
           if (
             import.meta.env.DEV &&
@@ -5150,7 +4597,7 @@ export function createGameViewport(
             });
           }
           renderedCacheKeysById.set(cache.id, key);
-          updateCacheVisualBadge(visual, hostElement.ownerDocument, key);
+          updateCacheVisualBadge(visual, cacheSpriteAssets.badgeMaterials, key);
           visual.group.position.set(
             cache.pos.x,
             cache.pos.y + Math.sin(nowSec * 1.8 + visual.bobPhase) * 6,
@@ -5160,7 +4607,7 @@ export function createGameViewport(
             Math.sin(nowSec * visual.wobbleRate + visual.bobPhase) * 0.08;
           const pulse =
             1 + Math.sin(nowSec * visual.pulseRate + visual.bobPhase) * 0.04;
-          const badgeSize = CACHE_BADGE_BASE_SIZE * cacheBadgeScale * pulse;
+          const badgeSize = getCacheBadgeBaseSize() * cacheBadgeScale * pulse;
           visual.badgeSprite.scale.set(badgeSize, badgeSize, 1);
         }
 
@@ -5177,56 +4624,93 @@ export function createGameViewport(
           droneVisual,
           activeDrone,
           nowSec,
-          cacheSpriteMaterials,
+          cacheSpriteAssets.iconMaterials,
         );
 
-        const rocketsByKind = {
-          heavy: [] as CombatSandboxRocket[],
-          light: [] as CombatSandboxRocket[],
-          seeker: [] as CombatSandboxRocket[],
-        };
+        for (const rocketKind of WEAPON_KINDS) {
+          rocketsByKind[rocketKind].length = 0;
+          launchBurstsByKind[rocketKind].length = 0;
+        }
         pruneRocketTrailStates(rocketTrailStates, nowSec);
         for (const rocket of renderState.rockets) {
           rocketsByKind[rocket.rocketKind].push(rocket);
         }
+        for (const burst of renderState.launchBursts) {
+          launchBurstsByKind[burst.rocketKind].push(burst);
+        }
+        const worldUnitsPerPixel =
+          cameraState.visibleWorldHeight /
+          Math.max(1, hostElement.clientHeight);
+        const renderElapsedSec = renderState.elapsedSec;
+        const cannonStemLenWorld = CANNON_STEM_LENGTH_PX * worldUnitsPerPixel;
+        const cannonBreechLenWorld =
+          CANNON_BREECH_LENGTH_PX * worldUnitsPerPixel;
+        const cannonBarrelLenWorld =
+          CANNON_BARREL_LENGTH_PX * worldUnitsPerPixel;
 
-        for (const rocketKind of Object.keys(rocketPools) as RocketKind[]) {
+        for (const rocketKind of WEAPON_KINDS) {
           const pool = rocketPools[rocketKind];
+          const launchBurstPool = rocketLaunchBurstPools[rocketKind];
           const rockets = rocketsByKind[rocketKind];
+          const launchBursts = launchBurstsByKind[rocketKind];
+          const renderBodyScale = getMinScreenAxisScale(
+            pool.scale,
+            ROCKET_MIN_SCREEN_WIDTH_PX.body,
+            worldUnitsPerPixel,
+          );
+          const renderFlameScale = getMinScreenAxisScale(
+            pool.flameScale,
+            ROCKET_MIN_SCREEN_WIDTH_PX.flame,
+            worldUnitsPerPixel,
+          );
+          const renderTrailScale = getMinScreenAxisScale(
+            pool.trailScale,
+            ROCKET_MIN_SCREEN_WIDTH_PX.trail,
+            worldUnitsPerPixel,
+          );
+          const renderLaunchScale = getMinScreenAxisScale(
+            launchBurstPool.scale,
+            ROCKET_MIN_SCREEN_WIDTH_PX.launchBurst,
+            worldUnitsPerPixel,
+          );
           const previousCount = pool.activeCount;
           const previousTrailCount = pool.trailActiveCount;
-          const count = Math.min(
-            rockets.length,
-            MAX_ROCKET_INSTANCES[rocketKind],
-          );
-          const activeRocketTrailIds = new Set<number>();
-          if (count !== previousCount && rocketKind === "light") {
-            console.log(
-              "[render-debug] kind=",
-              rocketKind,
-              "count=",
-              count,
-              "previousCount=",
-              previousCount,
-              "ids=",
-              rockets.map((r) => r.id).join(","),
-              "positions=",
-              rockets
-                .map((r) => `(${r.pos.x.toFixed(0)},${r.pos.y.toFixed(0)})`)
-                .join(";"),
-            );
-          }
+          const previousLaunchBurstCount = launchBurstPool.activeCount;
+          let count = 0;
+          activeRocketTrailIds.clear();
 
-          for (let index = 0; index < count; index += 1) {
-            const rocket = rockets[index]!;
+          for (const rocket of rockets) {
+            if (count >= ROCKET_RENDER_INSTANCE_LIMITS[rocketKind]) {
+              break;
+            }
+
             const angle = Math.atan2(rocket.vel.y, rocket.vel.x);
             const dirX = Math.cos(angle);
             const dirY = Math.sin(angle);
             const seekerPulse =
               rocketKind === "seeker"
-                ? 1 + Math.sin(nowSec * 10 + index * 0.7) * 0.18
+                ? 1 + Math.sin(nowSec * 10 + count * 0.7) * 0.18
                 : 1;
-            const flicker = 0.82 + Math.sin(nowSec * 38 + index * 1.37) * 0.16;
+            const flicker = 0.82 + Math.sin(nowSec * 38 + count * 1.37) * 0.16;
+            const rocketMuzzleDistance = getCannonMuzzleDistance(
+              rocket.launchPlanetRadius * planetBodyScale,
+              cannonStemLenWorld,
+              cannonBreechLenWorld,
+              cannonBarrelLenWorld,
+            );
+            const rocketVisibleDistance = getRocketVisibleDistanceThreshold(
+              rocketMuzzleDistance,
+              renderBodyScale.x,
+            );
+            if (
+              rocket.ownerId === renderState.player.playerId &&
+              Math.hypot(
+                rocket.pos.x - rocket.launchPlanetPos.x,
+                rocket.pos.y - rocket.launchPlanetPos.y,
+              ) < rocketVisibleDistance
+            ) {
+              continue;
+            }
             const trailAnchor = {
               x: rocket.pos.x - dirX * pool.trailOffset,
               y: rocket.pos.y - dirY * pool.trailOffset,
@@ -5246,30 +4730,12 @@ export function createGameViewport(
             rocketPosition.set(rocket.pos.x, rocket.pos.y, 3);
             rocketRotation.setFromAxisAngle(Z_AXIS, angle);
             rocketScale.set(
-              pool.scale.x,
-              pool.scale.y * seekerPulse,
-              pool.scale.y,
+              renderBodyScale.x,
+              renderBodyScale.y * seekerPulse,
+              renderBodyScale.y,
             );
             rocketMatrix.compose(rocketPosition, rocketRotation, rocketScale);
-            pool.mesh.setMatrixAt(index, rocketMatrix);
-            if (rocketKind === "light" && count >= 2) {
-              const arr = pool.mesh.instanceMatrix.array;
-              const off = index * 16;
-              console.log(
-                "[render-debug] index=",
-                index,
-                "meshCount=",
-                pool.mesh.count,
-                "maxCapacity=",
-                pool.mesh.instanceMatrix.count,
-                "translationFromArray=",
-                `(${arr[off + 12]?.toFixed(0)},${arr[off + 13]?.toFixed(0)},${arr[off + 14]?.toFixed(0)})`,
-                "needsUpdate=",
-                pool.mesh.instanceMatrix.needsUpdate,
-                "parent=",
-                pool.mesh.parent?.type,
-              );
-            }
+            pool.mesh.setMatrixAt(count, rocketMatrix);
 
             rocketPosition.set(
               rocket.pos.x - dirX * pool.flameOffset,
@@ -5277,12 +4743,13 @@ export function createGameViewport(
               2.9,
             );
             rocketScale.set(
-              pool.flameScale.x * flicker,
-              pool.flameScale.y * flicker,
+              renderFlameScale.x * flicker,
+              renderFlameScale.y * flicker,
               1,
             );
             rocketMatrix.compose(rocketPosition, rocketRotation, rocketScale);
-            pool.flameMesh.setMatrixAt(index, rocketMatrix);
+            pool.flameMesh.setMatrixAt(count, rocketMatrix);
+            count += 1;
           }
 
           let trailCount = 0;
@@ -5297,7 +4764,7 @@ export function createGameViewport(
             trailCount = appendRocketTrailInstances(
               pool.trailMesh,
               trailState,
-              pool.trailScale,
+              renderTrailScale,
               trailCount,
               pool.trailCapacity,
               rocketMatrix,
@@ -5323,7 +4790,7 @@ export function createGameViewport(
               trailCount = appendRocketTrailInstances(
                 pool.trailMesh,
                 trailState,
-                pool.trailScale,
+                renderTrailScale,
                 trailCount,
                 pool.trailCapacity,
                 rocketMatrix,
@@ -5337,8 +4804,6 @@ export function createGameViewport(
               }
             }
           }
-
-          // count and visible are fixed at creation; unused instances stay hidden
 
           const clearedTail = hideInstancedMeshRange(
             pool.mesh,
@@ -5369,11 +4834,95 @@ export function createGameViewport(
           );
           pool.activeCount = count;
           pool.trailActiveCount = trailCount;
+          pool.mesh.count = count;
+          pool.mesh.visible = count > 0;
+          pool.trailMesh.count = trailCount;
+          pool.trailMesh.visible = trailCount > 0;
+          pool.flameMesh.count = count;
+          pool.flameMesh.visible = count > 0;
           pool.mesh.instanceMatrix.needsUpdate = count > 0 || clearedTail;
           pool.trailMesh.instanceMatrix.needsUpdate =
             trailCount > 0 || clearedTrailTail;
           pool.flameMesh.instanceMatrix.needsUpdate =
             count > 0 || clearedFlameTail;
+
+          let launchBurstCount = 0;
+          for (const burst of launchBursts) {
+            const burstMuzzleDistance = getCannonMuzzleDistance(
+              burst.launchPlanetRadius * planetBodyScale,
+              cannonStemLenWorld,
+              cannonBreechLenWorld,
+              cannonBarrelLenWorld,
+            );
+            const burstVisibleDistance = getRocketVisibleDistanceThreshold(
+              burstMuzzleDistance,
+              renderBodyScale.x,
+            );
+            const spawnDistance = Math.hypot(
+              burst.origin.x - burst.launchPlanetPos.x,
+              burst.origin.y - burst.launchPlanetPos.y,
+            );
+            const durationSec = Math.max(
+              FIXED_STEP_SEC,
+              Math.max(
+                (burst.ttlUntilTick - burst.startedAtTick) * FIXED_STEP_SEC,
+                getLaunchBurstHandoffDuration(
+                  spawnDistance,
+                  burstVisibleDistance,
+                  burst.speed,
+                ),
+              ),
+            );
+            const ageSec = renderElapsedSec - burst.startedAtSec;
+            if (ageSec < 0 || ageSec > durationSec) {
+              continue;
+            }
+
+            const progress = clamp(ageSec / durationSec, 0, 1);
+            const length = renderLaunchScale.x * (1.1 - progress * 0.16);
+            const width = renderLaunchScale.y * (0.96 - progress * 0.34);
+            const travel = getLaunchBurstTravelDistance(ageSec, burst.speed);
+            const angle = Math.atan2(burst.dir.y, burst.dir.x);
+            const origin =
+              burst.ownerId === renderState.player.playerId
+                ? getCannonMuzzleOrigin(
+                    burst.launchPlanetPos,
+                    burst.dir,
+                    burstMuzzleDistance,
+                  )
+                : burst.origin;
+            rocketPosition.set(
+              origin.x + burst.dir.x * (travel + length * 0.5),
+              origin.y + burst.dir.y * (travel + length * 0.5),
+              6.25,
+            );
+            rocketRotation.setFromAxisAngle(Z_AXIS, angle);
+            rocketScale.set(length, width, 1);
+            rocketMatrix.compose(rocketPosition, rocketRotation, rocketScale);
+            launchBurstPool.mesh.setMatrixAt(launchBurstCount, rocketMatrix);
+            launchBurstCount += 1;
+
+            if (
+              launchBurstCount >= MAX_ROCKET_LAUNCH_BURST_INSTANCES[rocketKind]
+            ) {
+              break;
+            }
+          }
+
+          const clearedLaunchBurstTail = hideInstancedMeshRange(
+            launchBurstPool.mesh,
+            launchBurstCount,
+            previousLaunchBurstCount,
+            hiddenRocketMatrix,
+            hiddenRocketPosition,
+            hiddenRocketRotation,
+            hiddenRocketScale,
+          );
+          launchBurstPool.activeCount = launchBurstCount;
+          launchBurstPool.mesh.count = launchBurstCount;
+          launchBurstPool.mesh.visible = launchBurstCount > 0;
+          launchBurstPool.mesh.instanceMatrix.needsUpdate =
+            launchBurstCount > 0 || clearedLaunchBurstTail;
         }
 
         updateDebrisGeometry(debrisVisual, renderState.debris);
@@ -5388,14 +4937,14 @@ export function createGameViewport(
         updateBoostBurstVisual(
           boostBurstVisual,
           activeBoostBursts,
-          renderState.planets,
+          renderPlanetsById,
           nowSec,
           planetBodyScale,
         );
         updateImpactBurstVisuals(
           impactBurstVisuals,
           renderState.impactBursts,
-          renderState.planets,
+          renderPlanetsById,
           renderState.elapsedSec,
           planetBodyScale,
         );
@@ -5445,8 +4994,8 @@ export function createGameViewport(
           const aimAngle = Math.atan2(aimDelta.y, aimDelta.x);
           const weaponAccent =
             renderState.player.controlMode === "drone"
-              ? DRONE_COLOR
-              : WEAPON_COLORS[inputState.selectedRocketKind].accent;
+              ? getDroneColor()
+              : getWeaponColors()[inputState.selectedRocketKind].accent;
           const worldUnitsPerPixel =
             cameraState.visibleWorldHeight /
             Math.max(1, hostElement.clientHeight);
@@ -5529,7 +5078,7 @@ export function createGameViewport(
           );
 
           let firedThisFrame = false;
-          for (const rocketKind of ["light", "heavy", "seeker"] as const) {
+          for (const rocketKind of WEAPON_KINDS) {
             const currentAmmo = renderState.player.ammo[rocketKind];
             const previousAmmo = cannonFireState.lastAmmo[rocketKind];
             if (currentAmmo < previousAmmo) {
@@ -5569,9 +5118,8 @@ export function createGameViewport(
             renderState.player.controlMode === "drone" ||
             renderState.player.lockTargetId === null
               ? null
-              : (renderState.planets.find(
-                  (planet) => planet.id === renderState.player.lockTargetId,
-                ) ?? null);
+              : (renderPlanetsById.get(renderState.player.lockTargetId) ??
+                null);
 
           lockRingMesh.visible =
             inputState.selectedRocketKind === "seeker" &&
@@ -5605,7 +5153,7 @@ export function createGameViewport(
           cannonGroup.visible = false;
           cannonFlashMesh.visible = false;
           cannonFlashMaterial.opacity = 0;
-          for (const rocketKind of ["light", "heavy", "seeker"] as const) {
+          for (const rocketKind of WEAPON_KINDS) {
             cannonFireState.lastAmmo[rocketKind] =
               renderState.player.ammo[rocketKind];
           }
@@ -5640,401 +5188,156 @@ export function createGameViewport(
         chromaticAberrationNode.amount.value =
           chromaticAberrationPressure * CHROMATIC_ABERRATION_MAX;
         chromaticAberrationNode.angle.value = nowSec * 0.22;
-        const foresightActiveRemainingSec =
-          Math.max(
-            0,
-            currentState.player.foresightActiveUntilTick - currentState.tick,
-          ) * FIXED_STEP_SEC;
-        const foresightCooldownRemainingSec =
-          Math.max(
-            0,
-            currentState.player.foresightCooldownUntilTick - currentState.tick,
-          ) * FIXED_STEP_SEC;
-        const shieldActiveRemainingSec =
-          Math.max(
-            0,
-            currentState.player.shieldActiveUntilTick - currentState.tick,
-          ) * FIXED_STEP_SEC;
-        const shieldCooldownRemainingSec =
-          Math.max(
-            0,
-            currentState.player.shieldCooldownUntilTick - currentState.tick,
-          ) * FIXED_STEP_SEC;
-        const boostChargeRemainingSec =
-          currentState.player.nextBoostChargeAtTick === null
-            ? 0
-            : Math.max(
-                0,
-                currentState.player.nextBoostChargeAtTick - currentState.tick,
-              ) * FIXED_STEP_SEC;
-        const boostRecoveryRemainingSec = boostChargeRemainingSec;
-        const boostRecoveryDurationSec = boostSettings.cooldownSec;
-        const foresightMode =
-          foresightActiveRemainingSec > 0
-            ? "active"
-            : foresightCooldownRemainingSec > 0
-              ? "cooldown"
-              : "ready";
-        const shieldMode =
-          shieldActiveRemainingSec > 0
-            ? "active"
-            : shieldCooldownRemainingSec > 0
-              ? "cooldown"
-              : "ready";
-        const boostMode = boostRecoveryRemainingSec > 0 ? "cooldown" : "ready";
-        const droneTtlRemainingSec =
-          activeDrone === null
-            ? 0
-            : Math.max(0, activeDrone.ttlUntilTick - currentState.tick) *
-              FIXED_STEP_SEC;
-        while (
-          killFeedEntries.length > 0 &&
-          nowSec - killFeedEntries[killFeedEntries.length - 1]!.startedAtSec >
-            KILL_FEED_DURATION_SEC
-        ) {
-          killFeedEntries.pop();
-        }
+        if (nowSec >= nextHudUpdateSec) {
+          nextHudUpdateSec = nowSec + HUD_UPDATE_INTERVAL_SEC;
+          const foresightActiveRemainingSec =
+            Math.max(
+              0,
+              currentState.player.foresightActiveUntilTick - currentState.tick,
+            ) * FIXED_STEP_SEC;
+          const foresightCooldownRemainingSec =
+            Math.max(
+              0,
+              currentState.player.foresightCooldownUntilTick -
+                currentState.tick,
+            ) * FIXED_STEP_SEC;
+          const shieldActiveRemainingSec =
+            Math.max(
+              0,
+              currentState.player.shieldActiveUntilTick - currentState.tick,
+            ) * FIXED_STEP_SEC;
+          const shieldCooldownRemainingSec =
+            Math.max(
+              0,
+              currentState.player.shieldCooldownUntilTick - currentState.tick,
+            ) * FIXED_STEP_SEC;
+          const boostChargeRemainingSec =
+            currentState.player.nextBoostChargeAtTick === null
+              ? 0
+              : Math.max(
+                  0,
+                  currentState.player.nextBoostChargeAtTick - currentState.tick,
+                ) * FIXED_STEP_SEC;
+          const boostRecoveryRemainingSec = boostChargeRemainingSec;
+          const boostRecoveryDurationSec = boostSettings.cooldownSec;
+          const foresightMode =
+            foresightActiveRemainingSec > 0
+              ? "active"
+              : foresightCooldownRemainingSec > 0
+                ? "cooldown"
+                : "ready";
+          const shieldMode =
+            shieldActiveRemainingSec > 0
+              ? "active"
+              : shieldCooldownRemainingSec > 0
+                ? "cooldown"
+                : "ready";
+          const boostMode =
+            boostRecoveryRemainingSec > 0 ? "cooldown" : "ready";
+          const droneTtlRemainingSec =
+            activeDrone === null
+              ? 0
+              : Math.max(0, activeDrone.ttlUntilTick - currentState.tick) *
+                FIXED_STEP_SEC;
+          while (
+            killFeedEntries.length > 0 &&
+            nowSec - killFeedEntries[killFeedEntries.length - 1]!.startedAtSec >
+              KILL_FEED_DURATION_SEC
+          ) {
+            killFeedEntries.pop();
+          }
 
-        const blackHoleRemainingSec = Math.max(
-          0,
-          blackHoleSettings.spawnSec - currentState.elapsedSec,
-        );
-        const killFeed: GameViewportKillFeedEntry[] = killFeedEntries.map(
-          (entry) => ({
+          const blackHoleRemainingSec = Math.max(
+            0,
+            blackHoleSettings.spawnSec - currentState.elapsedSec,
+          );
+          const profilerSnapshot = profilingEnabled
+            ? performanceProfiler.getSnapshot()
+            : null;
+          const killFeed = killFeedEntries.map((entry) => ({
             accent: entry.accent,
             ageSec: nowSec - entry.startedAtSec,
             id: entry.id,
             text: entry.text,
-          }),
-        );
-        const planetBars: GameViewportPlanetBar[] = [];
-        const primaryShortcuts: GameViewportShortcut[] = controlsEnabled
-          ? [
-              {
-                active: inputState.selectedRocketKind === "light",
-                id: "weapon-light",
-                keyLabel: "1",
-                label: "Light",
-                detail: `${currentState.player.ammo.light}/${ROCKET_SPECS.light.maxAmmo}`,
+          }));
+          emitHudState(
+            buildLocalSandboxHudState({
+              activeDrone,
+              blackHoleRemainingSec,
+              blackHoleSettings,
+              boostMode,
+              boostRecoveryDurationSec,
+              boostRecoveryRemainingSec,
+              boostSettings,
+              cacheBadgeScale,
+              colors: {
+                boost: getBoostColor(),
+                drone: getDroneColor(),
+                droneReturn: getDroneReturnColor(),
+                foresight: getForesightColor(),
+                shield: getShieldColor(),
+                weapon: getWeaponColors(),
+                wildcard: getWildcardColor(),
               },
-              {
-                active: inputState.selectedRocketKind === "heavy",
-                id: "weapon-heavy",
-                keyLabel: "2",
-                label: "Heavy",
-                detail: `${currentState.player.ammo.heavy}`,
-              },
-              {
-                active: inputState.selectedRocketKind === "seeker",
-                id: "weapon-seeker",
-                keyLabel: "3",
-                label: "Seeker",
-                detail: `${currentState.player.ammo.seeker}`,
-              },
-              {
-                active: currentState.player.controlMode === "drone",
-                id: "drone",
-                keyLabel: "4",
-                label: "Drone",
-                detail:
-                  debug.droneMode === "ready"
-                    ? "ready"
-                    : debug.droneMode === "cooldown"
-                      ? formatSeconds(debug.droneCooldownRemainingSec)
-                      : (debug.droneCargoLabel ?? debug.droneMode),
-              },
-              {
-                active: fullViewEnabled,
-                id: "full-view",
-                keyLabel: "F",
-                label: "Full view",
-                detail: fullViewEnabled ? "arena" : "focus",
-              },
-              {
-                active: foresightMode === "active",
-                id: "foresight",
-                keyLabel: "Q",
-                label: "Foresight",
-                detail:
-                  foresightMode === "ready"
-                    ? "ready"
-                    : formatSeconds(
-                        foresightMode === "active"
-                          ? foresightActiveRemainingSec
-                          : foresightCooldownRemainingSec,
-                      ),
-              },
-              {
-                active: shieldMode === "active",
-                id: "shield",
-                keyLabel: "W",
-                label: "Shield",
-                detail:
-                  shieldMode === "ready"
-                    ? "ready"
-                    : formatSeconds(
-                        shieldMode === "active"
-                          ? shieldActiveRemainingSec
-                          : shieldCooldownRemainingSec,
-                      ),
-              },
-              {
-                active: boostMode === "cooldown",
-                id: "boost",
-                keyLabel: "E",
-                label: "Boost",
-                detail:
-                  boostMode === "ready"
-                    ? "ready"
-                    : formatSeconds(boostRecoveryRemainingSec),
-              },
-              ...(debug.wildcardLabel === null
-                ? []
-                : [
-                    {
-                      active: true,
-                      id: "wildcard",
-                      keyLabel: "R",
-                      label: debug.wildcardLabel,
-                    },
-                  ]),
-              {
-                active: readModeHeld,
-                id: "read-mode",
-                keyLabel: "Shift",
-                label: "Read mode",
-              },
-            ]
-          : [];
-        const contextualShortcuts: GameViewportShortcut[] =
-          controlsEnabled && currentState.player.controlMode === "drone"
-            ? [
-                {
-                  active: false,
-                  id: "drone-steer",
-                  keyLabel: "Mouse",
-                  label: "Steer",
-                },
-                {
-                  active: false,
-                  id: "drone-burst",
-                  keyLabel: "LMB",
-                  label: "Burst",
-                },
-                {
-                  active: false,
-                  id: "drone-recall",
-                  keyLabel: "RMB",
-                  label: "Recall",
-                },
-                {
-                  active: false,
-                  id: "drone-return",
-                  keyLabel: "Esc",
-                  label: "Auto-return",
-                },
-                {
-                  active: true,
-                  id: "drone-launch-disabled",
-                  keyLabel: "4",
-                  label: "Launch disabled",
-                },
-                {
-                  active: readModeHeld,
-                  id: "drone-read-mode",
-                  keyLabel: "Shift",
-                  label: "Read mode",
-                },
-              ]
-            : [];
-        const hudState: GameViewportHudState = {
-          alivePlayerCount: debug.alivePlanets,
-          abilities: controlsEnabled
-            ? [
-                {
-                  accent: "#80d7ff",
-                  id: "foresight",
-                  keyLabel: "Q",
-                  label: "Foresight",
-                  mode: foresightMode,
-                  progress:
-                    foresightMode === "active"
-                      ? getRemainingRatio(
-                          foresightActiveRemainingSec,
-                          foresightSettings.durationSec,
-                        )
-                      : getRemainingRatio(
-                          foresightCooldownRemainingSec,
-                          foresightSettings.cooldownSec,
-                        ),
-                  statusText:
-                    foresightMode === "active"
-                      ? `active ${formatSeconds(foresightActiveRemainingSec)}`
-                      : foresightMode === "cooldown"
-                        ? `${formatSeconds(foresightCooldownRemainingSec)} cd`
-                        : "ready",
-                },
-                {
-                  accent: SHIELD_COLOR,
-                  id: "shield",
-                  keyLabel: "W",
-                  label: "Shield",
-                  mode: shieldMode,
-                  progress:
-                    shieldMode === "active"
-                      ? getRemainingRatio(
-                          shieldActiveRemainingSec,
-                          shieldSettings.durationSec,
-                        )
-                      : getRemainingRatio(
-                          shieldCooldownRemainingSec,
-                          shieldSettings.cooldownSec,
-                        ),
-                  statusText:
-                    shieldMode === "active"
-                      ? `tracking ${formatSeconds(shieldActiveRemainingSec)}`
-                      : shieldMode === "cooldown"
-                        ? `${formatSeconds(shieldCooldownRemainingSec)} cd`
-                        : "ready",
-                },
-                {
-                  accent: BOOST_COLOR,
-                  id: "boost",
-                  keyLabel: "E",
-                  label: "Boost",
-                  mode: boostMode,
-                  progress: getRemainingRatio(
-                    boostRecoveryRemainingSec,
-                    boostRecoveryDurationSec,
-                  ),
-                  statusText:
-                    boostMode === "cooldown"
-                      ? `lock ${formatSeconds(boostRecoveryRemainingSec)}`
-                      : "ready",
-                  valueText: "INF",
-                },
-                {
-                  accent:
-                    debug.droneMode === "return"
-                      ? DRONE_RETURN_COLOR
-                      : DRONE_COLOR,
-                  id: "drone",
-                  keyLabel: "4",
-                  label: "Drone",
-                  mode:
-                    debug.droneMode === "piloting" ||
-                    debug.droneMode === "return"
-                      ? "active"
-                      : debug.droneMode === "cooldown"
-                        ? "cooldown"
-                        : "ready",
-                  progress:
-                    debug.droneMode === "cooldown"
-                      ? debug.droneCooldownRemainingSec / DRONE_SPEC.cooldownSec
-                      : activeDrone !== null
-                        ? droneTtlRemainingSec / DRONE_SPEC.ttlSec
-                        : 1,
-                  statusText:
-                    debug.droneMode === "cooldown"
-                      ? `${formatSeconds(debug.droneCooldownRemainingSec)} cd`
-                      : debug.droneMode === "return"
-                        ? debug.droneCargoLabel === null
-                          ? `return ${formatSeconds(droneTtlRemainingSec)}`
-                          : `return ${debug.droneCargoLabel}`
-                        : debug.droneMode === "piloting"
-                          ? debug.droneCargoLabel === null
-                            ? `pilot ${formatSeconds(droneTtlRemainingSec)}`
-                            : `cargo ${debug.droneCargoLabel}`
-                          : "ready",
-                  valueText:
-                    debug.droneFuel === null
-                      ? undefined
-                      : `x${debug.droneFuel}`,
-                },
-                ...(debug.wildcardLabel === null
-                  ? []
-                  : [
-                      {
-                        accent: "#ffd37a",
-                        id: "wildcard" as const,
-                        keyLabel: "R",
-                        label: "Wildcard",
-                        mode: "ready" as const,
-                        progress: 1,
-                        statusText: debug.wildcardLabel,
-                        valueText: "armed",
-                      },
-                    ]),
-              ]
-            : [],
-          blackHoleActive: debug.blackHoleActive,
-          blackHoleRemainingSec,
-          blackHoleSettings,
-          blackHoleWarning:
-            !debug.blackHoleActive && blackHoleRemainingSec <= 60,
-          boostSettings: { ...boostSettings },
-          connection: {
-            extrapolating: false,
-            label: controlsEnabled
-              ? "Local sandbox"
-              : "Periodic solution viewer",
-            rttMs: 0,
-            state: "local",
-          },
-          contextualShortcuts,
-          controlMode: currentState.player.controlMode,
-          currentPresetId: activePreset.id,
-          damageFlash: playerDamageFlash,
-          debugItems: [],
-          droneCargoLabel: debug.droneCargoLabel,
-          foresightSettings: { ...foresightSettings },
-          hudOpacity:
-            readModeHeld && !fullViewEnabled ? READ_MODE_HUD_OPACITY : 1,
-          cacheBadgeScale,
-          killFeed,
-          planetBars,
-          planetBodyScale,
-          planetAuraGap,
-          planetAuraScale,
-          playerArchetype: debug.playerArchetypeName,
-          playerHp: debug.playerHp,
-          playerHpPulse,
-          playerLabel: playerPlanet?.label ?? "Player",
-          primaryShortcuts,
-          sandboxPaused,
-          sandboxControlsEnabled: controlsEnabled,
-          selectedWeapon: inputState.selectedRocketKind,
-          shieldSettings: { ...shieldSettings },
-          timerElapsedSec: currentState.elapsedSec,
-          totalPlayerCount: currentState.planets.length,
-          weapons: controlsEnabled
-            ? (["light", "heavy", "seeker"] as RocketKind[]).map(
-                (rocketKind) => ({
-                  accent: WEAPON_COLORS[rocketKind].accent,
-                  ammo: currentState.player.ammo[rocketKind],
-                  kind: rocketKind,
-                  label: weaponLabel(rocketKind),
-                  maxAmmo: ROCKET_SPECS[rocketKind].maxAmmo,
-                  reloadRemainingSec:
-                    Math.max(
-                      0,
-                      currentState.player.reloadUntilTick[rocketKind] -
-                        currentState.tick,
-                    ) * FIXED_STEP_SEC,
-                  selected: inputState.selectedRocketKind === rocketKind,
-                }),
-              )
-            : [],
-        };
-        emitHudState(hudState);
+              controlsEnabled,
+              currentMaxPixelRatio,
+              currentPresetId: activePreset.id,
+              currentSsaaLevel,
+              currentState,
+              debug,
+              droneTtlRemainingSec,
+              foresightActiveRemainingSec,
+              foresightCooldownRemainingSec,
+              foresightMode,
+              foresightSettings,
+              fullViewEnabled,
+              killFeed,
+              planetAuraGap,
+              planetAuraScale,
+              planetBodyScale,
+              playerDamageFlash,
+              playerHpPulse,
+              playerLabel: playerPlanet?.label ?? "Player",
+              profilingEnabled,
+              profilerSnapshot,
+              readModeHeld,
+              readModeHudOpacity: READ_MODE_HUD_OPACITY,
+              runtimeStats,
+              sandboxPaused,
+              selectedWeapon: inputState.selectedRocketKind,
+              shieldActiveRemainingSec,
+              shieldCooldownRemainingSec,
+              shieldMode,
+              shieldSettings,
+            }),
+          );
+        }
 
+        const renderProfilerEndMs = profilingEnabled ? performance.now() : 0;
+        const submitProfilerStartMs = profilingEnabled ? performance.now() : 0;
         postProcessing.render();
+        if (profilingEnabled) {
+          const submitProfilerEndMs = performance.now();
+          performanceProfiler.record({
+            frameCpuMs: submitProfilerEndMs - frameProfilerStartMs,
+            frameDeltaSec,
+            interpolationMs:
+              interpolationProfilerEndMs - interpolationProfilerStartMs,
+            renderCpuMs: renderProfilerEndMs - renderProfilerStartMs,
+            simulationMs: simulationProfilerEndMs - simulationProfilerStartMs,
+            stepCount,
+            submitMs: submitProfilerEndMs - submitProfilerStartMs,
+          });
+        }
       });
     } catch (error) {
       console.error("[frontend] Failed to initialize TSL viewport.", error);
 
       if (!disposed) {
-        hostElement.textContent = "Renderer initialization failed.";
+        showViewportRendererFailure(
+          hostElement,
+          "Renderer initialization failed.",
+        );
       }
     }
   })();
@@ -6042,35 +5345,30 @@ export function createGameViewport(
   return () => {
     disposed = true;
     window.removeEventListener("resize", resizeViewport);
-    if (handleKeyDown !== null) {
-      window.removeEventListener("keydown", handleKeyDown);
-    }
-    if (handleKeyUp !== null) {
-      window.removeEventListener("keyup", handleKeyUp);
-    }
-    if (handleWindowBlur !== null) {
-      window.removeEventListener("blur", handleWindowBlur);
-    }
-    if (renderer !== null && handlePointerMove !== null) {
-      renderer.domElement.removeEventListener("pointermove", handlePointerMove);
-    }
-    if (renderer !== null && handlePointerDown !== null) {
-      renderer.domElement.removeEventListener("pointerdown", handlePointerDown);
-    }
-    if (renderer !== null && handleContextMenu !== null) {
-      renderer.domElement.removeEventListener("contextmenu", handleContextMenu);
-    }
+    inputController?.dispose();
     syncAimWorldToPointer = null;
 
     if (renderer !== null) {
       renderer.setAnimationLoop(null);
-      renderer.dispose();
     }
 
     clearPlanetExplosions();
-    for (const disposable of disposables) {
-      disposable.dispose();
+    for (let index = disposables.length - 1; index >= 0; index -= 1) {
+      try {
+        disposables[index]!.dispose();
+      } catch (error) {
+        console.warn(
+          "[frontend] Failed to dispose game viewport resource.",
+          error,
+        );
+      }
     }
+
+    if (renderer !== null) {
+      renderer.dispose();
+    }
+
+    rendererBootstrap?.dispose();
 
     options.onControllerReady?.(null);
     hostElement.replaceChildren();

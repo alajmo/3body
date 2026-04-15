@@ -1,3 +1,4 @@
+import { CURRENT_GAME_TUNING } from "@3body/shared";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -10,6 +11,7 @@ import { SPECIAL_PERIODIC_ORBIT_PRESETS } from "./game/orbitPresets";
 
 const createControllerMock = (): GameViewportController =>
   ({
+    resetProfiling: vi.fn(),
     resetAbilitySettings: vi.fn(),
     resetBlackHoleSettings: vi.fn(),
     resetPlanetVisualSettings: vi.fn(),
@@ -20,12 +22,15 @@ const createControllerMock = (): GameViewportController =>
     setPlanetBodyScale: vi.fn(),
     setPlanetAuraGap: vi.fn(),
     setPlanetAuraScale: vi.fn(),
+    setProfilingEnabled: vi.fn(),
     pauseSandbox: vi.fn(),
     playSandbox: vi.fn(),
     resetSandbox: vi.fn(),
     setShieldSetting: vi.fn(),
     setOrbitPreset: vi.fn(),
   }) as GameViewportController;
+
+const HUD_TUNING = CURRENT_GAME_TUNING.visuals.hud;
 
 describe("CombatHud", () => {
   it("renders the current combat summary, warnings, and shortcut cards", () => {
@@ -38,6 +43,8 @@ describe("CombatHud", () => {
       blackHoleRemainingSec: 30,
       connection: {
         extrapolating: true,
+        fps: 58.6,
+        frameTimeMs: 16.9,
         label: "Remote sim",
         rttMs: 13.4,
         state: "connected" as const,
@@ -81,25 +88,44 @@ describe("CombatHud", () => {
           selected: true,
         },
       ],
+      profilingEnabled: true,
+      debugItems: [
+        {
+          label: "Frame CPU",
+          value: "now 8.10 · avg 7.92 · max 11.44",
+        },
+      ],
     };
 
-    render(<CombatHud controller={createControllerMock()} hud={hud} />);
+    render(
+      <CombatHud controller={createControllerMock()} hud={hud} hudTuning={HUD_TUNING} />,
+    );
 
     expect(screen.getByText("2:05")).toBeInTheDocument();
     expect(screen.getByText("Black Hole in 0:30")).toBeInTheDocument();
     expect(screen.getByText("connected")).toBeInTheDocument();
     expect(screen.getByText("13 ms")).toBeInTheDocument();
+    expect(screen.getByText("59 FPS")).toBeInTheDocument();
+    expect(screen.getByText("16.9 ms")).toBeInTheDocument();
     expect(screen.getByText("Remote sim · Extrapolating")).toBeInTheDocument();
     expect(screen.getByText("Planet HP")).toBeInTheDocument();
     expect(screen.getByText("Player tagged Bot II")).toBeInTheDocument();
     expect(screen.getByText("Phase Shield")).toBeInTheDocument();
     expect(screen.getByText("Seeker")).toBeInTheDocument();
+    expect(screen.getByText("Performance")).toBeInTheDocument();
+    expect(
+      screen.getByText("now 8.10 · avg 7.92 · max 11.44"),
+    ).toBeInTheDocument();
   });
 
   it("wires sandbox controls and setting inputs to the viewport controller", () => {
     const controller = createControllerMock();
     const { rerender } = render(
-      <CombatHud controller={controller} hud={createInitialHudState()} />,
+      <CombatHud
+        controller={controller}
+        hud={createInitialHudState()}
+        hudTuning={HUD_TUNING}
+      />,
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Pause" }));
@@ -112,6 +138,7 @@ describe("CombatHud", () => {
           ...createInitialHudState(),
           sandboxPaused: true,
         }}
+        hudTuning={HUD_TUNING}
       />,
     );
 
@@ -194,10 +221,57 @@ describe("CombatHud", () => {
       5.5,
     );
     expect(controller.setBoostSetting).toHaveBeenCalledWith("magnitude", 410);
+
+    const performanceSection = screen
+      .getByText("CPU-side sim and render timings for this viewport")
+      .closest(".sandbox-panel__section") as HTMLElement;
+    fireEvent.click(
+      within(performanceSection).getByRole("button", { name: "Enable" }),
+    );
+    expect(controller.setProfilingEnabled).toHaveBeenCalledWith(true);
+  });
+
+  it("resets profiling samples when requested", () => {
+    const controller = createControllerMock();
+
+    render(
+      <CombatHud
+        controller={controller}
+        hud={{
+          ...createInitialHudState(),
+          profilingEnabled: true,
+          debugItems: [
+            {
+              label: "Sim CPU",
+              value: "now 1.20 · avg 1.10 · max 2.40",
+            },
+          ],
+        }}
+        hudTuning={HUD_TUNING}
+      />,
+    );
+
+    const performanceSection = screen
+      .getByText("CPU-side sim and render timings for this viewport")
+      .closest(".sandbox-panel__section") as HTMLElement;
+    fireEvent.click(
+      within(performanceSection).getByRole("button", { name: "Disable" }),
+    );
+    expect(controller.setProfilingEnabled).toHaveBeenCalledWith(false);
+    fireEvent.click(
+      within(performanceSection).getByRole("button", { name: "Reset" }),
+    );
+    expect(controller.resetProfiling).toHaveBeenCalledTimes(1);
   });
 
   it("disables sandbox controls when the viewport controller is unavailable", () => {
-    render(<CombatHud controller={null} hud={createInitialHudState()} />);
+    render(
+      <CombatHud
+        controller={null}
+        hud={createInitialHudState()}
+        hudTuning={HUD_TUNING}
+      />,
+    );
     const sandboxHeader = screen
       .getByText("Sandbox Tools")
       .closest(".sandbox-panel__header") as HTMLElement;
@@ -216,6 +290,7 @@ describe("CombatHud", () => {
       <CombatHud
         controller={createControllerMock()}
         hud={createInitialHudState()}
+        hudTuning={HUD_TUNING}
       />,
     );
 
