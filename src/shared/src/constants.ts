@@ -24,12 +24,12 @@ export interface BoostSpec {
 }
 
 export interface DroneSpec {
+  damage: number;
   speed: number;
   thrust: number;
-  fuel: number;
+  turnRateDeg: number;
   ttlSec: number;
   cooldownSec: number;
-  burstImpulse: number;
 }
 
 export interface CacheSpec {

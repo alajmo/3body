@@ -2,11 +2,11 @@ import {
   ARCHETYPES,
   BLACK_HOLE_SPEC,
   BOOST_SPEC,
-  DRONE_SPEC,
   FIXED_STEP_SEC,
   FORESIGHT_SPEC,
   ROCKET_SPECS,
   SHIELD_SPEC,
+  getShieldLoadCapacity,
   type CacheContents,
   type Drone,
   type PlanetPrivateState,
@@ -18,12 +18,17 @@ import {
 import type { AuthoritativeEventRecord } from "../authoritativeMatchRuntime";
 import {
   createInitialHudState,
+  getPlayerMotionHud,
   type GameViewportConnectionState,
   type GameViewportHudAbility,
   type GameViewportHudState,
   type GameViewportShortcut,
 } from "../viewportHud";
+import type { ViewportPerformanceSnapshot } from "./performanceProfiler";
+import type { ViewportEffectsQuality } from "./renderQuality";
+import { getPlanetArchetypeVisuals } from "../planetVisualTuning";
 import { getRuntimeTuningDocument } from "../runtimeTuning";
+import { getForesightMeterProgress } from "./foresightMeter";
 
 const KILL_FEED_WINDOW_SEC = 4;
 const WEAPON_LABELS: Record<RocketKind, string> = {
@@ -32,15 +37,28 @@ const WEAPON_LABELS: Record<RocketKind, string> = {
   seeker: "Seeker",
 };
 
+const getShieldDisplayCapacity = (planet: PlanetPublic): number => {
+  const baseShieldCapacity = getShieldLoadCapacity(planet.archetype);
+  const extendedShieldCapacity =
+    planet.shieldMaxLoad > baseShieldCapacity
+      ? getShieldLoadCapacity(planet.archetype, true)
+      : baseShieldCapacity;
+  return Math.max(extendedShieldCapacity, planet.shieldMaxLoad, 0);
+};
+
 interface BuildAuthoritativeHudStateParams {
   activeDrone: Drone | null;
   connection: GameViewportConnectionState;
   controlsEnabled: boolean;
+  currentEffectsQuality: ViewportEffectsQuality;
   currentTick: number;
   eventLog: readonly AuthoritativeEventRecord[];
   extrapolating: boolean;
+  currentMaxPixelRatio: number;
   playerId: string | null;
   playerPlanet: PlanetPublic | null;
+  profilerSnapshot: ViewportPerformanceSnapshot | null;
+  profilingEnabled: boolean;
   recentEventsNowMs: number;
   rosterNameByPlayerId: ReadonlyMap<string, string>;
   runtimeStats: {
@@ -52,7 +70,94 @@ interface BuildAuthoritativeHudStateParams {
   world: World | null;
 }
 
-const describeCacheContents = (contents: CacheContents | undefined): string | null => {
+const formatProfilerTiming = (
+  latestMs: number,
+  averageMs: number,
+  maxMs: number,
+): string =>
+  `${latestMs.toFixed(2)} ms · avg ${averageMs.toFixed(2)} · max ${maxMs.toFixed(2)}`;
+
+const buildProfilerDebugItems = ({
+  connection,
+  currentEffectsQuality,
+  currentMaxPixelRatio,
+  extrapolating,
+  profilerSnapshot,
+  profilingEnabled,
+  world,
+}: Pick<
+  BuildAuthoritativeHudStateParams,
+  | "connection"
+  | "currentEffectsQuality"
+  | "currentMaxPixelRatio"
+  | "extrapolating"
+  | "profilerSnapshot"
+  | "profilingEnabled"
+  | "world"
+>): GameViewportHudState["debugItems"] => {
+  if (
+    !profilingEnabled ||
+    profilerSnapshot === null ||
+    profilerSnapshot.frames <= 0
+  ) {
+    return [];
+  }
+
+  return [
+    {
+      label: "Sample",
+      value: `${profilerSnapshot.frames}f · ${profilerSnapshot.sampledDurationSec.toFixed(1)}s`,
+    },
+    {
+      label: "Frame CPU",
+      value: formatProfilerTiming(
+        profilerSnapshot.frameCpu.latestMs,
+        profilerSnapshot.frameCpu.averageMs,
+        profilerSnapshot.frameCpu.maxMs,
+      ),
+    },
+    {
+      label: "Lerp CPU",
+      value: formatProfilerTiming(
+        profilerSnapshot.interpolation.latestMs,
+        profilerSnapshot.interpolation.averageMs,
+        profilerSnapshot.interpolation.maxMs,
+      ),
+    },
+    {
+      label: "Scene CPU",
+      value: formatProfilerTiming(
+        profilerSnapshot.renderCpu.latestMs,
+        profilerSnapshot.renderCpu.averageMs,
+        profilerSnapshot.renderCpu.maxMs,
+      ),
+    },
+    {
+      label: "Submit CPU",
+      value: formatProfilerTiming(
+        profilerSnapshot.submit.latestMs,
+        profilerSnapshot.submit.averageMs,
+        profilerSnapshot.submit.maxMs,
+      ),
+    },
+    {
+      label: "Quality",
+      value: `PR ${currentMaxPixelRatio.toFixed(1)} · FX ${currentEffectsQuality}`,
+    },
+    {
+      label: "Entities",
+      value: `P ${world?.planets.length ?? 0} · R ${world?.rockets.length ?? 0} · D ${world?.drones.length ?? 0} · C ${world?.caches.length ?? 0}`,
+    },
+    {
+      label: "Net State",
+      value: `${connection.state}${extrapolating ? " · extrapolating" : ""}`,
+    },
+  ];
+};
+
+const describeCacheContents = (
+  contents: CacheContents | undefined,
+): string | null => {
   if (contents === undefined) {
     return null;
   }
@@ -81,7 +186,8 @@ const describeEvent = (
 ): string | null => {
   switch (event.kind) {
     case "kill": {
-      const victim = rosterNameByPlayerId.get(event.victimPlayerId) ?? "Unknown";
+      const victim =
+        rosterNameByPlayerId.get(event.victimPlayerId) ?? "Unknown";
       const killer = event.killerPlayerId
         ? (rosterNameByPlayerId.get(event.killerPlayerId) ?? "Unknown")
         : null;
@@ -123,6 +229,7 @@ const describeEvent = (
 const buildAbility = (
   input: Omit<GameViewportHudAbility, "progress"> & {
     durationSec?: number;
+    fill?: number;
     remainingSec?: number;
   },
 ): GameViewportHudAbility => {
@@ -132,11 +239,12 @@ const buildAbility = (
   return {
     ...input,
     progress:
-      input.mode === "active"
+      input.fill ??
+      (input.mode === "active"
         ? Math.min(1, remainingSec / totalDurationSec)
         : input.mode === "cooldown"
-          ? Math.min(1, remainingSec / totalDurationSec)
-          : 1,
+          ? 1 - Math.min(1, remainingSec / totalDurationSec)
+          : 1),
   };
 };
 
@@ -182,11 +290,6 @@ const buildContextualShortcuts = (
           label: "Seeker",
         },
         {
-          id: "drone",
-          keyLabel: "4",
-          label: "Drone",
-        },
-        {
           id: "foresight",
           keyLabel: "Q",
           label: "Foresight",
@@ -213,11 +316,15 @@ export const buildAuthoritativeHudState = ({
   activeDrone,
   connection,
   controlsEnabled,
+  currentEffectsQuality,
   currentTick,
+  currentMaxPixelRatio,
   eventLog,
   extrapolating,
   playerId,
   playerPlanet,
+  profilerSnapshot,
+  profilingEnabled,
   recentEventsNowMs,
   rosterNameByPlayerId,
   runtimeStats,
@@ -226,9 +333,16 @@ export const buildAuthoritativeHudState = ({
   world,
 }: BuildAuthoritativeHudStateParams): GameViewportHudState => {
   const tuning = getRuntimeTuningDocument();
+  const initialHudState = createInitialHudState();
+  const playerPlanetVisuals =
+    playerPlanet === null
+      ? null
+      : getPlanetArchetypeVisuals(playerPlanet.archetype);
+  const playerMotion = getPlayerMotionHud(playerPlanet?.vel);
   const blackHoleSettings = tuning.gameplay.blackHole ?? BLACK_HOLE_SPEC;
   const boostSettings = tuning.gameplay.abilities.boost ?? BOOST_SPEC;
-  const foresightSettings = tuning.gameplay.abilities.foresight ?? FORESIGHT_SPEC;
+  const foresightSettings =
+    tuning.gameplay.abilities.foresight ?? FORESIGHT_SPEC;
   const shieldSettings = {
     cooldownSec:
       tuning.gameplay.abilities.shield?.cooldownSec ?? SHIELD_SPEC.cooldownSec,
@@ -236,7 +350,10 @@ export const buildAuthoritativeHudState = ({
       tuning.gameplay.abilities.shield?.durationSec ?? SHIELD_SPEC.durationSec,
   };
   const alivePlayerCount = world?.planets.length ?? 0;
-  const totalPlayerCount = Math.max(alivePlayerCount, rosterNameByPlayerId.size);
+  const totalPlayerCount = Math.max(
+    alivePlayerCount,
+    rosterNameByPlayerId.size,
+  );
   const timerElapsedSec = currentTick * FIXED_STEP_SEC;
   const blackHoleRemainingSec =
     world?.blackHole !== undefined
@@ -251,14 +368,12 @@ export const buildAuthoritativeHudState = ({
   const abilities: GameViewportHudAbility[] = [];
 
   if (self !== null) {
-    const foresightActiveRemainingSec = Math.max(
-      0,
-      self.cooldowns.foresightActiveUntilTick - currentTick,
-    ) * FIXED_STEP_SEC;
-    const foresightCooldownRemainingSec = Math.max(
-      0,
-      self.cooldowns.foresightCooldownUntilTick - currentTick,
-    ) * FIXED_STEP_SEC;
+    const foresightActiveRemainingSec =
+      Math.max(0, self.cooldowns.foresightActiveUntilTick - currentTick) *
+      FIXED_STEP_SEC;
+    const foresightCooldownRemainingSec =
+      Math.max(0, self.cooldowns.foresightCooldownUntilTick - currentTick) *
+      FIXED_STEP_SEC;
     abilities.push(
       buildAbility({
         accent: tuning.visuals.abilities.foresightColor,
@@ -281,47 +396,48 @@ export const buildAuthoritativeHudState = ({
             : foresightCooldownRemainingSec > 0
               ? "Cooldown"
               : "Ready",
-        durationSec:
-          foresightActiveRemainingSec > 0
-            ? foresightSettings.durationSec
-            : foresightSettings.cooldownSec,
+        fill: getForesightMeterProgress({
+          activeUntilTick: self.cooldowns.foresightActiveUntilTick,
+          activeDurationTicks: self.cooldowns.foresightDurationTicks,
+          cooldownUntilTick: self.cooldowns.foresightCooldownUntilTick,
+          currentTick,
+          settings: foresightSettings,
+        }),
       }),
     );
 
-    const shieldActiveRemainingSec = Math.max(
-      0,
-      (playerPlanet?.shieldActiveUntilTick ?? 0) - currentTick,
-    ) * FIXED_STEP_SEC;
-    const shieldCooldownRemainingSec = Math.max(
-      0,
-      self.cooldowns.shieldCooldownUntilTick - currentTick,
-    ) * FIXED_STEP_SEC;
+    const shieldLoadRatio =
+      playerPlanet !== null && playerPlanet.shieldMaxLoad > 0
+        ? Math.min(
+            1,
+            Math.max(
+              0,
+              playerPlanet.shieldLoad / getShieldDisplayCapacity(playerPlanet),
+            ),
+          )
+        : 0;
+    const shieldMode =
+      playerPlanet?.shieldActive === true
+        ? "active"
+        : playerPlanet !== null &&
+            playerPlanet.shieldLoad < playerPlanet.shieldMaxLoad
+          ? "cooldown"
+          : "ready";
     abilities.push(
       buildAbility({
         accent: tuning.visuals.abilities.shieldColor,
         id: "shield",
         keyLabel: "W",
         label: "Shield",
-        mode:
-          shieldActiveRemainingSec > 0
-            ? "active"
-            : shieldCooldownRemainingSec > 0
-              ? "cooldown"
-              : "ready",
-        remainingSec:
-          shieldActiveRemainingSec > 0
-            ? shieldActiveRemainingSec
-            : shieldCooldownRemainingSec,
+        mode: shieldMode,
+        fill: shieldLoadRatio,
         statusText:
-          shieldActiveRemainingSec > 0
-            ? "Active"
-            : shieldCooldownRemainingSec > 0
-              ? "Cooldown"
+          shieldMode === "active"
+            ? `Active ${Math.round(shieldLoadRatio * 100)}%`
+            : shieldMode === "cooldown"
+              ? `Charging ${Math.round(shieldLoadRatio * 100)}%`
               : "Ready",
-        durationSec:
-          shieldActiveRemainingSec > 0
-            ? shieldSettings.durationSec
-            : shieldSettings.cooldownSec,
+        valueText: `${Math.round(shieldLoadRatio * 100)}%`,
       }),
     );
 
@@ -350,39 +466,6 @@ export const buildAuthoritativeHudState = ({
               ? "Charging"
               : "Ready",
         durationSec: boostSettings.cooldownSec,
-      }),
-    );
-
-    const droneRemainingSec =
-      activeDrone === null
-        ? Math.max(0, self.cooldowns.droneCooldownUntilTick - currentTick) *
-          FIXED_STEP_SEC
-        : Math.max(0, activeDrone.ttlUntilTick - currentTick) * FIXED_STEP_SEC;
-    abilities.push(
-      buildAbility({
-        accent:
-          activeDrone?.mode === "return"
-            ? tuning.visuals.drone.returnColor
-            : tuning.visuals.drone.activeColor,
-        id: "drone",
-        keyLabel: "4",
-        label: "Drone",
-        mode:
-          activeDrone !== null
-            ? "active"
-            : droneRemainingSec > 0
-              ? "cooldown"
-              : "ready",
-        remainingSec: droneRemainingSec,
-        statusText:
-          activeDrone !== null
-            ? activeDrone.mode === "return"
-              ? "Returning"
-              : "Active"
-            : droneRemainingSec > 0
-              ? "Cooldown"
-              : "Ready",
-        durationSec: activeDrone !== null ? DRONE_SPEC.ttlSec : DRONE_SPEC.cooldownSec,
       }),
     );
 
@@ -423,50 +506,67 @@ export const buildAuthoritativeHudState = ({
   const weapons =
     self === null
       ? []
-      : (["light", "heavy", "seeker"] as const).map((kind) => ({
-          accent: tuning.visuals.rockets[kind].hudAccent,
-          ammo: self.ammo[kind],
-          kind,
-          label: WEAPON_LABELS[kind],
-          maxAmmo: ROCKET_SPECS[kind].maxAmmo,
-          reloadRemainingSec:
-            Math.max(
-              0,
-              self.cooldowns[
-                kind === "light"
-                  ? "lightReloadUntilTick"
-                  : kind === "heavy"
-                    ? "heavyReloadUntilTick"
-                    : "seekerReloadUntilTick"
-              ] - currentTick,
-            ) * FIXED_STEP_SEC,
-          selected: kind === selectedWeapon,
-        }));
+      : [
+          ...(["light", "heavy", "seeker"] as const).map((kind) => ({
+            accent: tuning.visuals.rockets[kind].hudAccent,
+            ammo: self.ammo[kind],
+            kind,
+            label: WEAPON_LABELS[kind],
+            maxAmmo: ROCKET_SPECS[kind].maxAmmo,
+            reloadRemainingSec:
+              Math.max(
+                0,
+                self.cooldowns[
+                  kind === "light"
+                    ? "lightReloadUntilTick"
+                    : kind === "heavy"
+                      ? "heavyReloadUntilTick"
+                      : "seekerReloadUntilTick"
+                ] - currentTick,
+              ) * FIXED_STEP_SEC,
+            selected: kind === selectedWeapon,
+          })),
+        ];
 
   return {
-    ...createInitialHudState(),
+    ...initialHudState,
     abilities,
     alivePlayerCount,
     blackHoleActive: world?.blackHole !== undefined,
     blackHoleRemainingSec,
     blackHoleSettings: { ...blackHoleSettings },
     blackHoleWarning:
-      world?.blackHole === undefined && blackHoleRemainingSec > 0 && blackHoleRemainingSec <= 60,
+      world?.blackHole === undefined &&
+      blackHoleRemainingSec > 0 &&
+      blackHoleRemainingSec <= 60,
     boostSettings: { ...boostSettings },
     cacheBadgeScale: tuning.visuals.caches.badgeScale,
     connection: connectionState,
     contextualShortcuts: buildContextualShortcuts(controlsEnabled),
     controlMode: activeDrone !== null ? "drone" : "planet",
     currentPresetId: "authoritative-match",
-    droneCargoLabel: describeCacheContents(activeDrone?.cargo),
+    debugItems: buildProfilerDebugItems({
+      connection,
+      currentEffectsQuality,
+      currentMaxPixelRatio,
+      extrapolating,
+      profilerSnapshot,
+      profilingEnabled,
+      world,
+    }),
     foresightSettings: { ...foresightSettings },
     hudOpacity: 1,
     killFeed,
-    planetAuraGap: tuning.visuals.planets.auraGap,
-    planetAuraScale: tuning.visuals.planets.auraScale,
-    planetBodyScale: tuning.visuals.planets.bodyScale,
+    planetAuraGap:
+      playerPlanetVisuals?.auraGap ?? initialHudState.planetAuraGap,
+    planetAuraScale:
+      playerPlanetVisuals?.auraScale ?? initialHudState.planetAuraScale,
+    planetBodyScale:
+      playerPlanetVisuals?.bodyScale ?? initialHudState.planetBodyScale,
+    profilingEnabled,
     playerArchetype:
       playerPlanet === null ? "--" : ARCHETYPES[playerPlanet.archetype].name,
+    playerHeadingDeg: playerMotion.playerHeadingDeg,
     playerHp: playerPlanet?.hp ?? 0,
     playerLabel:
       playerPlanet === null
@@ -474,6 +574,7 @@ export const buildAuthoritativeHudState = ({
           ? "Awaiting match"
           : (rosterNameByPlayerId.get(playerId) ?? "Pilot")
         : (rosterNameByPlayerId.get(playerPlanet.playerId) ?? "Pilot"),
+    playerSpeed: playerMotion.playerSpeed,
     primaryShortcuts: buildShortcuts(controlsEnabled),
     sandboxControlsEnabled: controlsEnabled,
     selectedWeapon,

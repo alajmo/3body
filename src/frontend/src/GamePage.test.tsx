@@ -2,27 +2,31 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { GamePage } from "./GamePage";
 
-const { authoritativeGamePanelSpy } = vi.hoisted(() => ({
-  authoritativeGamePanelSpy: vi.fn(),
+const { gameViewportPanelSpy } = vi.hoisted(() => ({
+  gameViewportPanelSpy: vi.fn(),
 }));
 
-vi.mock("./AuthoritativeGamePanel", () => ({
-  AuthoritativeGamePanel: (props: {
+vi.mock("./GameViewportPanel", () => ({
+  GameViewportPanel: (props: {
     className?: string;
+    defaultBotsEnabled?: boolean;
+    showPerformanceTools?: boolean;
   }) => {
-    authoritativeGamePanelSpy(props);
-    return <div data-testid="authoritative-game-panel" />;
+    gameViewportPanelSpy(props);
+    return <div data-testid="game-viewport-panel" />;
   },
 }));
 
 describe("GamePage", () => {
-  it("renders the authoritative game panel shell", () => {
+  it("renders the local game viewport shell", () => {
     render(<GamePage />);
 
-    expect(screen.getByTestId("authoritative-game-panel")).toBeInTheDocument();
-    expect(authoritativeGamePanelSpy.mock.calls[0]?.[0]).toEqual(
+    expect(screen.getByTestId("game-viewport-panel")).toBeInTheDocument();
+    expect(gameViewportPanelSpy.mock.calls[0]?.[0]).toEqual(
       expect.objectContaining({
         className: "app-shell",
+        defaultBotsEnabled: false,
+        showPerformanceTools: true,
       }),
     );
   });

@@ -35,7 +35,9 @@ export type PlanetPublic = EntityBase & {
   archetype: ArchetypeId;
   hp: number;
   shieldAimDir: Vec2;
-  shieldActiveUntilTick: number;
+  shieldActive: boolean;
+  shieldLoad: number;
+  shieldMaxLoad: number;
   hideTrailUntilTick: number;
   pilotingDroneId?: EntityId;
   debuffs: PlanetDebuffs;
@@ -53,7 +55,7 @@ export interface PlanetCooldowns {
   seekerReloadUntilTick: number;
   foresightActiveUntilTick: number;
   foresightCooldownUntilTick: number;
-  shieldCooldownUntilTick: number;
+  foresightDurationTicks: number;
   nextBoostChargeAtTick?: number;
   droneCooldownUntilTick: number;
 }
@@ -93,10 +95,7 @@ export type CacheContents =
 export type Drone = EntityBase & {
   kind: "drone";
   ownerId: PlayerId;
-  fuel: number;
   ttlUntilTick: number;
-  mode: "piloted" | "return";
-  cargo?: CacheContents;
 };
 
 export type Cache = EntityBase & {

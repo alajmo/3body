@@ -1,7 +1,6 @@
 import { ARCHETYPES } from "./archetypes";
 import { ARENA_RADIUS, BLACK_HOLE_SPEC, ROCKET_SPECS } from "./constants";
 import type {
-  Cache,
   PlanetPrivateState,
   PlanetPublic,
   Rocket,
@@ -35,7 +34,6 @@ const AIM_CADENCE_TICKS = {
   normal: 3,
   hard: 2,
 } as const satisfies Record<BotDifficulty, number>;
-const DRONE_BURST_CADENCE_TICKS = 20;
 const SHIELD_THREAT_SEC = 1.0;
 const BOUNDARY_ESCAPE_ALPHA = 0.9;
 
@@ -58,7 +56,6 @@ export interface CombatBotMemory {
   cachedAimDir: Vec2;
   lastAimTick: number;
   lastBoostTick: number;
-  lastDroneTick: number;
   lastFireTick: number;
   lastShieldTick: number;
 }
@@ -84,18 +81,6 @@ export type CombatBotCommand =
       type: "ability";
       slot: AbilitySlot;
       aimDir?: Vec2;
-    }
-  | {
-      type: "launchDrone";
-      aimDir: Vec2;
-    }
-  | {
-      type: "droneInput";
-      aimDir: Vec2;
-      burst: boolean;
-    }
-  | {
-      type: "droneAutoReturn";
     };
 
 interface PredictedPoint {
@@ -148,7 +133,6 @@ export const createCombatBotMemory = (): CombatBotMemory => ({
   cachedAimDir: { ...DEFAULT_DIR },
   lastAimTick: -1,
   lastBoostTick: -1,
-  lastDroneTick: -1,
   lastFireTick: -1,
   lastShieldTick: -1,
 });
@@ -159,7 +143,6 @@ export const cloneCombatBotMemory = (
   cachedAimDir: { ...memory.cachedAimDir },
   lastAimTick: memory.lastAimTick,
   lastBoostTick: memory.lastBoostTick,
-  lastDroneTick: memory.lastDroneTick,
   lastFireTick: memory.lastFireTick,
   lastShieldTick: memory.lastShieldTick,
 });
@@ -456,81 +439,6 @@ const assessSurvival = (
   };
 };
 
-const nearestCache = (selfPos: Vec2, caches: readonly Cache[]): Cache | null =>
-  caches.length === 0
-    ? null
-    : [...caches].sort(
-        (left, right) => dist(selfPos, left.pos) - dist(selfPos, right.pos),
-      )[0]!;
-
-const hostileRocketNearby = (
-  playerId: string,
-  pos: Vec2,
-  rockets: readonly Rocket[],
-  radius: number,
-): boolean =>
-  rockets.some(
-    (rocket) => rocket.ownerId !== playerId && dist(rocket.pos, pos) <= radius,
-  );
-
-const decideCombatBotDrone = (
-  context: CombatBotContext,
-  memory: CombatBotMemory,
-): CombatBotCommand[] => {
-  const commands: CombatBotCommand[] = [];
-  const drone =
-    context.runtime.activeDroneId === null
-      ? null
-      : (context.world.drones.find(
-          (candidate) => candidate.id === context.runtime.activeDroneId,
-        ) ?? null);
-  if (!drone) {
-    return commands;
-  }
-
-  if (
-    drone.cargo !== undefined ||
-    drone.ttlUntilTick - context.tick <= context.tickHz * 3 ||
-    hostileRocketNearby(
-      context.self.playerId,
-      drone.pos,
-      context.world.rockets,
-      220,
-    )
-  ) {
-    commands.push({
-      type: "droneAutoReturn",
-    });
-    return commands;
-  }
-
-  const cache = nearestCache(drone.pos, context.world.caches);
-  if (!cache) {
-    commands.push({
-      type: "droneAutoReturn",
-    });
-    return commands;
-  }
-
-  const aimDir = normalizeDir(sub(cache.pos, drone.pos), DEFAULT_DIR);
-  const shouldBurst =
-    context.difficulty === "hard" &&
-    drone.fuel > 0 &&
-    dist(drone.pos, cache.pos) > 260 &&
-    context.tick - memory.lastDroneTick >= DRONE_BURST_CADENCE_TICKS;
-
-  commands.push({
-    type: "droneInput",
-    aimDir,
-    burst: shouldBurst,
-  });
-  if (shouldBurst) {
-    memory.lastDroneTick = context.tick;
-  }
-
-  return commands;
-};
-
 export const decideCombatBot = (
   context: CombatBotContext,
   memory: CombatBotMemory,
@@ -547,10 +455,6 @@ export const decideCombatBot = (
     context.world.planets,
     context.difficulty,
   );
-
-  if (context.runtime.controlMode === "drone") {
-    return decideCombatBotDrone(context, memory);
-  }
 
   let predictedTarget: PredictedTarget | null = null;
   if (target) {
@@ -580,14 +484,24 @@ export const decideCombatBot = (
     memory.lastAimTick = context.tick;
   }
 
-  if (threat && context.self.shieldActiveUntilTick > context.tick) {
+  if (threat && context.self.shieldActive) {
     commands.push({
       type: "shieldAim",
       dir: threat.threatDir,
     });
   } else if (
+    context.self.shieldActive &&
+    context.tick - memory.lastShieldTick >= 12
+  ) {
+    commands.push({
+      type: "ability",
+      slot: "w",
+    });
+    memory.lastShieldTick = context.tick;
+  } else if (
     threat &&
-    context.privateState.cooldowns.shieldCooldownUntilTick <= context.tick &&
+    !context.self.shieldActive &&
+    context.self.shieldLoad > 0 &&
     context.tick - memory.lastShieldTick >= 8
   ) {
     commands.push({
@@ -626,7 +540,7 @@ export const decideCombatBot = (
   if (
     context.difficulty === "hard" &&
     predictedTarget !== null &&
-    context.privateState.cooldowns.foresightCooldownUntilTick <= context.tick &&
+    context.privateState.cooldowns.foresightActiveUntilTick <= context.tick &&
     predictedTarget.chaosScore < 0.42 &&
     rocketAvailable("heavy", context.privateState, context.tick)
   ) {
@@ -634,29 +548,6 @@ export const decideCombatBot = (
       type: "ability",
       slot: "q",
     });
-  }
-
-  if (
-    context.difficulty === "hard" &&
-    context.runtime.activeDroneId === null &&
-    context.privateState.cooldowns.droneCooldownUntilTick <= context.tick &&
-    !hostileRocketNearby(
-      context.self.playerId,
-      context.self.pos,
-      context.world.rockets,
-      520,
-    )
-  ) {
-    const cache = nearestCache(context.self.pos, context.world.caches);
-    if (cache && dist(context.self.pos, cache.pos) <= 900) {
-      commands.push({
-        type: "launchDrone",
-        aimDir: normalizeDir(
-          sub(cache.pos, context.self.pos),
-          memory.cachedAimDir,
-        ),
-      });
-    }
   }
 
   if (!target || predictedTarget === null) {

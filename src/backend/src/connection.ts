@@ -4,13 +4,11 @@ import {
   type ArchetypeId,
   type BotDifficulty,
   type ChatMsg,
-  type DroneInputMsg,
   type ErrorCode,
   type FireRocketMsg,
   type HelloMsg,
   type InputMsg,
   type JoinRequest,
-  type LaunchDroneMsg,
   type PingMsg,
   type PongMsg,
   type PlanetPrivateState,
@@ -136,15 +134,6 @@ const isAbilityMsg = (value: unknown): value is AbilityMsg =>
   value.type === "ability" &&
   isAbilitySlot(value.slot) &&
   (value.aimDir === undefined || isVec2(value.aimDir));
-
-const isLaunchDroneMsg = (value: unknown): value is LaunchDroneMsg =>
-  isRecord(value) && value.type === "launchDrone" && isVec2(value.aimDir);
-
-const isDroneInputMsg = (value: unknown): value is DroneInputMsg =>
-  isRecord(value) &&
-  value.type === "droneInput" &&
-  isVec2(value.aimDir) &&
-  typeof value.burst === "boolean";
 
 const isVoteRematchMsg = (value: unknown): value is VoteRematchMsg =>
   isRecord(value) &&
@@ -652,72 +641,6 @@ export class Connection {
           return;
         }
         this.service.handleAbility(this, parsed);
-        return;
-
-      case "launchDrone":
-        if (!isLaunchDroneMsg(parsed)) {
-          this.rejectInvalidMessage(
-            "Invalid launchDrone payload",
-            "invalid_launch_drone",
-          );
-          return;
-        }
-        if (
-          !this.enforceRateLimit(
-            "action",
-            "combat_action",
-            "Too many combat actions",
-          )
-        ) {
-          return;
-        }
-        this.service.handleLaunchDrone(this, parsed);
-        return;
-
-      case "droneInput":
-        if (!isDroneInputMsg(parsed)) {
-          this.rejectInvalidMessage(
-            "Invalid droneInput payload",
-            "invalid_drone_input",
-          );
-          return;
-        }
-        if (
-          !this.enforceRateLimit(
-            "input",
-            "drone_input",
-            "Too many droneInput messages",
-          )
-        ) {
-          return;
-        }
-        this.service.handleDroneInput(this, parsed);
-        return;
-
-      case "droneAutoReturn":
-        if (
-          !this.enforceRateLimit(
-            "action",
-            "combat_action",
-            "Too many combat actions",
-          )
-        ) {
-          return;
-        }
-        this.service.handleDroneAutoReturn(this);
-        return;
-
-      case "droneRecall":
-        if (
-          !this.enforceRateLimit(
-            "action",
-            "combat_action",
-            "Too many combat actions",
-          )
-        ) {
-          return;
-        }
-        this.service.handleDroneRecall(this);
         return;
 
       case "chat":

@@ -31,12 +31,6 @@ const attachPlayerId = (
       };
     case "ability":
       return { ...command, playerId };
-    case "launchDrone":
-      return { ...command, playerId };
-    case "droneInput":
-      return { ...command, playerId };
-    case "droneAutoReturn":
-      return { ...command, playerId };
   }
 };
 

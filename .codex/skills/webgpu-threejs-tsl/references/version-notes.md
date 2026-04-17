@@ -1,11 +1,12 @@
 # Version Notes
 
-This repo currently uses `three@0.169.x` in `src/frontend/package.json`.
+This repo currently uses `three@^0.184.0` in `src/frontend/package.json`, so renderer guidance should assume the Three.js r184 line.
 
 Implications:
 
-- Many public WebGPU + TSL examples now target materially newer Three.js releases.
-- Newer docs may mention renamed nodes, newer helpers, or post-processing APIs that do not exist here yet.
+- Many public WebGPU + TSL examples now align more closely with this repo than they did on the old r169-era stack.
+- Examples and docs from newer releases can still mention helpers or behavior that landed after r184.
+- This repo already uses the newer `RenderPipeline` naming instead of the older `PostProcessing` name.
 - Prefer patterns already proven in `src/frontend/src/game/createGameViewport.ts`.
 
 Guardrails:
@@ -19,4 +20,4 @@ When adapting external examples:
 
 1. Reduce them to the underlying idea: gradient, fresnel, noise, bloom, distortion.
 2. Rebuild that idea with the repo's current node vocabulary.
-3. If the example depends on an unavailable API, either simplify it or note that the repo needs a Three.js upgrade.
+3. If the example depends on an unavailable post-r184 API, either simplify it or note that the repo needs a Three.js upgrade.

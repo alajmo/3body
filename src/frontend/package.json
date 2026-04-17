@@ -14,17 +14,17 @@
     "@3body/shared": "*",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
-    "three": "^0.169.0"
+    "three": "^0.184.0"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "@types/three": "^0.169.0",
-    "@vitejs/plugin-react": "^5.2.0",
+    "@types/three": "^0.184.0",
+    "@vitejs/plugin-react": "^6.0.1",
     "jsdom": "^29.0.2",
-    "vite": "^5.4.10",
+    "vite": "^8.0.8",
     "vitest": "^4.1.4"
   }
 }

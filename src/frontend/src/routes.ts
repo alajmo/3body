@@ -1,10 +1,21 @@
-export type AppRoute = "/" | "/edit";
+export const APP_ROUTES = [
+  "/",
+  "/edit",
+  "/network",
+  "/sandbox",
+  "/soak",
+] as const;
 
-const KNOWN_ROUTES = new Set<AppRoute>(["/", "/edit"]);
+export type AppRoute = (typeof APP_ROUTES)[number];
+export type ResolvedAppRoute = AppRoute | "not-found";
 
-export const resolveAppRoute = (pathname: string): AppRoute => {
+const KNOWN_ROUTES = new Set<AppRoute>(APP_ROUTES);
+
+export const resolveAppRoute = (pathname: string): ResolvedAppRoute => {
   const trimmed =
     pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname || "/";
 
-  return KNOWN_ROUTES.has(trimmed as AppRoute) ? (trimmed as AppRoute) : "/";
+  return KNOWN_ROUTES.has(trimmed as AppRoute)
+    ? (trimmed as AppRoute)
+    : "not-found";
 };

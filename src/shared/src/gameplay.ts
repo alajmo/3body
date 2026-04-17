@@ -1,9 +1,20 @@
-import { CACHE_SPEC, ROCKET_SPECS, WILDCARD_KINDS } from "./constants";
+import { ARCHETYPES } from "./archetypes";
+import {
+  CACHE_SPEC,
+  PLANET_HP,
+  ROCKET_SPECS,
+  SHIELD_EXT_MULTIPLIER,
+  SHIELD_SPEC,
+  WILDCARD_KINDS,
+} from "./constants";
 import type {
+  ArchetypeId,
   CacheContents,
   PlanetPrivateAmmo,
   WildcardKind,
 } from "./entities";
+
+const SHIELD_LOAD_REFERENCE_DURATION_SEC = 4;
 
 export const createInitialAmmo = (): PlanetPrivateAmmo => ({
   light: ROCKET_SPECS.light.startAmmo,
@@ -21,6 +32,20 @@ export const cloneCacheContents = (contents: CacheContents): CacheContents =>
 
 export const rollWildcardKind = (rng: () => number): WildcardKind =>
   WILDCARD_KINDS[Math.floor(rng() * WILDCARD_KINDS.length)]!;
+
+export const getBaseShieldLoad = (
+  durationSec = SHIELD_SPEC.durationSec,
+): number =>
+  PLANET_HP * Math.max(0, durationSec / SHIELD_LOAD_REFERENCE_DURATION_SEC);
+
+export const getShieldLoadCapacity = (
+  archetypeId: ArchetypeId,
+  extended = false,
+  durationSec = SHIELD_SPEC.durationSec,
+): number =>
+  getBaseShieldLoad(durationSec) *
+  ARCHETYPES[archetypeId].shieldDurationMultiplier *
+  (extended ? SHIELD_EXT_MULTIPLIER : 1);
 
 const SIMPLE_CACHE_KINDS: readonly CacheContents[] = [
   { kind: "heavyAmmo" },

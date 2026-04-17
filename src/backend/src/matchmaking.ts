@@ -4,12 +4,10 @@ import {
   type ArchetypeId,
   type BotDifficulty,
   type ChatMsg,
-  type DroneInputMsg,
   type FireRocketMsg,
   type HelloMsg,
   type InputMsg,
   type JoinRequest,
-  type LaunchDroneMsg,
   type PlayerId,
   type ShieldAimMsg,
   type VoteRematchMsg,
@@ -369,6 +367,9 @@ export class MatchmakingService {
 
     const { room, participant } = resolved;
     if (room.phase !== "combat") {
+      if (room.phase === "countdown" || room.phase === "ended") {
+        return;
+      }
       connection.sendError(
         "phase_invalid",
         `${actionName} is only valid in combat`,
@@ -434,47 +435,6 @@ export class MatchmakingService {
         slot: message.slot,
         aimDir: message.aimDir,
       }),
-    );
-  }
-
-  handleLaunchDrone(connection: Connection, message: LaunchDroneMsg): void {
-    this.dispatchCombatAction(
-      connection,
-      "launchDrone",
-      "Spectators cannot launch drones",
-      (playerId) => ({ type: "launchDrone", playerId, aimDir: message.aimDir }),
-    );
-  }
-
-  handleDroneInput(connection: Connection, message: DroneInputMsg): void {
-    this.dispatchCombatAction(
-      connection,
-      "droneInput",
-      "Spectators cannot control drones",
-      (playerId) => ({
-        type: "droneInput",
-        playerId,
-        aimDir: message.aimDir,
-        burst: message.burst,
-      }),
-    );
-  }
-
-  handleDroneAutoReturn(connection: Connection): void {
-    this.dispatchCombatAction(
-      connection,
-      "droneAutoReturn",
-      "Spectators cannot control drones",
-      (playerId) => ({ type: "droneAutoReturn", playerId }),
-    );
-  }
-
-  handleDroneRecall(connection: Connection): void {
-    this.dispatchCombatAction(
-      connection,
-      "droneRecall",
-      "Spectators cannot control drones",
-      (playerId) => ({ type: "droneRecall", playerId }),
     );
   }
 

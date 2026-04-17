@@ -7,29 +7,25 @@ import {
 } from "@3body/shared";
 import {
   attribute,
-  bloom,
   color,
   float,
   length,
-  pointUV,
-  type pass,
   renderOutput,
-  rgbShift,
   smoothstep,
-  ssaaPass,
   vec2,
 } from "three/tsl";
+import { bloom } from "three/addons/tsl/display/BloomNode.js";
+import { rgbShift } from "three/addons/tsl/display/RGBShiftNode.js";
 import {
   AdditiveBlending,
   BufferGeometry,
-  CircleGeometry,
   Float32BufferAttribute,
   Mesh,
   OrthographicCamera,
   PlaneGeometry,
   Points,
   PointsNodeMaterial,
-  PostProcessing,
+  RenderPipeline,
   RingGeometry,
   Scene,
   SphereGeometry,
@@ -37,20 +33,24 @@ import {
 } from "three/webgpu";
 import { DEFAULT_ORBIT_PRESET } from "./orbitPresets";
 import {
+  createBackgroundLayer,
+  createBackgroundLayerConfigs,
   createBackdropMaterial,
-  createStarfieldLayer,
+  createSceneBackgroundColor,
   createSunCoreMaterial,
   createSunGlowMaterial,
   createWarpMaterial,
-  SCENE_BACKGROUND,
-  STARFIELD_LAYERS,
   wrapCentered,
 } from "./showcaseVisuals";
 import { getRuntimeTuningDocument } from "./runtimeTuning";
 import {
-  createViewportRendererBootstrap,
-  showViewportRendererFailure,
+  disposeViewportRendererSession,
+  initializeViewportRendererSession,
+  reportViewportRendererFailure,
+  type ViewportRendererBootstrap,
 } from "./viewport/rendererBootstrap";
+import { createCompatibleScenePass } from "./viewport/postProcessingCompat";
+import { createViewportAnimationLoopController } from "./viewport/animationLoopController";
 
 const CAMERA_DISTANCE = 100;
 const MAX_PIXEL_RATIO = 2;
@@ -140,9 +140,7 @@ const createTrailVisual = (trailColor: string): SunTrailVisual => {
     blending: AdditiveBlending,
   });
   material.colorNode = color(trailColor);
-  material.opacityNode = attribute("trailOpacity", "float").mul(
-    float(1).sub(smoothstep(0.12, 0.48, length(pointUV.sub(vec2(0.5, 0.5))))),
-  );
+  material.opacityNode = attribute("trailOpacity", "float");
   material.size = TRAIL_POINT_SIZE;
   material.alphaTest = 0.01;
 
@@ -210,12 +208,14 @@ export function createSunInteractionViewport(
 ): () => void {
   let disposed = false;
   let renderer: WebGPURenderer | null = null;
-  let rendererBootstrap:
-    | Awaited<ReturnType<typeof createViewportRendererBootstrap>>
-    | null = null;
+  let rendererBootstrap: ViewportRendererBootstrap | null = null;
+  let animationLoopController: ReturnType<
+    typeof createViewportAnimationLoopController
+  > | null = null;
   let camera: OrthographicCamera | null = null;
   let backdropMesh: Mesh | null = null;
   const disposables: Array<{ dispose: () => void }> = [];
+  let cleanupComplete = false;
   const sunTuning = getRuntimeTuningDocument().visuals.suns;
   const seedSuns = getSeedSuns();
   let previousSuns = cloneSuns(seedSuns);
@@ -228,6 +228,7 @@ export function createSunInteractionViewport(
     centerY: 0,
     worldHalfHeight: MIN_CAMERA_HALF_HEIGHT,
   };
+  let rendererSessionToken = 0;
 
   const resetSimulation = (trailVisuals: readonly SunTrailVisual[]) => {
     previousSuns = cloneSuns(seedSuns);
@@ -290,25 +291,71 @@ export function createSunInteractionViewport(
     applyCameraFrame();
   };
 
-  void (async () => {
-    try {
-      const bootstrap = await createViewportRendererBootstrap({
-        hostElement,
-        target: "sunInteraction",
-      });
-      const nextRenderer = bootstrap.renderer;
+  const disposeViewportSession = () => {
+    rendererSessionToken += 1;
+    window.removeEventListener("resize", resizeViewport);
 
-      if (disposed) {
-        bootstrap.dispose();
-        nextRenderer.dispose();
+    for (let index = disposables.length - 1; index >= 0; index -= 1) {
+      try {
+        disposables[index]!.dispose();
+      } catch (error) {
+        console.warn(
+          "[frontend] Failed to dispose sun interaction resource.",
+          error,
+        );
+      }
+    }
+    disposables.length = 0;
+
+    disposeViewportRendererSession({
+      animationLoopController,
+      bootstrap: rendererBootstrap,
+      hostElement,
+      renderer,
+    });
+    animationLoopController = null;
+    rendererBootstrap = null;
+    renderer = null;
+    camera = null;
+    backdropMesh = null;
+  };
+
+  const handleViewportRenderError = (error: unknown) => {
+    disposeViewportSession();
+    reportViewportRendererFailure({
+      error,
+      failureLogLabel: "sun interaction viewport",
+      hostElement,
+      isDisposed: () => disposed,
+    });
+  };
+
+  const startViewport = async () => {
+    const sessionToken = ++rendererSessionToken;
+    try {
+      const rendererSession = await initializeViewportRendererSession({
+        failureLogLabel: "sun interaction viewport",
+        hostElement,
+        isDisposed: () => disposed,
+      });
+      if (rendererSession === null || sessionToken !== rendererSessionToken) {
+        if (rendererSession !== null) {
+          disposeViewportRendererSession({
+            bootstrap: rendererSession.bootstrap,
+            hostElement,
+            renderer: rendererSession.renderer,
+          });
+        }
         return;
       }
 
+      const { bootstrap, renderer: nextRenderer } = rendererSession;
       rendererBootstrap = bootstrap;
       renderer = nextRenderer;
 
+      const backgroundVisuals = getRuntimeTuningDocument().visuals.background;
       const scene = new Scene();
-      scene.background = SCENE_BACKGROUND.clone();
+      scene.background = createSceneBackgroundColor(backgroundVisuals);
 
       const nextCamera = new OrthographicCamera(-1, 1, 1, -1, -2000, 2000);
       nextCamera.position.set(0, 0, CAMERA_DISTANCE);
@@ -316,41 +363,41 @@ export function createSunInteractionViewport(
       camera = nextCamera;
 
       const backdropGeometry = new PlaneGeometry(1, 1);
-      const backdropMaterial = createBackdropMaterial();
+      const backdropMaterial = createBackdropMaterial(backgroundVisuals);
       backdropMesh = new Mesh(backdropGeometry, backdropMaterial);
       backdropMesh.frustumCulled = false;
       backdropMesh.renderOrder = -40;
       scene.add(backdropMesh);
       registerDisposables(disposables, backdropGeometry, backdropMaterial);
 
-      const starfieldLayers = STARFIELD_LAYERS.map((layerConfig) => {
-        const layer = createStarfieldLayer(
-          layerConfig.count,
-          layerConfig.size,
-          layerConfig.alphaScale,
-          layerConfig.z,
-          layerConfig.parallax,
-        );
+      const backgroundLayers = createBackgroundLayerConfigs(
+        backgroundVisuals,
+      ).map((layerConfig) => {
+        const layer = createBackgroundLayer(layerConfig);
         scene.add(layer.group);
         registerDisposables(disposables, layer.geometry, layer.material);
         return layer;
       });
 
       const sunGeometry = new SphereGeometry(1, 48, 48);
-      const glowGeometry = new CircleGeometry(1, 64);
       const warpGeometry = new RingGeometry(0.55, 1, 96);
-      registerDisposables(disposables, sunGeometry, glowGeometry, warpGeometry);
+      registerDisposables(disposables, sunGeometry, warpGeometry);
 
       const sunVisuals = DEFAULT_ORBIT_PRESET.suns.map((sun, index) => {
         const coreMaterial = createSunCoreMaterial(
           sun.color,
           sun.glowColor,
           sun.id,
+          sunTuning.coreBrightness,
         );
-        const glowMaterial = createSunGlowMaterial(sun.glowColor, sun.id);
+        const glowMaterial = createSunGlowMaterial(
+          sun.glowColor,
+          sun.id,
+          sunTuning.glowBrightness,
+        );
         const warpMaterial = createWarpMaterial(sun.glowColor, sun.id);
         const coreMesh = new Mesh(sunGeometry, coreMaterial);
-        const glowMesh = new Mesh(glowGeometry, glowMaterial);
+        const glowMesh = new Mesh(sunGeometry, glowMaterial);
         const warpMesh = new Mesh(warpGeometry, warpMaterial);
 
         coreMesh.renderOrder = -8;
@@ -388,14 +435,15 @@ export function createSunInteractionViewport(
         return trail;
       });
 
-      hostElement.replaceChildren(nextRenderer.domElement);
       resizeViewport();
       window.addEventListener("resize", resizeViewport);
 
-      const scenePass = ssaaPass(scene, nextCamera) as ReturnType<
-        typeof pass
-      > & { sampleLevel: number };
-      scenePass.sampleLevel = SCENE_SSAA_LEVEL;
+      const scenePass = createCompatibleScenePass(
+        nextRenderer,
+        scene,
+        nextCamera,
+        SCENE_SSAA_LEVEL,
+      );
       const bloomNode = bloom(
         scenePass,
         BLOOM_STRENGTH,
@@ -407,158 +455,161 @@ export function createSunInteractionViewport(
         nextRenderer.toneMapping,
         nextRenderer.outputColorSpace,
       );
-      const postProcessing = new PostProcessing(nextRenderer, outputFrame);
+      const postProcessing = new RenderPipeline(nextRenderer, outputFrame);
       postProcessing.outputColorTransform = false;
       registerDisposables(disposables, scenePass, bloomNode);
 
-      nextRenderer.setAnimationLoop(() => {
-        const nowMs = performance.now();
-        if (lastFrameMs === null) {
+      animationLoopController = createViewportAnimationLoopController({
+        hostElement,
+        onActiveChange: (active) => {
+          if (active) {
+            lastFrameMs = null;
+            resizeViewport();
+          }
+        },
+        onRenderError: (error) => {
+          handleViewportRenderError(error);
+        },
+        renderFrame: () => {
+          const nowMs = performance.now();
+          if (lastFrameMs === null) {
+            lastFrameMs = nowMs;
+          }
+
+          const deltaSec = Math.min(
+            MAX_FRAME_DELTA_SEC,
+            Math.max(0, (nowMs - lastFrameMs) / 1000),
+          );
           lastFrameMs = nowMs;
-        }
+          accumulatedSec += deltaSec;
 
-        const deltaSec = Math.min(
-          MAX_FRAME_DELTA_SEC,
-          Math.max(0, (nowMs - lastFrameMs) / 1000),
-        );
-        lastFrameMs = nowMs;
-        accumulatedSec += deltaSec;
+          while (accumulatedSec >= FIXED_STEP_SEC) {
+            previousSuns = cloneSuns(currentSuns);
+            currentSuns = stepSuns(currentSuns, FIXED_STEP_SEC);
+            simulationElapsedSec += FIXED_STEP_SEC;
+            accumulatedSec -= FIXED_STEP_SEC;
 
-        while (accumulatedSec >= FIXED_STEP_SEC) {
-          previousSuns = cloneSuns(currentSuns);
-          currentSuns = stepSuns(currentSuns, FIXED_STEP_SEC);
-          simulationElapsedSec += FIXED_STEP_SEC;
-          accumulatedSec -= FIXED_STEP_SEC;
+            for (const [index, trail] of trailVisuals.entries()) {
+              pushTrailSample(trail, currentSuns[index]!.pos);
+              updateTrailVisual(trail);
+            }
 
-          for (const [index, trail] of trailVisuals.entries()) {
-            pushTrailSample(trail, currentSuns[index]!.pos);
-            updateTrailVisual(trail);
+            if (shouldResetSimulation(currentSuns, simulationElapsedSec)) {
+              resetSimulation(trailVisuals);
+              break;
+            }
           }
 
-          if (shouldResetSimulation(currentSuns, simulationElapsedSec)) {
-            resetSimulation(trailVisuals);
-            break;
+          const alpha =
+            FIXED_STEP_SEC > 0 ? accumulatedSec / FIXED_STEP_SEC : 0;
+          const renderSuns = currentSuns.map((sun, index) =>
+            interpolateSun(previousSuns[index]!, sun, alpha),
+          );
+
+          let minX = Infinity;
+          let maxX = -Infinity;
+          let minY = Infinity;
+          let maxY = -Infinity;
+          for (const [index, sun] of renderSuns.entries()) {
+            const radius = sun.radius * sunTuning.warpScale;
+            minX = Math.min(minX, sun.pos.x - radius);
+            maxX = Math.max(maxX, sun.pos.x + radius);
+            minY = Math.min(minY, sun.pos.y - radius);
+            maxY = Math.max(maxY, sun.pos.y + radius);
+
+            const visual = sunVisuals[index]!;
+            visual.coreMesh.position.set(sun.pos.x, sun.pos.y, 0);
+            visual.glowMesh.position.set(sun.pos.x, sun.pos.y, -2);
+            visual.warpMesh.position.set(sun.pos.x, sun.pos.y, -4);
+            visual.coreMesh.scale.set(sun.radius, sun.radius, sun.radius);
+            visual.glowMesh.scale.set(
+              sun.radius * sunTuning.glowScale,
+              sun.radius * sunTuning.glowScale,
+              sun.radius * sunTuning.glowScale,
+            );
+            visual.warpMesh.scale.set(
+              sun.radius * sunTuning.warpScale,
+              sun.radius * sunTuning.warpScale,
+              1,
+            );
+            visual.coreMesh.rotation.x = 0.38;
+            visual.coreMesh.rotation.y = nowMs * 0.001 * visual.rotationSpeed;
+            visual.glowMesh.rotation.z = nowMs * 0.00005 * (5 + index * 2);
+            (visual.coreMesh.material as { opacity: number }).opacity = 1;
+            (visual.glowMesh.material as { opacity: number }).opacity = 0.92;
+            (visual.warpMesh.material as { opacity: number }).opacity = 0.78;
           }
-        }
 
-        const alpha = FIXED_STEP_SEC > 0 ? accumulatedSec / FIXED_STEP_SEC : 0;
-        const renderSuns = currentSuns.map((sun, index) =>
-          interpolateSun(previousSuns[index]!, sun, alpha),
-        );
-
-        let minX = Infinity;
-        let maxX = -Infinity;
-        let minY = Infinity;
-        let maxY = -Infinity;
-        for (const [index, sun] of renderSuns.entries()) {
-          const radius = sun.radius * sunTuning.warpScale;
-          minX = Math.min(minX, sun.pos.x - radius);
-          maxX = Math.max(maxX, sun.pos.x + radius);
-          minY = Math.min(minY, sun.pos.y - radius);
-          maxY = Math.max(maxY, sun.pos.y + radius);
-
-          const visual = sunVisuals[index]!;
-          visual.coreMesh.position.set(sun.pos.x, sun.pos.y, 0);
-          visual.glowMesh.position.set(sun.pos.x, sun.pos.y, -2);
-          visual.warpMesh.position.set(sun.pos.x, sun.pos.y, -4);
-          visual.coreMesh.scale.set(sun.radius, sun.radius, sun.radius);
-          visual.glowMesh.scale.set(
-            sun.radius * sunTuning.glowScale,
-            sun.radius * sunTuning.glowScale,
-            1,
+          const width = Math.max(1, hostElement.clientWidth);
+          const height = Math.max(1, hostElement.clientHeight);
+          const aspect = width / height;
+          const targetCenterX = (minX + maxX) / 2;
+          const targetCenterY = (minY + maxY) / 2;
+          const targetHalfWidth = (maxX - minX) / 2 + SUN_PADDING;
+          const targetHalfHeight = (maxY - minY) / 2 + SUN_PADDING;
+          const nextHalfHeight = Math.max(
+            MIN_CAMERA_HALF_HEIGHT,
+            targetHalfHeight,
+            targetHalfWidth / aspect,
           );
-          visual.warpMesh.scale.set(
-            sun.radius * sunTuning.warpScale,
-            sun.radius * sunTuning.warpScale,
-            1,
+
+          cameraState.centerX = lerp(
+            cameraState.centerX,
+            targetCenterX,
+            CAMERA_LERP,
           );
-          visual.coreMesh.rotation.x = 0.38;
-          visual.coreMesh.rotation.y = nowMs * 0.001 * visual.rotationSpeed;
-          visual.glowMesh.rotation.z = nowMs * 0.00005 * (5 + index * 2);
-          (visual.coreMesh.material as { opacity: number }).opacity = 1;
-          (visual.glowMesh.material as { opacity: number }).opacity = 0.92;
-          (visual.warpMesh.material as { opacity: number }).opacity = 0.78;
-        }
-
-        const width = Math.max(1, hostElement.clientWidth);
-        const height = Math.max(1, hostElement.clientHeight);
-        const aspect = width / height;
-        const targetCenterX = (minX + maxX) / 2;
-        const targetCenterY = (minY + maxY) / 2;
-        const targetHalfWidth = (maxX - minX) / 2 + SUN_PADDING;
-        const targetHalfHeight = (maxY - minY) / 2 + SUN_PADDING;
-        const nextHalfHeight = Math.max(
-          MIN_CAMERA_HALF_HEIGHT,
-          targetHalfHeight,
-          targetHalfWidth / aspect,
-        );
-
-        cameraState.centerX = lerp(
-          cameraState.centerX,
-          targetCenterX,
-          CAMERA_LERP,
-        );
-        cameraState.centerY = lerp(
-          cameraState.centerY,
-          targetCenterY,
-          CAMERA_LERP,
-        );
-        cameraState.worldHalfHeight = lerp(
-          cameraState.worldHalfHeight,
-          nextHalfHeight,
-          CAMERA_LERP,
-        );
-        applyCameraFrame();
-
-        for (const layer of starfieldLayers) {
-          layer.group.position.x = wrapCentered(
-            cameraState.centerX * layer.parallax,
-            layer.tileSize,
+          cameraState.centerY = lerp(
+            cameraState.centerY,
+            targetCenterY,
+            CAMERA_LERP,
           );
-          layer.group.position.y = wrapCentered(
-            cameraState.centerY * layer.parallax,
-            layer.tileSize,
+          cameraState.worldHalfHeight = lerp(
+            cameraState.worldHalfHeight,
+            nextHalfHeight,
+            CAMERA_LERP,
           );
-        }
+          applyCameraFrame();
 
-        postProcessing.render();
+          const nowSec = performance.now() / 1000;
+          for (const layer of backgroundLayers) {
+            layer.group.position.x = wrapCentered(
+              cameraState.centerX * layer.parallax + nowSec * layer.driftX,
+              layer.tileSize,
+            );
+            layer.group.position.y = wrapCentered(
+              cameraState.centerY * layer.parallax + nowSec * layer.driftY,
+              layer.tileSize,
+            );
+          }
+
+          postProcessing.render();
+        },
+        renderer: nextRenderer,
       });
     } catch (error) {
-      console.error(
-        "[frontend] Failed to initialize sun interaction viewport.",
+      disposeViewportSession();
+      reportViewportRendererFailure({
         error,
-      );
-      if (!disposed) {
-        showViewportRendererFailure(
-          hostElement,
-          "Renderer initialization failed.",
-        );
-      }
+        failureLogLabel: "sun interaction viewport",
+        hostElement,
+        isDisposed: () => disposed,
+      });
     }
-  })();
+  };
+
+  const disposeViewport = () => {
+    if (cleanupComplete) {
+      return;
+    }
+
+    cleanupComplete = true;
+    disposeViewportSession();
+  };
+
+  void startViewport();
 
   return () => {
     disposed = true;
-    window.removeEventListener("resize", resizeViewport);
-
-    for (let index = disposables.length - 1; index >= 0; index -= 1) {
-      try {
-        disposables[index]!.dispose();
-      } catch (error) {
-        console.warn(
-          "[frontend] Failed to dispose sun interaction resource.",
-          error,
-        );
-      }
-    }
-
-    if (renderer !== null) {
-      renderer.setAnimationLoop(null);
-      renderer.dispose();
-    }
-
-    rendererBootstrap?.dispose();
-
-    hostElement.replaceChildren();
+    disposeViewport();
   };
 }

@@ -1,314 +1,30 @@
-import type {
-  GameTuningDocument,
-  HudVisualTuning,
-  RocketKind,
+import {
+  clamp,
+  type GameTuningDocument,
+  type HudVisualTuning,
 } from "@3body/shared";
-import type { CSSProperties } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CombatHud } from "./CombatHud";
+import { EditorItemViewportPanel } from "./EditorItemViewportPanel";
 import { ShowcaseViewportPanel } from "./ShowcaseViewportPanel";
-import { SunInteractionViewportPanel } from "./SunInteractionViewportPanel";
+import type { EditorPreviewViewportItemId } from "./game/createEditorItemPreviewViewport";
 import {
   createInitialHudState,
   type GameViewportHudState,
 } from "./game/viewportHud";
 
-export type EditorPreviewStageMode =
-  | { kind: "blank" }
-  | { kind: "blackHole" }
-  | { kind: "boost" }
-  | { kind: "drone" }
-  | { kind: "foresight" }
-  | { kind: "orbits" }
-  | { kind: "shield" }
-  | {
-      focus: "all" | "caches" | "planets" | "rockets" | "suns";
-      kind: "showcase";
-      rocketKind?: RocketKind;
-    };
+const VIEWPORT_REFRESH_DEBOUNCE_MS = 140;
 
-const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
+const createViewportRefreshSignature = (
+  documentValue: GameTuningDocument,
+): string => {
+  const { hud: _hud, ...viewportVisuals } = documentValue.visuals;
 
-const formatPreviewValue = (value: number, suffix: string) =>
-  `${Math.round(value * 10) / 10}${suffix}`;
-
-function PreviewBlackHoleSurface({
-  documentValue,
-}: {
-  documentValue: GameTuningDocument;
-}) {
-  const { blackHole } = documentValue.visuals;
-  const maxRadius = Math.max(
-    blackHole.coreRadius,
-    blackHole.ringRadius,
-    blackHole.lensRadius,
-    1,
-  );
-
-  return (
-    <div className="editor-preview-surface editor-preview-surface--focus">
-      <div className="editor-preview-black-hole">
-        <div
-          className="editor-preview-black-hole__lens"
-          style={
-            {
-              "--black-hole-size": `${(blackHole.lensRadius / maxRadius) * 100}%`,
-            } as CSSProperties
-          }
-        />
-        <div
-          className="editor-preview-black-hole__ring"
-          style={
-            {
-              "--black-hole-size": `${(blackHole.ringRadius / maxRadius) * 100}%`,
-            } as CSSProperties
-          }
-        />
-        <div
-          className="editor-preview-black-hole__core"
-          style={
-            {
-              "--black-hole-size": `${(blackHole.coreRadius / maxRadius) * 100}%`,
-            } as CSSProperties
-          }
-        />
-      </div>
-      <div className="editor-preview-readout">
-        <span>
-          Spawn{" "}
-          {formatPreviewValue(documentValue.gameplay.blackHole.spawnSec, "s")}
-        </span>
-        <span>
-          Mass {Math.round(documentValue.gameplay.blackHole.mass / 1_000_000)}M
-        </span>
-        <span>
-          Kill{" "}
-          {formatPreviewValue(documentValue.gameplay.blackHole.killRadius, "r")}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function PreviewForesightSurface({
-  documentValue,
-}: {
-  documentValue: GameTuningDocument;
-}) {
-  const { foresightColor } = documentValue.visuals.abilities;
-  const steps = Math.max(
-    5,
-    Math.min(
-      9,
-      Math.round(documentValue.gameplay.abilities.foresight.durationSec * 0.9),
-    ),
-  );
-  const dots = Array.from({ length: steps }, (_, index) => {
-    const t = (index + 1) / (steps + 1);
-    const x = (1 - t) * (1 - t) * 26 + 2 * (1 - t) * t * 54 + t * t * 78;
-    const y = (1 - t) * (1 - t) * 74 + 2 * (1 - t) * t * 26 + t * t * 44;
-    return {
-      opacity: 0.3 + t * 0.55,
-      size: 8 + t * 10,
-      x,
-      y,
-    };
+  return JSON.stringify({
+    gameplay: documentValue.gameplay,
+    visuals: viewportVisuals,
   });
-
-  return (
-    <div className="editor-preview-surface editor-preview-surface--focus">
-      <div
-        className="editor-preview-foresight"
-        style={
-          {
-            "--preview-accent": foresightColor,
-          } as CSSProperties
-        }
-      >
-        <div className="editor-preview-foresight__origin" />
-        {dots.map((dot, index) => (
-          <span
-            key={index}
-            className="editor-preview-foresight__dot"
-            style={
-              {
-                height: `${dot.size}px`,
-                left: `${dot.x}%`,
-                opacity: `${dot.opacity}`,
-                top: `${dot.y}%`,
-                width: `${dot.size}px`,
-              } as CSSProperties
-            }
-          />
-        ))}
-        <div className="editor-preview-foresight__target" />
-      </div>
-      <div className="editor-preview-readout">
-        <span>
-          Duration{" "}
-          {formatPreviewValue(
-            documentValue.gameplay.abilities.foresight.durationSec,
-            "s",
-          )}
-        </span>
-        <span>
-          Cooldown{" "}
-          {formatPreviewValue(
-            documentValue.gameplay.abilities.foresight.cooldownSec,
-            "s",
-          )}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function PreviewShieldSurface({
-  documentValue,
-}: {
-  documentValue: GameTuningDocument;
-}) {
-  const arcDeg = Math.max(
-    1,
-    Math.min(359, documentValue.gameplay.abilities.shield.arcDeg),
-  );
-
-  return (
-    <div className="editor-preview-surface editor-preview-surface--focus">
-      <div
-        className="editor-preview-shield"
-        style={
-          {
-            "--preview-accent": documentValue.visuals.abilities.shieldColor,
-            "--shield-angle": `${arcDeg}deg`,
-          } as CSSProperties
-        }
-      >
-        <div className="editor-preview-shield__planet" />
-        <div className="editor-preview-shield__arc" />
-      </div>
-      <div className="editor-preview-readout">
-        <span>Arc {arcDeg}deg</span>
-        <span>
-          Duration{" "}
-          {formatPreviewValue(
-            documentValue.gameplay.abilities.shield.durationSec,
-            "s",
-          )}
-        </span>
-        <span>
-          Cooldown{" "}
-          {formatPreviewValue(
-            documentValue.gameplay.abilities.shield.cooldownSec,
-            "s",
-          )}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function PreviewBoostSurface({
-  documentValue,
-}: {
-  documentValue: GameTuningDocument;
-}) {
-  const { boostColor } = documentValue.visuals.abilities;
-  const wakeScale =
-    0.4 +
-    clamp01(documentValue.gameplay.abilities.boost.magnitude / 4000) * 0.8;
-  const charges = Math.max(
-    1,
-    Math.min(5, documentValue.gameplay.abilities.boost.charges),
-  );
-
-  return (
-    <div className="editor-preview-surface editor-preview-surface--focus">
-      <div
-        className="editor-preview-boost"
-        style={
-          {
-            "--boost-wake-scale": `${wakeScale}`,
-            "--preview-accent": boostColor,
-          } as CSSProperties
-        }
-      >
-        <div className="editor-preview-boost__wake" />
-        <div className="editor-preview-boost__planet" />
-        <div className="editor-preview-boost__shock" />
-        <div className="editor-preview-boost__charges">
-          {Array.from({ length: charges }, (_, index) => (
-            <span key={index} className="editor-preview-boost__charge" />
-          ))}
-        </div>
-      </div>
-      <div className="editor-preview-readout">
-        <span>Charges {charges}</span>
-        <span>
-          Impulse{" "}
-          {formatPreviewValue(
-            documentValue.gameplay.abilities.boost.magnitude,
-            "",
-          )}
-        </span>
-        <span>
-          Cooldown{" "}
-          {formatPreviewValue(
-            documentValue.gameplay.abilities.boost.cooldownSec,
-            "s",
-          )}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function PreviewDroneSurface({
-  documentValue,
-}: {
-  documentValue: GameTuningDocument;
-}) {
-  return (
-    <div className="editor-preview-surface editor-preview-surface--focus">
-      <div className="editor-preview-drone">
-        <div
-          className="editor-preview-drone__body"
-          style={
-            {
-              "--preview-accent": documentValue.visuals.drone.activeColor,
-            } as CSSProperties
-          }
-        />
-        <div
-          className="editor-preview-drone__path"
-          style={
-            {
-              "--preview-accent": documentValue.visuals.drone.returnColor,
-            } as CSSProperties
-          }
-        />
-        <div
-          className="editor-preview-drone__return"
-          style={
-            {
-              "--preview-accent": documentValue.visuals.drone.returnColor,
-            } as CSSProperties
-          }
-        />
-      </div>
-      <div className="editor-preview-readout">
-        <span>
-          Speed {formatPreviewValue(documentValue.gameplay.drone.speed, "")}
-        </span>
-        <span>
-          Fuel {formatPreviewValue(documentValue.gameplay.drone.fuel, "s")}
-        </span>
-        <span>
-          TTL {formatPreviewValue(documentValue.gameplay.drone.ttlSec, "s")}
-        </span>
-      </div>
-    </div>
-  );
-}
+};
 
 const createPreviewHudState = (
   documentValue: GameTuningDocument,
@@ -345,15 +61,6 @@ const createPreviewHudState = (
         progress: 1,
         statusText: "ready",
       },
-      {
-        accent: documentValue.visuals.drone.activeColor,
-        id: "drone",
-        keyLabel: "R",
-        label: "Drone",
-        mode: "active",
-        progress: 0.76,
-        statusText: "pilot",
-      },
     ],
     alivePlayerCount: 3,
     blackHoleRemainingSec: Math.max(
@@ -388,9 +95,11 @@ const createPreviewHudState = (
       },
     ],
     playerArchetype: "terra",
+    playerHeadingDeg: 38,
     playerHp: 82,
     playerHpPulse: 0.18,
     playerLabel: "Atlas",
+    playerSpeed: 312,
     sandboxControlsEnabled: true,
     shieldSettings: { ...documentValue.gameplay.abilities.shield },
     timerElapsedSec: 173,
@@ -398,12 +107,10 @@ const createPreviewHudState = (
     weapons: [
       {
         accent: documentValue.visuals.rockets.light.hudAccent,
-        ammo: Math.max(
-          0,
-          Math.min(
-            documentValue.gameplay.rockets.light.maxAmmo,
-            Math.max(1, documentValue.gameplay.rockets.light.startAmmo),
-          ),
+        ammo: clamp(
+          documentValue.gameplay.rockets.light.startAmmo,
+          1,
+          documentValue.gameplay.rockets.light.maxAmmo,
         ),
         kind: "light",
         label: "Light",
@@ -413,9 +120,10 @@ const createPreviewHudState = (
       },
       {
         accent: documentValue.visuals.rockets.heavy.hudAccent,
-        ammo: Math.max(
+        ammo: clamp(
+          documentValue.gameplay.rockets.heavy.startAmmo,
           0,
-          Math.min(2, documentValue.gameplay.rockets.heavy.maxAmmo),
+          documentValue.gameplay.rockets.heavy.maxAmmo,
         ),
         kind: "heavy",
         label: "Heavy",
@@ -426,9 +134,10 @@ const createPreviewHudState = (
       },
       {
         accent: documentValue.visuals.rockets.seeker.hudAccent,
-        ammo: Math.max(
+        ammo: clamp(
+          documentValue.gameplay.rockets.seeker.startAmmo,
           0,
-          Math.min(1, documentValue.gameplay.rockets.seeker.maxAmmo),
+          documentValue.gameplay.rockets.seeker.maxAmmo,
         ),
         kind: "seeker",
         label: "Seeker",
@@ -444,46 +153,77 @@ const createPreviewHudState = (
 export function EditorPreviewStage({
   documentValue,
   hudTuning,
-  mode,
+  itemId,
   showHud,
 }: {
   documentValue: GameTuningDocument;
   hudTuning: HudVisualTuning;
-  mode: EditorPreviewStageMode;
+  itemId: EditorPreviewViewportItemId | "orbits";
   showHud: boolean;
 }) {
-  const hudState = createPreviewHudState(documentValue);
+  const useShowcaseOverview = itemId === "overview";
+  const useHudBackgroundSurface = itemId === "hud";
+  const previewHudState = createPreviewHudState(documentValue);
+  const refreshTimeoutRef = useRef<number | null>(null);
+  const lastRefreshSignatureRef = useRef(
+    createViewportRefreshSignature(documentValue),
+  );
+  const [viewportRevision, setViewportRevision] = useState(0);
+
+  useEffect(() => {
+    const nextSignature = createViewportRefreshSignature(documentValue);
+    if (lastRefreshSignatureRef.current === nextSignature) {
+      return;
+    }
+
+    lastRefreshSignatureRef.current = nextSignature;
+    if (refreshTimeoutRef.current !== null) {
+      window.clearTimeout(refreshTimeoutRef.current);
+    }
+
+    refreshTimeoutRef.current = window.setTimeout(() => {
+      refreshTimeoutRef.current = null;
+      setViewportRevision((current) => current + 1);
+    }, VIEWPORT_REFRESH_DEBOUNCE_MS);
+
+    return () => {
+      if (refreshTimeoutRef.current !== null) {
+        window.clearTimeout(refreshTimeoutRef.current);
+        refreshTimeoutRef.current = null;
+      }
+    };
+  }, [documentValue]);
 
   return (
     <div className="game-stage game-stage--editor">
-      {mode.kind === "showcase" ? (
+      {useShowcaseOverview ? (
         <ShowcaseViewportPanel
           className="editor-preview-surface"
-          focus={mode.focus}
-          rocketKind={mode.rocketKind}
+          focus="all"
+          revision={viewportRevision}
         />
-      ) : mode.kind === "orbits" ? (
-        <SunInteractionViewportPanel className="editor-preview-surface" />
-      ) : mode.kind === "blackHole" ? (
-        <PreviewBlackHoleSurface documentValue={documentValue} />
-      ) : mode.kind === "foresight" ? (
-        <PreviewForesightSurface documentValue={documentValue} />
-      ) : mode.kind === "shield" ? (
-        <PreviewShieldSurface documentValue={documentValue} />
-      ) : mode.kind === "boost" ? (
-        <PreviewBoostSurface documentValue={documentValue} />
-      ) : mode.kind === "drone" ? (
-        <PreviewDroneSurface documentValue={documentValue} />
+      ) : useHudBackgroundSurface ? (
+        <EditorItemViewportPanel
+          className="editor-preview-surface"
+          itemId="background"
+          presentation="stage"
+          revision={viewportRevision}
+        />
       ) : (
-        <div className="editor-preview-surface editor-preview-surface--blank" />
+        <EditorItemViewportPanel
+          className="editor-preview-surface"
+          itemId={itemId}
+          presentation="stage"
+          revision={viewportRevision}
+        />
       )}
       {showHud ? (
         <div className="hud-root">
           <CombatHud
             controller={null}
-            hud={hudState}
+            hud={previewHudState}
             hudTuning={hudTuning}
-            showSandboxTools={false}
+            showPerformanceTools={false}
           />
         </div>
       ) : null}

@@ -7,7 +7,6 @@ import {
   type GameViewportHudState,
 } from "./game/viewportHud";
 import { CombatHud } from "./CombatHud";
-import { SPECIAL_PERIODIC_ORBIT_PRESETS } from "./game/orbitPresets";
 
 const createControllerMock = (): GameViewportController =>
   ({
@@ -15,6 +14,7 @@ const createControllerMock = (): GameViewportController =>
     resetAbilitySettings: vi.fn(),
     resetBlackHoleSettings: vi.fn(),
     resetPlanetVisualSettings: vi.fn(),
+    setBotsEnabled: vi.fn(),
     setBoostSetting: vi.fn(),
     setBlackHoleSetting: vi.fn(),
     setCacheBadgeScale: vi.fn(),
@@ -37,7 +37,9 @@ describe("CombatHud", () => {
     const hud: GameViewportHudState = {
       ...createInitialHudState(),
       controlMode: "drone" as const,
+      playerHeadingDeg: 45,
       playerHp: 52,
+      playerSpeed: 318,
       timerElapsedSec: 125,
       blackHoleWarning: true,
       blackHoleRemainingSec: 30,
@@ -79,11 +81,20 @@ describe("CombatHud", () => {
           selected: false,
         },
         {
+          accent: "#ff9158",
+          ammo: 4,
+          kind: "heavy",
+          label: "Heavy",
+          maxAmmo: 6,
+          reloadRemainingSec: 0,
+          selected: false,
+        },
+        {
           accent: "#ff61eb",
-          ammo: 3,
+          ammo: 7,
           kind: "seeker",
           label: "Seeker",
-          maxAmmo: 3,
+          maxAmmo: 8,
           reloadRemainingSec: 0,
           selected: true,
         },
@@ -98,7 +109,11 @@ describe("CombatHud", () => {
     };
 
     render(
-      <CombatHud controller={createControllerMock()} hud={hud} hudTuning={HUD_TUNING} />,
+      <CombatHud
+        controller={createControllerMock()}
+        hud={hud}
+        hudTuning={HUD_TUNING}
+      />,
     );
 
     expect(screen.getByText("2:05")).toBeInTheDocument();
@@ -108,17 +123,53 @@ describe("CombatHud", () => {
     expect(screen.getByText("59 FPS")).toBeInTheDocument();
     expect(screen.getByText("16.9 ms")).toBeInTheDocument();
     expect(screen.getByText("Remote sim · Extrapolating")).toBeInTheDocument();
-    expect(screen.getByText("Planet HP")).toBeInTheDocument();
+    expect(screen.getByText("Health")).toBeInTheDocument();
+    expect(screen.queryByText("Kill Feed")).not.toBeInTheDocument();
+    expect(screen.queryByText("Compass")).not.toBeInTheDocument();
+    expect(screen.queryByText("Speed")).not.toBeInTheDocument();
+    expect(screen.queryByText("Heading")).not.toBeInTheDocument();
+    expect(screen.queryByText("NE · 45°")).not.toBeInTheDocument();
+    expect(screen.getByText("318 M/S")).toBeInTheDocument();
+    expect(
+      screen.getByRole("img", { name: "Compass heading NE · 45°" }),
+    ).toBeInTheDocument();
+    const summaryCards = Array.from(
+      document.querySelectorAll(".cockpit-summary-grid .cockpit-summary"),
+    ) as HTMLElement[];
+    expect(summaryCards).toHaveLength(1);
+    expect(within(summaryCards[0]!).getByText("Health")).toBeInTheDocument();
     expect(screen.getByText("Player tagged Bot II")).toBeInTheDocument();
     expect(screen.getByText("Phase Shield")).toBeInTheDocument();
     expect(screen.getByText("Seeker")).toBeInTheDocument();
+    const shortcutsDock = document.querySelector(
+      ".shortcuts-dock",
+    ) as HTMLElement;
+    const lightCard = screen
+      .getByText("Light")
+      .closest(".weapon-card") as HTMLElement;
+    const heavyCard = screen
+      .getByText("Heavy")
+      .closest(".weapon-card") as HTMLElement;
+    const seekerCard = screen
+      .getByText("Seeker")
+      .closest(".weapon-card") as HTMLElement;
+    expect(within(lightCard).getByText("∞")).toBeInTheDocument();
+    expect(within(heavyCard).getByText("4")).toBeInTheDocument();
+    expect(within(seekerCard).getByText("7")).toBeInTheDocument();
+    expect(
+      within(shortcutsDock).queryByText("Abilities"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(shortcutsDock).queryByText("Weapons"),
+    ).not.toBeInTheDocument();
     expect(screen.getByText("Performance")).toBeInTheDocument();
     expect(
       screen.getByText("now 8.10 · avg 7.92 · max 11.44"),
     ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Pause" })).not.toBeInTheDocument();
   });
 
-  it("wires sandbox controls and setting inputs to the viewport controller", () => {
+  it("wires local playback and profiler controls to the viewport controller", () => {
     const controller = createControllerMock();
     const { rerender } = render(
       <CombatHud
@@ -145,82 +196,13 @@ describe("CombatHud", () => {
     fireEvent.click(screen.getByRole("button", { name: "Play" }));
     expect(controller.playSandbox).toHaveBeenCalledTimes(1);
 
-    const sandboxHeader = screen
-      .getByText("Sandbox Tools")
-      .closest(".sandbox-panel__header") as HTMLElement;
+    const sandboxToolsSection = screen
+      .getByText("Playback and reset controls for the local sandbox")
+      .closest(".sandbox-panel__section") as HTMLElement;
     fireEvent.click(
-      within(sandboxHeader).getByRole("button", { name: "Reset" }),
+      within(sandboxToolsSection).getByRole("button", { name: "Reset" }),
     );
     expect(controller.resetSandbox).toHaveBeenCalledTimes(1);
-
-    fireEvent.change(screen.getByLabelText("Periodic solution"), {
-      target: { value: SPECIAL_PERIODIC_ORBIT_PRESETS[0]!.id },
-    });
-    expect(controller.setOrbitPreset).toHaveBeenCalledWith(
-      SPECIAL_PERIODIC_ORBIT_PRESETS[0]!.id,
-    );
-
-    const visualsSection = screen
-      .getByText("Planet and cache presentation")
-      .closest(".sandbox-panel__section") as HTMLElement;
-    fireEvent.click(
-      within(visualsSection).getByRole("button", { name: "Reset" }),
-    );
-    fireEvent.change(screen.getByLabelText("Planet size"), {
-      target: { value: "2.75" },
-    });
-    fireEvent.change(screen.getByLabelText("Aura size"), {
-      target: { value: "2.5" },
-    });
-    fireEvent.change(screen.getByLabelText("Aura gap"), {
-      target: { value: "0.25" },
-    });
-    fireEvent.change(screen.getByLabelText("Cache size"), {
-      target: { value: "1.4" },
-    });
-    expect(controller.resetPlanetVisualSettings).toHaveBeenCalledTimes(1);
-    expect(controller.setPlanetBodyScale).toHaveBeenCalledWith(2.75);
-    expect(controller.setPlanetAuraScale).toHaveBeenCalledWith(2.5);
-    expect(controller.setPlanetAuraGap).toHaveBeenCalledWith(0.25);
-    expect(controller.setCacheBadgeScale).toHaveBeenCalledWith(1.4);
-
-    const blackHoleSection = screen
-      .getByText("Spawn timing and collapse strength")
-      .closest(".sandbox-panel__section") as HTMLElement;
-    fireEvent.click(
-      within(blackHoleSection).getByRole("button", { name: "Reset" }),
-    );
-    fireEvent.change(screen.getByLabelText("Spawn time"), {
-      target: { value: "42" },
-    });
-    expect(controller.resetBlackHoleSettings).toHaveBeenCalledTimes(1);
-    expect(controller.setBlackHoleSetting).toHaveBeenCalledWith("spawnSec", 42);
-
-    const abilitiesSection = screen
-      .getByText("Foresight, shield, and boost tuning")
-      .closest(".sandbox-panel__section") as HTMLElement;
-    fireEvent.click(
-      within(abilitiesSection).getByRole("button", { name: "Reset" }),
-    );
-    fireEvent.change(screen.getByLabelText("Foresight duration"), {
-      target: { value: "6.5" },
-    });
-    fireEvent.change(screen.getByLabelText("Shield duration"), {
-      target: { value: "5.5" },
-    });
-    fireEvent.change(screen.getByLabelText("Boost impulse"), {
-      target: { value: "410" },
-    });
-    expect(controller.resetAbilitySettings).toHaveBeenCalledTimes(1);
-    expect(controller.setForesightSetting).toHaveBeenCalledWith(
-      "durationSec",
-      6.5,
-    );
-    expect(controller.setShieldSetting).toHaveBeenCalledWith(
-      "durationSec",
-      5.5,
-    );
-    expect(controller.setBoostSetting).toHaveBeenCalledWith("magnitude", 410);
 
     const performanceSection = screen
       .getByText("CPU-side sim and render timings for this viewport")
@@ -229,6 +211,32 @@ describe("CombatHud", () => {
       within(performanceSection).getByRole("button", { name: "Enable" }),
     );
     expect(controller.setProfilingEnabled).toHaveBeenCalledWith(true);
+  });
+
+  it("hides a duplicate local connection detail label", () => {
+    render(
+      <CombatHud
+        controller={createControllerMock()}
+        hud={createInitialHudState()}
+        hudTuning={HUD_TUNING}
+      />,
+    );
+
+    expect(screen.getByText("local")).toBeInTheDocument();
+    expect(document.querySelector(".connection-indicator__label")).toBeNull();
+  });
+
+  it("does not show black hole spawn copy before the warning state", () => {
+    render(
+      <CombatHud
+        controller={createControllerMock()}
+        hud={createInitialHudState()}
+        hudTuning={HUD_TUNING}
+      />,
+    );
+
+    expect(screen.queryByText(/Black Hole at/i)).not.toBeInTheDocument();
+    expect(document.querySelector(".match-timer__status")).toBeNull();
   });
 
   it("resets profiling samples when requested", () => {
@@ -259,12 +267,12 @@ describe("CombatHud", () => {
     );
     expect(controller.setProfilingEnabled).toHaveBeenCalledWith(false);
     fireEvent.click(
-      within(performanceSection).getByRole("button", { name: "Reset" }),
+      within(performanceSection).getByRole("button", { name: "Reset Stats" }),
     );
     expect(controller.resetProfiling).toHaveBeenCalledTimes(1);
   });
 
-  it("disables sandbox controls when the viewport controller is unavailable", () => {
+  it("disables local playback controls when the viewport controller is unavailable", () => {
     render(
       <CombatHud
         controller={null}
@@ -272,32 +280,74 @@ describe("CombatHud", () => {
         hudTuning={HUD_TUNING}
       />,
     );
-    const sandboxHeader = screen
-      .getByText("Sandbox Tools")
-      .closest(".sandbox-panel__header") as HTMLElement;
 
-    expect(screen.getByRole("button", { name: "Pause" })).toBeDisabled();
+    const sandboxToolsSection = screen
+      .getByText("Playback and reset controls for the local sandbox")
+      .closest(".sandbox-panel__section") as HTMLElement;
+    const performanceSection = screen
+      .getByText("CPU-side sim and render timings for this viewport")
+      .closest(".sandbox-panel__section") as HTMLElement;
+
     expect(
-      within(sandboxHeader).getByRole("button", { name: "Reset" }),
+      within(sandboxToolsSection).getByRole("button", { name: "Pause" }),
     ).toBeDisabled();
-    expect(screen.getByLabelText("Periodic solution")).toBeDisabled();
-    expect(screen.getByLabelText("Planet size")).toBeDisabled();
+    expect(
+      within(sandboxToolsSection).getByRole("button", { name: "Reset" }),
+    ).toBeDisabled();
+    expect(
+      within(performanceSection).getByRole("button", { name: "Enable" }),
+    ).toBeDisabled();
+    expect(
+      within(performanceSection).getByRole("button", { name: "Reset Stats" }),
+    ).toBeDisabled();
   });
 
-  it("blurs active numeric fields on Enter to commit values cleanly", () => {
-    const blurSpy = vi.spyOn(HTMLInputElement.prototype, "blur");
-    render(
+  it("can show the performance panel on its own", () => {
+    const { container } = render(
+      <CombatHud
+        controller={createControllerMock()}
+        hud={{
+          ...createInitialHudState(),
+          profilingEnabled: true,
+          debugItems: [
+            {
+              label: "Frame CPU",
+              value: "5.10 ms · avg 4.80 · max 7.30",
+            },
+          ],
+        }}
+        hudTuning={HUD_TUNING}
+        showPerformanceTools
+      />,
+    );
+
+    expect(screen.getByText("Performance")).toBeInTheDocument();
+    expect(
+      screen.getByText("5.10 ms · avg 4.80 · max 7.30"),
+    ).toBeInTheDocument();
+    expect(container.querySelector(".combat-hud")).toHaveClass(
+      "combat-hud--has-side-dock",
+    );
+    expect(container.querySelector(".combat-hud")).toHaveClass(
+      "combat-hud--has-bottom-shortcuts",
+    );
+  });
+
+  it("does not reserve side-dock space when the tool panels are hidden", () => {
+    const { container } = render(
       <CombatHud
         controller={createControllerMock()}
         hud={createInitialHudState()}
         hudTuning={HUD_TUNING}
+        showPerformanceTools={false}
       />,
     );
 
-    fireEvent.keyDown(screen.getByLabelText("Planet size"), {
-      key: "Enter",
-    });
-
-    expect(blurSpy).toHaveBeenCalledTimes(1);
+    expect(container.querySelector(".combat-hud")).not.toHaveClass(
+      "combat-hud--has-side-dock",
+    );
+    expect(container.querySelector(".combat-hud")).toHaveClass(
+      "combat-hud--has-bottom-shortcuts",
+    );
   });
 });

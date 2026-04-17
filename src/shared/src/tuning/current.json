@@ -2,110 +2,328 @@
   "version": 1,
   "visuals": {
     "planets": {
-      "bodyScale": 2,
-      "auraScale": 2.2,
-      "auraGap": 0,
       "archetypes": {
         "terra": {
+          "auraGap": 0,
+          "auraScale": 2.2,
+          "bodyScale": 2,
           "color": "#9fc66f",
-          "trailColor": "#d6ef8a",
+          "continentsScale": 1,
+          "forestAltitude": 0,
           "forestColor": "#2c5a2a",
-          "forestDensity": 0.95
+          "forestCoverage": 0.95,
+          "forestPatchSize": 1,
+          "mountainHeight": 1,
+          "mountainsScale": 1,
+          "oceanDeepColor": "#1f4f85",
+          "oceanShallowColor": "#5ca5d8",
+          "seaLevel": 0.5,
+          "trailColor": "#d6ef8a"
         },
         "ignis": {
+          "auraGap": 0,
+          "auraScale": 2.2,
+          "bodyScale": 2,
           "color": "#ff8550",
-          "trailColor": "#ffb07c",
+          "continentsScale": 1,
+          "forestAltitude": 0,
           "forestColor": "#6e3422",
-          "forestDensity": 0
+          "forestCoverage": 0,
+          "forestPatchSize": 1,
+          "mountainHeight": 1,
+          "mountainsScale": 1,
+          "oceanDeepColor": "#5a1f15",
+          "oceanShallowColor": "#a04d26",
+          "seaLevel": 0.5,
+          "trailColor": "#ffb07c"
         },
         "glacius": {
+          "auraGap": 0,
+          "auraScale": 2.2,
+          "bodyScale": 2,
           "color": "#8ed8ff",
-          "trailColor": "#d5f4ff",
+          "continentsScale": 1,
+          "forestAltitude": 0,
           "forestColor": "#6e8797",
-          "forestDensity": 0
+          "forestCoverage": 0,
+          "forestPatchSize": 1,
+          "mountainHeight": 1,
+          "mountainsScale": 1,
+          "oceanDeepColor": "#285a93",
+          "oceanShallowColor": "#74b9f4",
+          "seaLevel": 0.5,
+          "trailColor": "#d5f4ff"
         },
         "volans": {
+          "auraGap": 0,
+          "auraScale": 2.2,
+          "bodyScale": 2,
           "color": "#5fe7da",
-          "trailColor": "#8ff7ee",
+          "continentsScale": 1,
+          "forestAltitude": 0,
           "forestColor": "#1f6b5b",
-          "forestDensity": 0.55
+          "forestCoverage": 0.55,
+          "forestPatchSize": 1,
+          "mountainHeight": 1,
+          "mountainsScale": 1,
+          "oceanDeepColor": "#1b5c6a",
+          "oceanShallowColor": "#40b7be",
+          "seaLevel": 0.5,
+          "trailColor": "#8ff7ee"
         },
         "oculus": {
+          "auraGap": 0,
+          "auraScale": 2.2,
+          "bodyScale": 2,
           "color": "#ffd56b",
-          "trailColor": "#fff1a4",
+          "continentsScale": 1,
+          "forestAltitude": 0,
           "forestColor": "#786a2d",
-          "forestDensity": 0
+          "forestCoverage": 0,
+          "forestPatchSize": 1,
+          "mountainHeight": 1,
+          "mountainsScale": 1,
+          "oceanDeepColor": "#6d451c",
+          "oceanShallowColor": "#b88836",
+          "seaLevel": 0.5,
+          "trailColor": "#fff1a4"
         },
         "umbra": {
+          "auraGap": 0,
+          "auraScale": 2.2,
+          "bodyScale": 2,
           "color": "#8c7dff",
-          "trailColor": "#b3a8ff",
+          "continentsScale": 1,
+          "forestAltitude": 0,
           "forestColor": "#3a2a52",
-          "forestDensity": 0.4
+          "forestCoverage": 0.4,
+          "forestPatchSize": 1,
+          "mountainHeight": 1,
+          "mountainsScale": 1,
+          "oceanDeepColor": "#2b1e61",
+          "oceanShallowColor": "#6b51d6",
+          "seaLevel": 0.5,
+          "trailColor": "#b3a8ff"
         },
         "corvus": {
+          "auraGap": 0,
+          "auraScale": 2.2,
+          "bodyScale": 2,
           "color": "#d7e4ff",
-          "trailColor": "#f3f7ff",
+          "continentsScale": 1,
+          "forestAltitude": 0,
           "forestColor": "#496170",
-          "forestDensity": 0
+          "forestCoverage": 0,
+          "forestPatchSize": 1,
+          "mountainHeight": 1,
+          "mountainsScale": 1,
+          "oceanDeepColor": "#394b63",
+          "oceanShallowColor": "#94a8c0",
+          "seaLevel": 0.5,
+          "trailColor": "#f3f7ff"
         }
+      },
+      "aura": {
+        "alpha": 0.16,
+        "bodyBoundaryMax": 0.975,
+        "bodyBoundaryMin": 0.08,
+        "brightness": 0.56,
+        "contactFeatherScale": 1.95,
+        "fadeStartMax": 0.995,
+        "fadeStartMinOffset": 0.02,
+        "fadeStartRemainingScale": 0.18,
+        "glowInnerTint": {
+          "hue": -0.08,
+          "lightness": 0.28,
+          "saturation": 0.1
+        },
+        "glowOuterTint": {
+          "hue": -0.04,
+          "lightness": 0.2,
+          "saturation": 0.04
+        },
+        "haloEnvelopePower": 1.85,
+        "haloTailBias": 0.28,
+        "haloTailScale": 0.72,
+        "innerEdgeMax": 0.985,
+        "innerFeatherBase": 0.12,
+        "innerFeatherMax": 0.085,
+        "innerFeatherMin": 0.02,
+        "minRemaining": 0.025,
+        "pulseAmplitude": 0.06,
+        "pulseBase": 0.94,
+        "pulseFrequency": 0.18,
+        "pulseSeedPhase": 1.9,
+        "riseStartFeatherScale": 0.9
+      },
+      "material": {
+        "aoMax": 1.03,
+        "aoMin": 0.94,
+        "baseRadius": 0.84,
+        "coastEnd": 0.52,
+        "coastStart": 0.48,
+        "continentsGain": 0.55,
+        "continentsLacunarity": 2,
+        "continentsOctaves": 4,
+        "continentsScale": 1.35,
+        "detailScale": 12.5,
+        "displacementBudget": 0.28,
+        "edgeOutlineStrength": 0.14,
+        "forestBandEnd": 0.18,
+        "forestBandStart": 0.02,
+        "forestClumpEnd": 0.78,
+        "forestClumpScale": 22,
+        "forestClumpStart": 0.42,
+        "forestFadeEnd": 0.3,
+        "forestFadeStart": 0.62,
+        "forestLightTint": {
+          "hue": 0,
+          "lightness": 0.08,
+          "saturation": 0.08
+        },
+        "forestSpeckleScale": 64,
+        "heightLandScale": 0.52,
+        "heightOceanScale": 0.44,
+        "highlandEnd": 0.42,
+        "highlandStart": 0.05,
+        "highlandTint": {
+          "hue": -0.03,
+          "lightness": 0.14,
+          "saturation": -0.2
+        },
+        "landElevationEnd": 1,
+        "landElevationStart": 0.5,
+        "landMaskEnd": 0.56,
+        "landMaskStart": 0.42,
+        "lambertMax": 1,
+        "lambertMin": 0.38,
+        "lightDirection": {
+          "x": -0.35,
+          "y": 0.55,
+          "z": 0.9
+        },
+        "lowlandTint": {
+          "hue": 0.02,
+          "lightness": -0.08,
+          "saturation": 0.06
+        },
+        "mountainHeightContribution": 0.55,
+        "mountainsGain": 0.52,
+        "mountainsLacunarity": 2.15,
+        "mountainsOctaves": 6,
+        "mountainsScale": 6.4,
+        "oceanDeepTint": {
+          "hue": 0.55,
+          "lightness": -0.22,
+          "saturation": 0.25
+        },
+        "oceanDepthEnd": 0.3,
+        "oceanDepthStart": 0.48,
+        "oceanShallowTint": {
+          "hue": 0.5,
+          "lightness": -0.06,
+          "saturation": 0.2
+        },
+        "polarEnd": 0.94,
+        "polarMountainInfluence": 0.08,
+        "polarStart": 0.78,
+        "rimPower": 2.6,
+        "rimStrength": 0.1,
+        "rimTintBlend": 0.42,
+        "rockEnd": 0.72,
+        "rockStart": 0.42,
+        "rockTint": {
+          "hue": 0,
+          "lightness": -0.04,
+          "saturation": -0.5
+        },
+        "seaLevel": 0.5,
+        "snowEnd": 0.96,
+        "snowStart": 0.78,
+        "snowTint": {
+          "hue": 0,
+          "lightness": 0.24,
+          "saturation": -0.7
+        }
+      },
+      "variation": {
+        "forestDensityJitterMax": 1.3,
+        "forestDensityJitterMin": 0.6,
+        "spinTiltMaxY": 0.72,
+        "spinTiltMinY": -0.72
       }
     },
     "suns": {
-      "glowScale": 1.7,
-      "warpScale": 3.2
+      "glowScale": 0.5,
+      "warpScale": 0.5
     },
     "blackHole": {
       "coreRadius": 110,
-      "ringRadius": 205,
-      "lensRadius": 330
+      "lensRadius": 330,
+      "ringRadius": 205
+    },
+    "cannon": {
+      "barrelLength": 26,
+      "barrelWidth": 9,
+      "bandLength": 3.5,
+      "bandWidth": 11.5,
+      "breechDepth": 14,
+      "breechLength": 11,
+      "breechWidth": 16,
+      "flashDurationSec": 0.14,
+      "flashRadius": 16,
+      "muzzleLength": 4,
+      "muzzleRadius": 5.6,
+      "stemLength": 2,
+      "stemWidth": 8
     },
     "rockets": {
       "light": {
-        "core": "#f4f9ff",
-        "trail": "#b7e6ff",
-        "hudAccent": "#f5fbff",
         "bodyScale": {
           "x": 24,
           "y": 4.8
         },
+        "core": "#f4f9ff",
         "flameScale": {
           "x": 22,
           "y": 9
         },
+        "hudAccent": "#f5fbff",
+        "trail": "#b7e6ff",
         "trailScale": {
           "x": 30,
           "y": 6
         }
       },
       "heavy": {
-        "core": "#ff8d4a",
-        "trail": "#ff6130",
-        "hudAccent": "#ff7a3d",
         "bodyScale": {
           "x": 31,
           "y": 7.8
         },
+        "core": "#ff8d4a",
         "flameScale": {
           "x": 28,
           "y": 14
         },
+        "hudAccent": "#ff7a3d",
+        "trail": "#ff6130",
         "trailScale": {
           "x": 36,
           "y": 9
         }
       },
       "seeker": {
-        "core": "#f564ff",
-        "trail": "#ff4dd4",
-        "hudAccent": "#ff61eb",
         "bodyScale": {
           "x": 27,
           "y": 6.2
         },
+        "core": "#f564ff",
         "flameScale": {
           "x": 25,
           "y": 11
         },
+        "hudAccent": "#ff61eb",
+        "trail": "#ff4dd4",
         "trailScale": {
           "x": 33,
           "y": 7.5
@@ -113,73 +331,83 @@
       }
     },
     "abilities": {
+      "boostColor": "#8bc6ff",
+      "foresight": {
+        "dotColor": "#80d7ff",
+        "dotOpacity": 0.82,
+        "farStride": 6,
+        "leadGap": 24,
+        "lineColor": "#81d7ff",
+        "lineOpacity": 0.76,
+        "midStride": 4,
+        "nearStride": 3,
+        "pointSize": 9,
+        "showDots": true,
+        "showLine": false
+      },
       "foresightColor": "#80d7ff",
       "shieldColor": "#86ecff",
-      "boostColor": "#8bc6ff",
       "wildcardColor": "#ffd37a"
     },
-    "drone": {
-      "activeColor": "#91ffd2",
-      "returnColor": "#ffe08d"
-    },
     "caches": {
-      "badgeScale": 1,
-      "badgeBaseSize": 80
+      "badgeBaseSize": 80,
+      "badgeScale": 1
     },
     "hud": {
-      "topInset": 20,
-      "sideInset": 20,
       "bottomInset": 20,
-      "leftColumnWidth": 320,
-      "panelRadius": 18,
-      "pillRadius": 16,
       "cardRadius": 14,
       "compactCardRadius": 10,
-      "killFeedEntryRadius": 12,
-      "panelBlurPx": 14,
-      "panelGap": 12,
+      "connectionWidth": 220,
       "dockGap": 10,
+      "killFeedEntryRadius": 12,
+      "leftColumnWidth": 320,
+      "panelBlurPx": 14,
+      "panelGap": 20,
+      "panelRadius": 10,
+      "pillRadius": 16,
+      "shortcutsSectionGap": 30,
+      "sideInset": 20,
       "timerWidth": 240,
-      "connectionWidth": 220
+      "topInset": 20
     }
   },
   "gameplay": {
     "blackHole": {
-      "spawnSec": 300,
-      "mass": 8000000,
       "killRadius": 150,
-      "rampSec": 30
+      "mass": 8000000,
+      "rampSec": 30,
+      "spawnSec": 300
     },
     "rockets": {
       "light": {
         "damage": 15,
-        "speed": 950,
-        "reloadSec": 1.5,
-        "ttlSec": 8,
+        "maxAmmo": 5,
         "radius": 10,
-        "turnRate": 0,
+        "reloadSec": 1.5,
+        "speed": 950,
         "startAmmo": 5,
-        "maxAmmo": 5
+        "turnRate": 0,
+        "ttlSec": 8
       },
       "heavy": {
         "damage": 70,
-        "speed": 560,
-        "reloadSec": 6,
-        "ttlSec": 8,
+        "maxAmmo": 2,
         "radius": 14,
-        "turnRate": 0,
+        "reloadSec": 6,
+        "speed": 560,
         "startAmmo": 2,
-        "maxAmmo": 2
+        "turnRate": 0,
+        "ttlSec": 8
       },
       "seeker": {
         "damage": 35,
-        "speed": 760,
-        "reloadSec": 4,
-        "ttlSec": 8,
+        "maxAmmo": 3,
         "radius": 12,
-        "turnRate": 2.356194490192345,
+        "reloadSec": 4,
+        "speed": 760,
         "startAmmo": 3,
-        "maxAmmo": 3
+        "turnRate": 2.356194490192345,
+        "ttlSec": 8
       }
     },
     "abilities": {
@@ -194,17 +422,9 @@
       },
       "boost": {
         "charges": 1,
-        "cooldownSec": 5,
+        "cooldownSec": 1,
         "magnitude": 280
       }
-    },
-    "drone": {
-      "speed": 620,
-      "thrust": 220,
-      "fuel": 3,
-      "ttlSec": 20,
-      "cooldownSec": 8,
-      "burstImpulse": 320
     },
     "cache": {
       "count": 3,
@@ -212,9 +432,9 @@
       "wildcardChance": 0.1
     },
     "timers": {
+      "countdownSec": 3,
       "lobbySec": 30,
       "pickSec": 30,
-      "countdownSec": 3,
       "rematchVoteSec": 20
     }
   }

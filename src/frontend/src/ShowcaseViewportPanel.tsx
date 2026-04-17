@@ -9,12 +9,14 @@ type ShowcaseViewportPanelProps = {
   className?: string;
   focus?: ModelShowcaseViewportOptions["focus"];
   rocketKind?: RocketKind;
+  revision?: number;
 };
 
 export function ShowcaseViewportPanel({
   className = "app-shell",
   focus = "all",
   rocketKind,
+  revision = 0,
 }: ShowcaseViewportPanelProps) {
   const viewportElementRef = useRef<HTMLDivElement | null>(null);
 
@@ -25,7 +27,7 @@ export function ShowcaseViewportPanel({
     }
 
     return createModelShowcaseViewport(viewportElement, { focus, rocketKind });
-  }, [focus, rocketKind]);
+  }, [focus, revision, rocketKind]);
 
   return (
     <div className={className}>

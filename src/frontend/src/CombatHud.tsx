@@ -1,156 +1,17 @@
-import type { CSSProperties, KeyboardEvent } from "react";
+import type { CSSProperties } from "react";
 import {
   clamp,
   type HudVisualTuning,
   PLANET_HP,
   ROCKET_SPECS,
-  type AbilitySpec,
-  type BlackHoleSpec,
-  type BoostSpec,
   type RocketKind,
 } from "@3body/shared";
-import {
-  DEFAULT_ORBIT_PRESET,
-  SPECIAL_PERIODIC_ORBIT_PRESETS,
-} from "./game/orbitPresets";
 import type {
   GameViewportController,
   GameViewportHudState,
 } from "./game/viewportHud";
 
 const KILL_FEED_DURATION_SEC = 4;
-const BLACK_HOLE_FIELDS = [
-  {
-    key: "spawnSec",
-    label: "Spawn time",
-    min: 0,
-    step: 1,
-  },
-  {
-    key: "mass",
-    label: "Mass",
-    min: 0,
-    step: 100_000,
-  },
-  {
-    key: "killRadius",
-    label: "Kill radius",
-    min: 1,
-    step: 5,
-  },
-  {
-    key: "rampSec",
-    label: "Ramp",
-    min: 1,
-    step: 1,
-  },
-] as const satisfies readonly {
-  key: keyof BlackHoleSpec;
-  label: string;
-  min: number;
-  step: number;
-}[];
-const FORESIGHT_FIELDS = [
-  {
-    key: "durationSec",
-    label: "Foresight duration",
-    max: 20,
-    min: 0.5,
-    step: 0.5,
-  },
-  {
-    key: "cooldownSec",
-    label: "Foresight cooldown",
-    max: 60,
-    min: 0,
-    step: 0.5,
-  },
-] as const satisfies readonly {
-  key: keyof AbilitySpec;
-  label: string;
-  max: number;
-  min: number;
-  step: number;
-}[];
-const SHIELD_FIELDS = [
-  {
-    key: "durationSec",
-    label: "Shield duration",
-    max: 20,
-    min: 0.5,
-    step: 0.5,
-  },
-  {
-    key: "cooldownSec",
-    label: "Shield cooldown",
-    max: 60,
-    min: 0,
-    step: 0.5,
-  },
-] as const satisfies readonly {
-  key: keyof AbilitySpec;
-  label: string;
-  max: number;
-  min: number;
-  step: number;
-}[];
-const BOOST_FIELDS = [
-  {
-    key: "cooldownSec",
-    label: "Boost regen",
-    max: 60,
-    min: 0.5,
-    step: 0.5,
-  },
-  {
-    key: "magnitude",
-    label: "Boost impulse",
-    max: 1200,
-    min: 0,
-    step: 10,
-  },
-] as const satisfies readonly {
-  key: keyof BoostSpec;
-  label: string;
-  max: number;
-  min: number;
-  step: number;
-}[];
-const PLANET_BODY_SCALE_FIELD = {
-  label: "Planet size",
-  max: 10,
-  min: 0.75,
-  step: 0.05,
-} as const;
-const PLANET_AURA_GAP_FIELD = {
-  label: "Aura gap",
-  max: 10,
-  min: 0,
-  step: 0.05,
-} as const;
-const PLANET_AURA_SCALE_FIELD = {
-  label: "Aura size",
-  max: 10,
-  min: 1,
-  step: 0.05,
-} as const;
-const CACHE_BADGE_SCALE_FIELD = {
-  label: "Cache size",
-  max: 2.25,
-  min: 0.5,
-  step: 0.05,
-} as const;
-
-const PRESET_GROUPS = [
-  {
-    label: "Sandbox",
-    options: [DEFAULT_ORBIT_PRESET],
-  },
-  {
-    label: "Wikipedia special periodic solutions",
-    options: SPECIAL_PERIODIC_ORBIT_PRESETS,
-  },
-] as const;
 
 const formatClock = (valueSec: number): string => {
   const totalSeconds = Math.max(0, Math.floor(valueSec));
@@ -168,20 +29,29 @@ const formatFps = (fps: number): string =>
 const formatFrameTime = (frameTimeMs: number): string =>
   frameTimeMs > 0 ? `${frameTimeMs.toFixed(1)} ms` : "-- ms";
 
+const COMPASS_POINTS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"] as const;
+
+const formatSpeed = (speed: number): string =>
+  `${Math.max(0, Math.round(speed))} M/S`;
+
+const formatCompass = (headingDeg: number | null): string => {
+  if (headingDeg === null) {
+    return "--";
+  }
+
+  const roundedHeadingDeg = Math.round(headingDeg) % 360;
+  const point =
+    COMPASS_POINTS[
+      Math.round(headingDeg / 45) % COMPASS_POINTS.length
+    ] ?? COMPASS_POINTS[0];
+
+  return `${point} · ${roundedHeadingDeg}°`;
+};
+
 const getAbilityMeterFill = ({
-  mode,
   progress,
 }: GameViewportHudState["abilities"][number]): number => {
-  const safeProgress = clamp(progress, 0, 1);
-
-  switch (mode) {
-    case "ready":
-      return 1;
-    case "cooldown":
-      return 1 - safeProgress;
-    default:
-      return safeProgress;
-  }
+  return clamp(progress, 0, 1);
 };
 
 const getWeaponMeterFill = (
@@ -206,35 +76,105 @@ const getWeaponCardState = (
   return weapon.ammo >= weapon.maxAmmo ? "ready" : "active";
 };
 
+const getWeaponAmmoLabel = (
+  weapon: GameViewportHudState["weapons"][number],
+): string => (weapon.kind === "light" ? "∞" : `${weapon.ammo}`);
+
 const WEAPON_KEY_LABELS: Record<RocketKind, string> = {
   light: "1",
   heavy: "2",
   seeker: "3",
 };
 
+function CockpitSummaryCard({
+  label,
+  pulse = 0,
+  trackFill,
+  value,
+}: {
+  label: string;
+  pulse?: number;
+  trackFill?: number;
+  value: string;
+}) {
+  return (
+    <article
+      className="cockpit-summary"
+      style={
+        {
+          "--cockpit-hit": `${pulse}`,
+        } as CSSProperties
+      }
+    >
+      <div className="cockpit-summary__row">
+        <span className="cockpit-summary__label">{label}</span>
+        <strong className="cockpit-summary__value">{value}</strong>
+      </div>
+      {trackFill !== undefined ? (
+        <div className="cockpit-summary__track">
+          <div
+            className="cockpit-summary__fill"
+            style={{
+              width: `${trackFill * 100}%`,
+            }}
+          />
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function CockpitMovementHud({
+  headingDeg,
+  speed,
+}: {
+  headingDeg: number | null;
+  speed: number;
+}) {
+  const headingLabel = formatCompass(headingDeg);
+  const compassStyle = {
+    "--compass-heading": `${headingDeg ?? 0}deg`,
+  } as CSSProperties;
+
+  return (
+    <section
+      className="movement-hud"
+      data-heading-state={headingDeg === null ? "idle" : "active"}
+    >
+      <div
+        className={`hud-compass${headingDeg === null ? " hud-compass--idle" : ""}`}
+        role="img"
+        style={compassStyle}
+        aria-label={
+          headingDeg === null
+            ? "Compass unavailable"
+            : `Compass heading ${headingLabel}`
+        }
+      >
+        <span className="hud-compass__marker hud-compass__marker--north">N</span>
+        <span className="hud-compass__marker hud-compass__marker--east">E</span>
+        <span className="hud-compass__marker hud-compass__marker--south">S</span>
+        <span className="hud-compass__marker hud-compass__marker--west">W</span>
+        <div className="hud-compass__ring" aria-hidden="true" />
+        <div className="hud-compass__needle" aria-hidden="true" />
+        <div className="hud-compass__hub" aria-hidden="true" />
+      </div>
+      <strong className="movement-hud__speed">{formatSpeed(speed)}</strong>
+    </section>
+  );
+}
+
 export function CombatHud({
   controller,
   hud,
   hudTuning,
-  showSandboxTools = true,
+  showPerformanceTools = true,
 }: {
   controller: GameViewportController | null;
   hud: GameViewportHudState;
   hudTuning: HudVisualTuning;
-  showSandboxTools?: boolean;
+  showPerformanceTools?: boolean;
 }) {
-  const handleSandboxFieldKeyDown = (event: KeyboardEvent<HTMLElement>) => {
-    if (event.key !== "Enter" || event.nativeEvent.isComposing) {
-      return;
-    }
-
-    const target = event.target;
-    if (!(target instanceof HTMLInputElement)) {
-      return;
-    }
-
-    target.blur();
-  };
   const playerHpRatio = clamp(hud.playerHp / PLANET_HP, 0, 1);
   const hudStyle = {
     "--damage-flash-opacity": `${hud.damageFlash}`,
@@ -250,27 +190,48 @@ export function CombatHud({
     "--hud-panel-gap": `${hudTuning.panelGap}px`,
     "--hud-panel-radius": `${hudTuning.panelRadius}px`,
     "--hud-pill-radius": `${hudTuning.pillRadius}px`,
+    "--hud-shortcuts-section-gap": `${hudTuning.shortcutsSectionGap}px`,
     "--hud-side-inset": `${hudTuning.sideInset}px`,
     "--hud-timer-width": `${hudTuning.timerWidth}px`,
     "--hud-top-inset": `${hudTuning.topInset}px`,
   } as CSSProperties;
+  const hasSideDock = showPerformanceTools;
+  const hasBottomShortcuts = hud.sandboxControlsEnabled;
+  const showSandboxPlaybackControls = hud.connection.state === "local";
+  const connectionDetail = [
+    hud.connection.label.trim(),
+    hud.connection.extrapolating ? "Extrapolating" : null,
+  ]
+    .filter((value): value is string => value !== null && value.length > 0)
+    .join(" · ");
+  const showConnectionDetail =
+    connectionDetail.length > 0 &&
+    connectionDetail.toLowerCase() !== hud.connection.state.toLowerCase();
   const timerStatus = hud.blackHoleActive
     ? "Overtime active"
     : hud.blackHoleWarning
       ? `Black Hole in ${formatClock(hud.blackHoleRemainingSec)}`
-      : `Black Hole at ${formatClock(hud.blackHoleSettings.spawnSec)}`;
+      : null;
 
   return (
-    <div className="combat-hud" style={hudStyle}>
+    <div
+      className={`combat-hud${hasSideDock ? " combat-hud--has-side-dock" : ""}${
+        hasBottomShortcuts ? " combat-hud--has-bottom-shortcuts" : ""
+      }`}
+      style={hudStyle}
+    >
       <div className="combat-hud__damage-flash" aria-hidden="true" />
-      <div className="combat-hud__left-column">
-        <section className="kill-feed-panel hud-panel">
-          <div className="kill-feed-panel__header">
-            <div className="hud-panel__eyebrow">Kill Feed</div>
-            <div className="kill-feed-panel__count">
-              {hud.alivePlayerCount}/{hud.totalPlayerCount}
-            </div>
-          </div>
+      {hud.sandboxControlsEnabled ? (
+        <div className="combat-hud__top-left">
+          <CockpitMovementHud
+            headingDeg={hud.playerHeadingDeg}
+            speed={hud.playerSpeed}
+          />
+        </div>
+      ) : null}
+
+      {hud.killFeed.length > 0 ? (
+        <div className="combat-hud__kill-feed">
           <div className="kill-feed">
             {hud.killFeed.map((entry) => {
               const opacity = Math.max(
@@ -295,362 +256,98 @@ export function CombatHud({
               );
             })}
           </div>
-        </section>
-      </div>
+        </div>
+      ) : null}
 
-      {showSandboxTools ? (
-        <form
-          className="sandbox-panel sandbox-panel--dock hud-panel hud-panel--interactive hud-panel--subtle"
-          onKeyDown={handleSandboxFieldKeyDown}
-          onSubmit={(event) => event.preventDefault()}
-        >
-          <div className="sandbox-panel__header">
-            <div className="hud-panel__eyebrow">Sandbox Tools</div>
-            <div className="sandbox-panel__header-actions">
-              <button
-                type="button"
-                className="hud-button hud-button--compact"
-                disabled={controller === null}
-                onClick={() =>
-                  hud.sandboxPaused
-                    ? controller?.playSandbox()
-                    : controller?.pauseSandbox()
-                }
-              >
-                {hud.sandboxPaused ? "Play" : "Pause"}
-              </button>
-              <button
-                type="button"
-                className="hud-button hud-button--compact"
-                disabled={controller === null}
-                onClick={() => controller?.resetSandbox()}
-              >
-                Reset
-              </button>
-            </div>
-          </div>
-
-          <div className="sandbox-panel__section">
-            <div className="sandbox-panel__section-header">
-              <div className="sandbox-panel__section-copy">
-                <div className="hud-panel__eyebrow">Scenario</div>
-                <div className="sandbox-panel__section-note">
-                  Preset orbit configuration
+      {showPerformanceTools ? (
+        <div className="sandbox-dock-stack">
+          <section className="sandbox-panel sandbox-panel--dock hud-panel hud-panel--interactive hud-panel--subtle">
+            <div className="sandbox-panel__section">
+              <div className="sandbox-panel__section-header">
+                <div className="sandbox-panel__section-copy">
+                  <div className="hud-panel__eyebrow">Performance</div>
+                  <div className="sandbox-panel__section-note">
+                    CPU-side sim and render timings for this viewport
+                  </div>
+                </div>
+                <div className="sandbox-panel__header-actions">
+                  <button
+                    type="button"
+                    className="hud-button hud-button--compact"
+                    disabled={controller === null}
+                    onClick={() =>
+                      controller?.setProfilingEnabled(!hud.profilingEnabled)
+                    }
+                  >
+                    {hud.profilingEnabled ? "Disable" : "Enable"}
+                  </button>
+                  <button
+                    type="button"
+                    className="hud-button hud-button--compact"
+                    disabled={controller === null || !hud.profilingEnabled}
+                    onClick={() => controller?.resetProfiling()}
+                  >
+                    Reset Stats
+                  </button>
                 </div>
               </div>
-            </div>
-            <label className="hud-field">
-              <span className="hud-field__label">Periodic solution</span>
-              <select
-                className="hud-field__select"
-                value={hud.currentPresetId}
-                disabled={controller === null}
-                onChange={(event) =>
-                  controller?.setOrbitPreset(event.currentTarget.value)
-                }
-              >
-                {PRESET_GROUPS.map((group) => (
-                  <optgroup key={group.label} label={group.label}>
-                    {group.options.map((preset) => (
-                      <option key={preset.id} value={preset.id}>
-                        {preset.label}
-                      </option>
+              {hud.profilingEnabled && hud.debugItems.length > 0 ? (
+                <div className="sandbox-panel__stats">
+                  <div className="sandbox-panel__stats-grid">
+                    {hud.debugItems.map((item) => (
+                      <div key={item.label} className="sandbox-stat">
+                        <span className="sandbox-stat__label">{item.label}</span>
+                        <strong className="sandbox-stat__value">
+                          {item.value}
+                        </strong>
+                      </div>
                     ))}
-                  </optgroup>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          <div className="sandbox-panel__section">
-            <div className="sandbox-panel__section-header">
-              <div className="sandbox-panel__section-copy">
-                <div className="hud-panel__eyebrow">Visuals</div>
-                <div className="sandbox-panel__section-note">
-                  Planet and cache presentation
+                  </div>
                 </div>
-              </div>
-              <button
-                type="button"
-                className="hud-button hud-button--compact"
-                disabled={controller === null}
-                onClick={() => controller?.resetPlanetVisualSettings()}
-              >
-                Reset
-              </button>
-            </div>
-            <div className="sandbox-panel__settings">
-              <label className="hud-field">
-                <span className="hud-field__label">
-                  {PLANET_BODY_SCALE_FIELD.label}
-                </span>
-                <input
-                  type="number"
-                  className="hud-field__input"
-                  min={PLANET_BODY_SCALE_FIELD.min}
-                  max={PLANET_BODY_SCALE_FIELD.max}
-                  step={PLANET_BODY_SCALE_FIELD.step}
-                  value={hud.planetBodyScale}
-                  disabled={controller === null}
-                  onChange={(event) => {
-                    const nextValue = event.currentTarget.valueAsNumber;
-                    if (!Number.isFinite(nextValue)) {
-                      return;
-                    }
-
-                    controller?.setPlanetBodyScale(nextValue);
-                  }}
-                />
-              </label>
-              <label className="hud-field">
-                <span className="hud-field__label">
-                  {PLANET_AURA_SCALE_FIELD.label}
-                </span>
-                <input
-                  type="number"
-                  className="hud-field__input"
-                  min={PLANET_AURA_SCALE_FIELD.min}
-                  max={PLANET_AURA_SCALE_FIELD.max}
-                  step={PLANET_AURA_SCALE_FIELD.step}
-                  value={hud.planetAuraScale}
-                  disabled={controller === null}
-                  onChange={(event) => {
-                    const nextValue = event.currentTarget.valueAsNumber;
-                    if (!Number.isFinite(nextValue)) {
-                      return;
-                    }
-
-                    controller?.setPlanetAuraScale(nextValue);
-                  }}
-                />
-              </label>
-              <label className="hud-field">
-                <span className="hud-field__label">
-                  {PLANET_AURA_GAP_FIELD.label}
-                </span>
-                <input
-                  type="number"
-                  className="hud-field__input"
-                  min={PLANET_AURA_GAP_FIELD.min}
-                  max={PLANET_AURA_GAP_FIELD.max}
-                  step={PLANET_AURA_GAP_FIELD.step}
-                  value={hud.planetAuraGap}
-                  disabled={controller === null}
-                  onChange={(event) => {
-                    const nextValue = event.currentTarget.valueAsNumber;
-                    if (!Number.isFinite(nextValue)) {
-                      return;
-                    }
-
-                    controller?.setPlanetAuraGap(nextValue);
-                  }}
-                />
-              </label>
-              <label className="hud-field">
-                <span className="hud-field__label">
-                  {CACHE_BADGE_SCALE_FIELD.label}
-                </span>
-                <input
-                  type="number"
-                  className="hud-field__input"
-                  min={CACHE_BADGE_SCALE_FIELD.min}
-                  max={CACHE_BADGE_SCALE_FIELD.max}
-                  step={CACHE_BADGE_SCALE_FIELD.step}
-                  value={hud.cacheBadgeScale}
-                  disabled={controller === null}
-                  onChange={(event) => {
-                    const nextValue = event.currentTarget.valueAsNumber;
-                    if (!Number.isFinite(nextValue)) {
-                      return;
-                    }
-
-                    controller?.setCacheBadgeScale(nextValue);
-                  }}
-                />
-              </label>
-            </div>
-          </div>
-
-          <div className="sandbox-panel__section">
-            <div className="sandbox-panel__section-header">
-              <div className="sandbox-panel__section-copy">
-                <div className="hud-panel__eyebrow">Black Hole</div>
-                <div className="sandbox-panel__section-note">
-                  Spawn timing and collapse strength
+              ) : (
+                <div className="sandbox-panel__hint">
+                  {hud.profilingEnabled
+                    ? "Collecting samples..."
+                    : "Enable the profiler to inspect CPU-side frame costs and entity counts."}
                 </div>
-              </div>
-              <button
-                type="button"
-                className="hud-button hud-button--compact"
-                disabled={controller === null}
-                onClick={() => controller?.resetBlackHoleSettings()}
-              >
-                Reset
-              </button>
+              )}
             </div>
-            <div className="sandbox-panel__settings">
-              {BLACK_HOLE_FIELDS.map((field) => (
-                <label key={field.key} className="hud-field">
-                  <span className="hud-field__label">{field.label}</span>
-                  <input
-                    type="number"
-                    className="hud-field__input"
-                    min={field.min}
-                    step={field.step}
-                    value={hud.blackHoleSettings[field.key]}
-                    disabled={controller === null}
-                    onChange={(event) => {
-                      const nextValue = event.currentTarget.valueAsNumber;
-                      if (!Number.isFinite(nextValue)) {
-                        return;
-                      }
-
-                      controller?.setBlackHoleSetting(field.key, nextValue);
-                    }}
-                  />
-                </label>
-              ))}
-            </div>
-          </div>
-
-          <div className="sandbox-panel__section">
-            <div className="sandbox-panel__section-header">
-              <div className="sandbox-panel__section-copy">
-                <div className="hud-panel__eyebrow">Abilities</div>
-                <div className="sandbox-panel__section-note">
-                  Foresight, shield, and boost tuning
-                </div>
-              </div>
-              <button
-                type="button"
-                className="hud-button hud-button--compact"
-                disabled={controller === null}
-                onClick={() => controller?.resetAbilitySettings()}
-              >
-                Reset
-              </button>
-            </div>
-            <div className="sandbox-panel__settings">
-              {FORESIGHT_FIELDS.map((field) => (
-                <label key={field.key} className="hud-field">
-                  <span className="hud-field__label">{field.label}</span>
-                  <input
-                    type="number"
-                    className="hud-field__input"
-                    min={field.min}
-                    max={field.max}
-                    step={field.step}
-                    value={hud.foresightSettings[field.key]}
-                    disabled={controller === null}
-                    onChange={(event) => {
-                      const nextValue = event.currentTarget.valueAsNumber;
-                      if (!Number.isFinite(nextValue)) {
-                        return;
-                      }
-
-                      controller?.setForesightSetting(field.key, nextValue);
-                    }}
-                  />
-                </label>
-              ))}
-              {SHIELD_FIELDS.map((field) => (
-                <label key={`shield-${field.key}`} className="hud-field">
-                  <span className="hud-field__label">{field.label}</span>
-                  <input
-                    type="number"
-                    className="hud-field__input"
-                    min={field.min}
-                    max={field.max}
-                    step={field.step}
-                    value={hud.shieldSettings[field.key]}
-                    disabled={controller === null}
-                    onChange={(event) => {
-                      const nextValue = event.currentTarget.valueAsNumber;
-                      if (!Number.isFinite(nextValue)) {
-                        return;
-                      }
-
-                      controller?.setShieldSetting(field.key, nextValue);
-                    }}
-                  />
-                </label>
-              ))}
-              {BOOST_FIELDS.map((field) => (
-                <label key={field.key} className="hud-field">
-                  <span className="hud-field__label">{field.label}</span>
-                  <input
-                    type="number"
-                    className="hud-field__input"
-                    min={field.min}
-                    max={field.max}
-                    step={field.step}
-                    value={hud.boostSettings[field.key]}
-                    disabled={controller === null}
-                    onChange={(event) => {
-                      const nextValue = event.currentTarget.valueAsNumber;
-                      if (!Number.isFinite(nextValue)) {
-                        return;
-                      }
-
-                      controller?.setBoostSetting(field.key, nextValue);
-                    }}
-                  />
-                </label>
-              ))}
-            </div>
-          </div>
-
-          <div className="sandbox-panel__section">
-            <div className="sandbox-panel__section-header">
-              <div className="sandbox-panel__section-copy">
-                <div className="hud-panel__eyebrow">Performance</div>
-                <div className="sandbox-panel__section-note">
-                  CPU-side sim and render timings for this viewport
-                </div>
-              </div>
-              <div className="sandbox-panel__header-actions">
-                <button
-                  type="button"
-                  className="hud-button hud-button--compact"
-                  disabled={controller === null}
-                  onClick={() =>
-                    controller?.setProfilingEnabled(!hud.profilingEnabled)
-                  }
-                >
-                  {hud.profilingEnabled ? "Disable" : "Enable"}
-                </button>
-                <button
-                  type="button"
-                  className="hud-button hud-button--compact"
-                  disabled={controller === null || !hud.profilingEnabled}
-                  onClick={() => controller?.resetProfiling()}
-                >
-                  Reset
-                </button>
-              </div>
-            </div>
-            {hud.profilingEnabled && hud.debugItems.length > 0 ? (
-              <div className="sandbox-panel__stats">
-                <div className="sandbox-panel__stats-grid">
-                  {hud.debugItems.map((item) => (
-                    <div key={item.label} className="sandbox-stat">
-                      <span className="sandbox-stat__label">{item.label}</span>
-                      <strong className="sandbox-stat__value">
-                        {item.value}
-                      </strong>
+            {showSandboxPlaybackControls ? (
+              <div className="sandbox-panel__section">
+                <div className="sandbox-panel__section-header">
+                  <div className="sandbox-panel__section-copy">
+                    <div className="hud-panel__eyebrow">Sandbox Tools</div>
+                    <div className="sandbox-panel__section-note">
+                      Playback and reset controls for the local sandbox
                     </div>
-                  ))}
+                  </div>
+                </div>
+                <div className="sandbox-panel__actions">
+                  <button
+                    type="button"
+                    className="hud-button"
+                    disabled={controller === null}
+                    onClick={() =>
+                      hud.sandboxPaused
+                        ? controller?.playSandbox()
+                        : controller?.pauseSandbox()
+                    }
+                  >
+                    {hud.sandboxPaused ? "Play" : "Pause"}
+                  </button>
+                  <button
+                    type="button"
+                    className="hud-button"
+                    disabled={controller === null}
+                    onClick={() => controller?.resetSandbox()}
+                  >
+                    Reset
+                  </button>
                 </div>
               </div>
-            ) : (
-              <div className="sandbox-panel__hint">
-                {hud.profilingEnabled
-                  ? "Collecting samples..."
-                  : "Enable the profiler to inspect CPU-side frame costs and entity counts."}
-              </div>
-            )}
-          </div>
-        </form>
+            ) : null}
+          </section>
+        </div>
       ) : null}
 
       <section className="match-timer hud-pill">
@@ -658,21 +355,22 @@ export function CombatHud({
         <div className="match-timer__value">
           {formatClock(hud.timerElapsedSec)}
         </div>
-        <div
-          className={`match-timer__status${
-            hud.blackHoleActive
-              ? " match-timer__status--active"
-              : hud.blackHoleWarning
-                ? " match-timer__status--warning"
-                : ""
-          }`}
-        >
-          {timerStatus}
-        </div>
+        {timerStatus !== null ? (
+          <div
+            className={`match-timer__status${
+              hud.blackHoleActive
+                ? " match-timer__status--active"
+                : hud.blackHoleWarning
+                  ? " match-timer__status--warning"
+                  : ""
+            }`}
+          >
+            {timerStatus}
+          </div>
+        ) : null}
       </section>
 
       <section className="connection-indicator hud-pill">
-        <div className="hud-pill__label">Ping</div>
         <div className="connection-indicator__row">
           <span
             className={`connection-indicator__state connection-indicator__state--${hud.connection.state}`}
@@ -691,45 +389,25 @@ export function CombatHud({
             </span>
           </div>
         </div>
-        <div className="connection-indicator__label">
-          {hud.connection.label}
-          {hud.connection.extrapolating ? " · Extrapolating" : ""}
-        </div>
+        {showConnectionDetail ? (
+          <div className="connection-indicator__label">{connectionDetail}</div>
+        ) : null}
       </section>
 
       {hud.sandboxControlsEnabled ? (
         <section className="shortcuts-dock">
           <div className="shortcuts-dock__section">
-            <div className="hud-panel__eyebrow">Health</div>
-            <div
-              className="cockpit-summary"
-              style={
-                {
-                  "--cockpit-hit": `${hud.playerHpPulse}`,
-                } as CSSProperties
-              }
-            >
-              <div className="cockpit-summary__row">
-                <span className="cockpit-summary__label">
-                  {hud.controlMode === "drone" ? "Planet HP" : "Health"}
-                </span>
-                <strong className="cockpit-summary__value">
-                  {Math.max(0, Math.round(hud.playerHp))}/{PLANET_HP}
-                </strong>
-              </div>
-              <div className="cockpit-summary__track">
-                <div
-                  className="cockpit-summary__fill"
-                  style={{
-                    width: `${playerHpRatio * 100}%`,
-                  }}
-                />
-              </div>
+            <div className="cockpit-summary-grid">
+              <CockpitSummaryCard
+                label="Health"
+                pulse={hud.playerHpPulse}
+                trackFill={playerHpRatio}
+                value={`${Math.max(0, Math.round(hud.playerHp))}/${PLANET_HP}`}
+              />
             </div>
           </div>
           {hud.abilities.length > 0 ? (
             <div className="shortcuts-dock__section">
-              <div className="hud-panel__eyebrow">Abilities</div>
               <div className="cockpit-abilities">
                 {hud.abilities.map((ability) => {
                   const meterFill = getAbilityMeterFill(ability);
@@ -764,7 +442,6 @@ export function CombatHud({
           ) : null}
           {hud.weapons.length > 0 ? (
             <div className="shortcuts-dock__section">
-              <div className="hud-panel__eyebrow">Weapons</div>
               <div className="cockpit-weapons">
                 {hud.weapons.map((weapon) => {
                   const meterFill = getWeaponMeterFill(weapon);
@@ -789,6 +466,9 @@ export function CombatHud({
                         </span>
                         <span className="ability-card__title">
                           {weapon.label}
+                        </span>
+                        <span className="ability-card__value">
+                          {getWeaponAmmoLabel(weapon)}
                         </span>
                       </div>
                       <div className="ability-card__meter" aria-hidden="true">

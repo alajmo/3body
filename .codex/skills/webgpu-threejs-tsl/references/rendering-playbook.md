@@ -24,7 +24,7 @@
 
 - Start with node-material effects inside the scene before reaching for full-screen passes.
 - For glow, gradients, atmospheric edges, and distortion hints, prefer cheap material tricks first.
-- Introduce post-processing only when there is a clear visual need and the `0.169.x` API surface supports it cleanly.
+- Introduce post-processing only when there is a clear visual need and the current r184-line API surface supports it cleanly.
 
 ## Code shape
 

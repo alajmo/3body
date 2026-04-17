@@ -217,25 +217,6 @@ export interface FireRocketMsg {
   clientTick: number;
 }
 
-export interface LaunchDroneMsg {
-  type: "launchDrone";
-  aimDir: Vec2;
-}
-
-export interface DroneInputMsg {
-  type: "droneInput";
-  aimDir: Vec2;
-  burst: boolean;
-}
-
-export interface DroneAutoReturnMsg {
-  type: "droneAutoReturn";
-}
-
-export interface DroneRecallMsg {
-  type: "droneRecall";
-}
-
 export interface AbilityMsg {
   type: "ability";
   slot: AbilitySlot;
@@ -267,10 +248,6 @@ export type ClientMsg =
   | AckSnapshotMsg
   | PingMsg
   | FireRocketMsg
-  | LaunchDroneMsg
-  | DroneInputMsg
-  | DroneAutoReturnMsg
-  | DroneRecallMsg
   | AbilityMsg
   | ShieldAimMsg
   | ChatMsg

@@ -3,20 +3,24 @@ import {
   BOOST_SPEC,
   CURRENT_GAME_TUNING,
   FORESIGHT_SPEC,
+  len,
   type AbilitySpec,
   type BlackHoleSpec,
   type BoostSpec,
   type RocketKind,
   SHIELD_SPEC,
+  type Vec2,
 } from "@3body/shared";
 import { DEFAULT_ORBIT_PRESET } from "./orbitPresets";
-
+import { getRuntimeTuningDocument } from "./runtimeTuning";
+const DEFAULT_PLANET_VISUALS =
+  CURRENT_GAME_TUNING.visuals.planets.archetypes.terra;
 export const DEFAULT_PLANET_BODY_SCALE =
-  CURRENT_GAME_TUNING.visuals.planets.bodyScale;
+  DEFAULT_PLANET_VISUALS.bodyScale;
 export const DEFAULT_PLANET_AURA_SCALE =
-  CURRENT_GAME_TUNING.visuals.planets.auraScale;
+  DEFAULT_PLANET_VISUALS.auraScale;
 export const DEFAULT_PLANET_AURA_GAP =
-  CURRENT_GAME_TUNING.visuals.planets.auraGap;
+  DEFAULT_PLANET_VISUALS.auraGap;
 export const DEFAULT_CACHE_BADGE_SCALE =
   CURRENT_GAME_TUNING.visuals.caches.badgeScale;
 export const DEFAULT_FORESIGHT_SETTINGS: AbilitySpec = { ...FORESIGHT_SPEC };
@@ -30,7 +34,7 @@ export type HudStatusMode = "ready" | "active" | "cooldown";
 
 export interface GameViewportHudAbility {
   accent: string;
-  id: "foresight" | "shield" | "boost" | "drone" | "wildcard";
+  id: "foresight" | "shield" | "boost" | "wildcard";
   keyLabel: string;
   label: string;
   mode: HudStatusMode;
@@ -96,6 +100,7 @@ export interface GameViewportHudState {
   blackHoleRemainingSec: number;
   blackHoleSettings: BlackHoleSpec;
   blackHoleWarning: boolean;
+  botsEnabled: boolean;
   boostSettings: BoostSpec;
   cacheBadgeScale: number;
   connection: GameViewportConnectionState;
@@ -104,7 +109,6 @@ export interface GameViewportHudState {
   currentPresetId: string;
   damageFlash: number;
   debugItems: GameViewportDebugItem[];
-  droneCargoLabel: string | null;
   foresightSettings: AbilitySpec;
   hudOpacity: number;
   killFeed: GameViewportKillFeedEntry[];
@@ -114,9 +118,11 @@ export interface GameViewportHudState {
   planetAuraScale: number;
   profilingEnabled: boolean;
   playerArchetype: string;
+  playerHeadingDeg: number | null;
   playerHp: number;
   playerHpPulse: number;
   playerLabel: string;
+  playerSpeed: number;
   primaryShortcuts: GameViewportShortcut[];
   sandboxPaused: boolean;
   sandboxControlsEnabled: boolean;
@@ -132,6 +138,7 @@ export interface GameViewportController {
   resetAbilitySettings: () => void;
   resetBlackHoleSettings: () => void;
   resetPlanetVisualSettings: () => void;
+  setBotsEnabled: (value: boolean) => void;
   setBoostSetting: <K extends keyof BoostSpec>(
     key: K,
     value: BoostSpec[K],
@@ -160,55 +167,91 @@ export interface GameViewportController {
 }
 
 export interface CreateGameViewportOptions {
+  defaultBotsEnabled?: boolean;
   enableSandboxStorage?: boolean;
   onControllerReady?: (controller: GameViewportController | null) => void;
   onHudStateChange?: (state: GameViewportHudState) => void;
 }
 
-export const createInitialHudState = (): GameViewportHudState => ({
-  alivePlayerCount: 0,
-  abilities: [],
-  blackHoleActive: false,
-  blackHoleRemainingSec: 0,
-  blackHoleSettings: { ...BLACK_HOLE_SPEC },
-  blackHoleWarning: false,
-  boostSettings: { ...DEFAULT_BOOST_SETTINGS },
-  cacheBadgeScale: DEFAULT_CACHE_BADGE_SCALE,
-  connection: {
-    extrapolating: false,
-    fps: 0,
-    frameTimeMs: 0,
-    label: "Local sandbox",
-    rttMs: 0,
-    state: "local",
-  },
-  contextualShortcuts: [],
-  controlMode: "planet",
-  currentPresetId: DEFAULT_ORBIT_PRESET.id,
-  damageFlash: 0,
-  debugItems: [],
-  droneCargoLabel: null,
-  foresightSettings: { ...DEFAULT_FORESIGHT_SETTINGS },
-  hudOpacity: 1,
-  killFeed: [],
-  planetBars: [],
-  planetBodyScale: DEFAULT_PLANET_BODY_SCALE,
-  planetAuraGap: DEFAULT_PLANET_AURA_GAP,
-  planetAuraScale: DEFAULT_PLANET_AURA_SCALE,
-  profilingEnabled: false,
-  playerArchetype: "--",
-  playerHp: 0,
-  playerHpPulse: 0,
-  playerLabel: "Player",
-  primaryShortcuts: [],
-  sandboxPaused: false,
-  sandboxControlsEnabled: true,
-  selectedWeapon: "light",
-  shieldSettings: { ...DEFAULT_SHIELD_SETTINGS },
-  timerElapsedSec: 0,
-  totalPlayerCount: 0,
-  weapons: [],
-});
+const PLAYER_HEADING_SPEED_EPSILON = 1;
+
+export const getPlayerMotionHud = (
+  velocity: Vec2 | null | undefined,
+): Pick<GameViewportHudState, "playerHeadingDeg" | "playerSpeed"> => {
+  if (velocity === null || velocity === undefined) {
+    return {
+      playerHeadingDeg: null,
+      playerSpeed: 0,
+    };
+  }
+
+  const playerSpeed = len(velocity);
+  if (playerSpeed < PLAYER_HEADING_SPEED_EPSILON) {
+    return {
+      playerHeadingDeg: null,
+      playerSpeed,
+    };
+  }
+
+  return {
+    playerHeadingDeg:
+      (90 - (Math.atan2(velocity.y, velocity.x) * 180) / Math.PI + 360) % 360,
+    playerSpeed,
+  };
+};
+
+export const createInitialHudState = (): GameViewportHudState => {
+  const tuning = getRuntimeTuningDocument();
+  const visualTuning = tuning.visuals;
+
+  return {
+    alivePlayerCount: 0,
+    abilities: [],
+    blackHoleActive: false,
+    blackHoleRemainingSec: 0,
+    blackHoleSettings: { ...BLACK_HOLE_SPEC },
+    blackHoleWarning: false,
+    botsEnabled: true,
+    boostSettings: { ...DEFAULT_BOOST_SETTINGS },
+    cacheBadgeScale:
+      visualTuning?.caches?.badgeScale ?? DEFAULT_CACHE_BADGE_SCALE,
+    connection: {
+      extrapolating: false,
+      fps: 0,
+      frameTimeMs: 0,
+      label: "Local",
+      rttMs: 0,
+      state: "local",
+    },
+    contextualShortcuts: [],
+    controlMode: "planet",
+    currentPresetId: DEFAULT_ORBIT_PRESET.id,
+    damageFlash: 0,
+    debugItems: [],
+    foresightSettings: { ...DEFAULT_FORESIGHT_SETTINGS },
+    hudOpacity: 1,
+    killFeed: [],
+    planetBars: [],
+    planetBodyScale: DEFAULT_PLANET_BODY_SCALE,
+    planetAuraGap: DEFAULT_PLANET_AURA_GAP,
+    planetAuraScale: DEFAULT_PLANET_AURA_SCALE,
+    profilingEnabled: false,
+    playerArchetype: "--",
+    playerHeadingDeg: null,
+    playerHp: 0,
+    playerHpPulse: 0,
+    playerLabel: "Player",
+    playerSpeed: 0,
+    primaryShortcuts: [],
+    sandboxPaused: false,
+    sandboxControlsEnabled: true,
+    selectedWeapon: "light",
+    shieldSettings: { ...DEFAULT_SHIELD_SETTINGS },
+    timerElapsedSec: 0,
+    totalPlayerCount: 0,
+    weapons: [],
+  };
+};
 
 const areObjectsEqual = <T>(
   current: readonly T[],
@@ -246,21 +289,23 @@ export const areHudStatesEqual = (
   current.blackHoleActive === next.blackHoleActive &&
   current.blackHoleRemainingSec === next.blackHoleRemainingSec &&
   current.blackHoleWarning === next.blackHoleWarning &&
+  current.botsEnabled === next.botsEnabled &&
   current.cacheBadgeScale === next.cacheBadgeScale &&
   areConnectionStatesEqual(current.connection, next.connection) &&
   current.controlMode === next.controlMode &&
   current.currentPresetId === next.currentPresetId &&
   current.damageFlash === next.damageFlash &&
-  current.droneCargoLabel === next.droneCargoLabel &&
   current.hudOpacity === next.hudOpacity &&
   current.planetBodyScale === next.planetBodyScale &&
   current.planetAuraGap === next.planetAuraGap &&
   current.planetAuraScale === next.planetAuraScale &&
   current.profilingEnabled === next.profilingEnabled &&
   current.playerArchetype === next.playerArchetype &&
+  current.playerHeadingDeg === next.playerHeadingDeg &&
   current.playerHp === next.playerHp &&
   current.playerHpPulse === next.playerHpPulse &&
   current.playerLabel === next.playerLabel &&
+  current.playerSpeed === next.playerSpeed &&
   current.sandboxPaused === next.sandboxPaused &&
   current.sandboxControlsEnabled === next.sandboxControlsEnabled &&
   current.selectedWeapon === next.selectedWeapon &&

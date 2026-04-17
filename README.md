@@ -1,6 +1,10 @@
 # 3BODY
 
+Show SPEED + Orientation (magnet) next to Health
+
 A 2D multiplayer arena game built on the chaotic dynamics of the three-body problem.
+
+boulders in map, speed stuff
 
 Design: [`docs/3BODY.md`](docs/3BODY.md) · Stack: [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md)
 
@@ -35,8 +39,26 @@ npm run dev
 Or individually:
 
 ```sh
-npm run dev -w @3body/frontend   # http://localhost:5173
+npm run dev -w @3body/frontend   # http://localhost:1337
 npm run dev -w @3body/backend    # bun --watch
+```
+
+The primary authoritative game shell now lives on:
+
+```text
+http://localhost:1337/
+```
+
+The local sandbox and tooling route live separately on:
+
+```text
+http://localhost:1337/sandbox
+```
+
+The authoritative route also remains available on the legacy compatibility path:
+
+```text
+http://localhost:1337/network
 ```
 
 ## Typecheck

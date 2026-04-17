@@ -1,5 +1,5 @@
-import { readFile, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import {
   applyGameplayTuning,
   cloneGameTuningDocument,
@@ -7,11 +7,20 @@ import {
   sanitizeGameTuning,
   type GameTuningDocument,
 } from "@3body/shared";
+import { config } from "./config";
 
-const TUNING_FILE_PATH = resolve(
-  import.meta.dir,
-  "../../shared/src/tuning/current.json",
-);
+const TUNING_FILE_PATH = join(config.dataDir, "editor-tuning.json");
+
+const serializeEditorTuningDocument = (value: GameTuningDocument): unknown => {
+  const { drone: _visualDrone, ...visuals } = value.visuals;
+  const { drone: _gameplayDrone, ...gameplay } = value.gameplay;
+
+  return {
+    ...value,
+    gameplay,
+    visuals,
+  };
+};
 
 export const readEditorTuningDocument =
   async (): Promise<GameTuningDocument> => {
@@ -28,12 +37,20 @@ export const writeEditorTuningDocument = async (
 ): Promise<GameTuningDocument> => {
   const nextDocument = sanitizeGameTuning(value);
 
+  await mkdir(config.dataDir, { recursive: true });
   await writeFile(
     TUNING_FILE_PATH,
-    `${JSON.stringify(nextDocument, null, 2)}\n`,
+    `${JSON.stringify(serializeEditorTuningDocument(nextDocument), null, 2)}\n`,
     "utf8",
   );
 
   applyGameplayTuning(nextDocument.gameplay);
   return nextDocument;
 };
+
+export const loadEditorTuningIntoRuntime =
+  async (): Promise<GameTuningDocument> => {
+    const document = await readEditorTuningDocument();
+    applyGameplayTuning(document.gameplay);
+    return document;
+  };

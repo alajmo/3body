@@ -10,9 +10,6 @@ import {
   DEFAULT_BOOST_SETTINGS,
   DEFAULT_CACHE_BADGE_SCALE,
   DEFAULT_FORESIGHT_SETTINGS,
-  DEFAULT_PLANET_AURA_GAP,
-  DEFAULT_PLANET_AURA_SCALE,
-  DEFAULT_PLANET_BODY_SCALE,
   DEFAULT_SHIELD_SETTINGS,
 } from "../viewportHud";
 
@@ -21,9 +18,6 @@ const BLACK_HOLE_SETTINGS_STORAGE_KEY = "3body.blackHoleSettings";
 const FORESIGHT_SETTINGS_STORAGE_KEY = "3body.foresightSettings";
 const SHIELD_SETTINGS_STORAGE_KEY = "3body.shieldSettings";
 const BOOST_SETTINGS_STORAGE_KEY = "3body.boostSettings";
-const PLANET_BODY_SCALE_STORAGE_KEY = "3body.planetBodyScale";
-const PLANET_AURA_GAP_STORAGE_KEY = "3body.planetAuraGap";
-const PLANET_AURA_SCALE_STORAGE_KEY = "3body.planetAuraScale";
 const CACHE_BADGE_SCALE_STORAGE_KEY = "3body.cacheBadgeScale";
 const PROFILING_ENABLED_STORAGE_KEY = "3body.profilingEnabled";
 
@@ -33,21 +27,6 @@ const BLACK_HOLE_SETTING_LIMITS = {
   rampSec: { max: 600, min: 1 },
   spawnSec: { max: 600, min: 0 },
 } satisfies Record<keyof BlackHoleSpec, { min: number; max: number }>;
-
-const PLANET_BODY_SCALE_LIMITS = {
-  max: 10,
-  min: 0.75,
-} as const;
-
-const PLANET_AURA_GAP_LIMITS = {
-  max: 10,
-  min: 0,
-} as const;
-
-const PLANET_AURA_SCALE_LIMITS = {
-  max: 10,
-  min: 1,
-} as const;
 
 const CACHE_BADGE_SCALE_LIMITS = {
   max: 2.25,
@@ -71,9 +50,6 @@ export interface LoadedViewportSettings {
   cacheBadgeScale: number;
   foresightSettings: AbilitySpec;
   orbitPresetId: string | null;
-  planetAuraGap: number;
-  planetAuraScale: number;
-  planetBodyScale: number;
   profilingEnabled: boolean;
   shieldSettings: AbilitySpec;
 }
@@ -180,21 +156,6 @@ export const sanitizeBoostSettings = (
   return nextSettings;
 };
 
-export const sanitizePlanetAuraScale = (value: unknown): number =>
-  typeof value === "number" && Number.isFinite(value)
-    ? clamp(value, PLANET_AURA_SCALE_LIMITS.min, PLANET_AURA_SCALE_LIMITS.max)
-    : DEFAULT_PLANET_AURA_SCALE;
-
-export const sanitizePlanetAuraGap = (value: unknown): number =>
-  typeof value === "number" && Number.isFinite(value)
-    ? clamp(value, PLANET_AURA_GAP_LIMITS.min, PLANET_AURA_GAP_LIMITS.max)
-    : DEFAULT_PLANET_AURA_GAP;
-
-export const sanitizePlanetBodyScale = (value: unknown): number =>
-  typeof value === "number" && Number.isFinite(value)
-    ? clamp(value, PLANET_BODY_SCALE_LIMITS.min, PLANET_BODY_SCALE_LIMITS.max)
-    : DEFAULT_PLANET_BODY_SCALE;
-
 export const sanitizeCacheBadgeScale = (value: unknown): number =>
   typeof value === "number" && Number.isFinite(value)
     ? clamp(value, CACHE_BADGE_SCALE_LIMITS.min, CACHE_BADGE_SCALE_LIMITS.max)
@@ -277,15 +238,6 @@ export const loadViewportSettings = (
     ),
     foresightSettings,
     orbitPresetId,
-    planetAuraGap: sanitizePlanetAuraGap(
-      Number(readStorageItem(storage, PLANET_AURA_GAP_STORAGE_KEY)),
-    ),
-    planetAuraScale: sanitizePlanetAuraScale(
-      Number(readStorageItem(storage, PLANET_AURA_SCALE_STORAGE_KEY)),
-    ),
-    planetBodyScale: sanitizePlanetBodyScale(
-      Number(readStorageItem(storage, PLANET_BODY_SCALE_STORAGE_KEY)),
-    ),
     profilingEnabled: (() => {
       const storedValue = readStorageItem(
         storage,
@@ -349,21 +301,6 @@ export const persistBoostSettings = (
     BOOST_SETTINGS_STORAGE_KEY,
     JSON.stringify(value),
   );
-
-export const persistPlanetBodyScale = (
-  storage: Storage | null,
-  value: number,
-) =>
-  persistStorageItem(storage, PLANET_BODY_SCALE_STORAGE_KEY, value.toString());
-
-export const persistPlanetAuraGap = (storage: Storage | null, value: number) =>
-  persistStorageItem(storage, PLANET_AURA_GAP_STORAGE_KEY, value.toString());
-
-export const persistPlanetAuraScale = (
-  storage: Storage | null,
-  value: number,
-) =>
-  persistStorageItem(storage, PLANET_AURA_SCALE_STORAGE_KEY, value.toString());
 
 export const persistCacheBadgeScale = (
   storage: Storage | null,

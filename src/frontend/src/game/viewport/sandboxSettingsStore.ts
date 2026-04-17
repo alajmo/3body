@@ -21,36 +21,29 @@ import {
   persistCacheBadgeScale as persistStoredCacheBadgeScale,
   persistForesightSettings as persistStoredForesightSettings,
   persistOrbitPresetId,
-  persistPlanetAuraGap as persistStoredPlanetAuraGap,
-  persistPlanetAuraScale as persistStoredPlanetAuraScale,
-  persistPlanetBodyScale as persistStoredPlanetBodyScale,
   persistProfilingEnabled as persistStoredProfilingEnabled,
   persistShieldSettings as persistStoredShieldSettings,
   sanitizeAbilitySettings as sanitizeStoredAbilitySettings,
   sanitizeBlackHoleSettings as sanitizeStoredBlackHoleSettings,
   sanitizeBoostSettings as sanitizeStoredBoostSettings,
   sanitizeCacheBadgeScale as sanitizeStoredCacheBadgeScale,
-  sanitizePlanetAuraGap as sanitizeStoredPlanetAuraGap,
-  sanitizePlanetAuraScale as sanitizeStoredPlanetAuraScale,
-  sanitizePlanetBodyScale as sanitizeStoredPlanetBodyScale,
   sanitizeProfilingEnabled as sanitizeStoredProfilingEnabled,
 } from "./settings";
 
 export interface GameViewportSandboxSettingsState {
   activePreset: OrbitPreset;
   blackHoleSettings: BlackHoleSpec;
+  botsEnabled: boolean;
   boostSettings: BoostSpec;
   cacheBadgeScale: number;
   foresightSettings: AbilitySpec;
-  planetAuraGap: number;
-  planetAuraScale: number;
-  planetBodyScale: number;
   profilingEnabled: boolean;
   sandboxPaused: boolean;
   shieldSettings: AbilitySpec;
 }
 
 interface CreateGameViewportSandboxSettingsStoreOptions {
+  defaultBotsEnabled: boolean;
   emitHudState: (state: GameViewportHudState) => void;
   getCurrentHudState: () => GameViewportHudState;
   onResetProfilingRequested: () => void;
@@ -76,20 +69,12 @@ const sanitizeBoostSettings = (
   value: Partial<BoostSpec> | null | undefined,
 ): BoostSpec => sanitizeStoredBoostSettings(value);
 
-const sanitizePlanetAuraScale = (value: unknown): number =>
-  sanitizeStoredPlanetAuraScale(value);
-
-const sanitizePlanetAuraGap = (value: unknown): number =>
-  sanitizeStoredPlanetAuraGap(value);
-
-const sanitizePlanetBodyScale = (value: unknown): number =>
-  sanitizeStoredPlanetBodyScale(value);
-
 const sanitizeCacheBadgeScale = (value: unknown): number =>
   sanitizeStoredCacheBadgeScale(value);
 
 const createInitialSandboxSettingsState = (
   storage: Storage | null,
+  defaultBotsEnabled: boolean,
 ): GameViewportSandboxSettingsState => {
   const persistedSettings =
     storage !== null
@@ -103,12 +88,10 @@ const createInitialSandboxSettingsState = (
         ? ORBIT_PRESET_BY_ID.get(storedPresetId)
         : undefined) ?? DEFAULT_ORBIT_PRESET,
     blackHoleSettings: persistedSettings.blackHoleSettings,
+    botsEnabled: defaultBotsEnabled,
     boostSettings: persistedSettings.boostSettings,
     cacheBadgeScale: persistedSettings.cacheBadgeScale,
     foresightSettings: persistedSettings.foresightSettings,
-    planetAuraGap: persistedSettings.planetAuraGap,
-    planetAuraScale: persistedSettings.planetAuraScale,
-    planetBodyScale: persistedSettings.planetBodyScale,
     profilingEnabled: sanitizeStoredProfilingEnabled(
       persistedSettings.profilingEnabled,
     ),
@@ -123,13 +106,11 @@ const applySandboxSettingsToHudState = (
 ): GameViewportHudState => ({
   ...baseState,
   blackHoleSettings: sandboxState.blackHoleSettings,
+  botsEnabled: sandboxState.botsEnabled,
   boostSettings: { ...sandboxState.boostSettings },
   cacheBadgeScale: sandboxState.cacheBadgeScale,
   currentPresetId: sandboxState.activePreset.id,
   foresightSettings: { ...sandboxState.foresightSettings },
-  planetBodyScale: sandboxState.planetBodyScale,
-  planetAuraGap: sandboxState.planetAuraGap,
-  planetAuraScale: sandboxState.planetAuraScale,
   profilingEnabled: sandboxState.profilingEnabled,
   sandboxControlsEnabled: sandboxControlsEnabled(sandboxState),
   sandboxPaused: sandboxState.sandboxPaused,
@@ -144,7 +125,10 @@ export const createGameViewportSandboxSettingsStore = (
   emitSandboxHudState: () => void;
   state: GameViewportSandboxSettingsState;
 } => {
-  const state = createInitialSandboxSettingsState(options.storage);
+  const state = createInitialSandboxSettingsState(
+    options.storage,
+    options.defaultBotsEnabled,
+  );
   syncAbilitySettingsToSpecs(
     state.foresightSettings,
     state.shieldSettings,
@@ -174,15 +158,6 @@ export const createGameViewportSandboxSettingsStore = (
   };
   const persistBoostSettings = () => {
     persistStoredBoostSettings(options.storage, state.boostSettings);
-  };
-  const persistPlanetBodyScale = () => {
-    persistStoredPlanetBodyScale(options.storage, state.planetBodyScale);
-  };
-  const persistPlanetAuraGap = () => {
-    persistStoredPlanetAuraGap(options.storage, state.planetAuraGap);
-  };
-  const persistPlanetAuraScale = () => {
-    persistStoredPlanetAuraScale(options.storage, state.planetAuraScale);
   };
   const persistCacheBadgeScale = () => {
     persistStoredCacheBadgeScale(options.storage, state.cacheBadgeScale);
@@ -220,16 +195,12 @@ export const createGameViewportSandboxSettingsStore = (
         options.onResetSandboxRequested();
       },
       resetPlanetVisualSettings: () => {
-        const runtimeDefaults = createViewportDefaultsFromRuntimeTuning();
-        state.planetBodyScale = runtimeDefaults.planetBodyScale;
-        state.planetAuraGap = runtimeDefaults.planetAuraGap;
-        state.planetAuraScale = runtimeDefaults.planetAuraScale;
-        state.cacheBadgeScale = runtimeDefaults.cacheBadgeScale;
-        persistPlanetBodyScale();
-        persistPlanetAuraGap();
-        persistPlanetAuraScale();
-        persistCacheBadgeScale();
         emitSandboxHudState();
+      },
+      setBotsEnabled: (value) => {
+        state.botsEnabled = value === true;
+        emitSandboxHudState();
+        options.onResetSandboxRequested();
       },
       setBlackHoleSetting: (key, value) => {
         state.blackHoleSettings = sanitizeBlackHoleSettings({
@@ -287,19 +258,13 @@ export const createGameViewportSandboxSettingsStore = (
         emitSandboxHudState();
         options.onResetSandboxRequested();
       },
-      setPlanetAuraGap: (value) => {
-        state.planetAuraGap = sanitizePlanetAuraGap(value);
-        persistPlanetAuraGap();
+      setPlanetAuraGap: (_value) => {
         emitSandboxHudState();
       },
-      setPlanetAuraScale: (value) => {
-        state.planetAuraScale = sanitizePlanetAuraScale(value);
-        persistPlanetAuraScale();
+      setPlanetAuraScale: (_value) => {
         emitSandboxHudState();
       },
-      setPlanetBodyScale: (value) => {
-        state.planetBodyScale = sanitizePlanetBodyScale(value);
-        persistPlanetBodyScale();
+      setPlanetBodyScale: (_value) => {
         emitSandboxHudState();
       },
       setProfilingEnabled: (value) => {

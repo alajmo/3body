@@ -20,13 +20,13 @@ vi.mock("./CombatHud", () => ({
     controller: GameViewportController | null;
     hud: ReturnType<typeof createInitialHudState>;
     hudTuning: unknown;
-    showSandboxTools?: boolean;
+    showPerformanceTools?: boolean;
   }) => {
     combatHudSpy(props);
     return (
       <div data-testid="combat-hud">
         {props.controller === null ? "no-controller" : "controller"}:
-        {props.hud.playerLabel}:{props.showSandboxTools ? "tools" : "no-tools"}
+        {props.hud.playerLabel}:{props.showPerformanceTools ? "perf" : "no-perf"}
       </div>
     );
   },
@@ -48,6 +48,7 @@ vi.mock("./game/runtimeTuning", () => ({
         panelBlurPx: 14,
         panelGap: 12,
         dockGap: 10,
+        shortcutsSectionGap: 18,
         timerWidth: 240,
         connectionWidth: 220,
       },
@@ -61,6 +62,7 @@ const createControllerMock = (): GameViewportController =>
     resetAbilitySettings: vi.fn(),
     resetBlackHoleSettings: vi.fn(),
     resetPlanetVisualSettings: vi.fn(),
+    setBotsEnabled: vi.fn(),
     setBoostSetting: vi.fn(),
     setBlackHoleSetting: vi.fn(),
     setCacheBadgeScale: vi.fn(),
@@ -85,6 +87,7 @@ describe("GameViewportPanel", () => {
       (
         _element: HTMLDivElement,
         options: {
+          defaultBotsEnabled?: boolean;
           enableSandboxStorage?: boolean;
           onControllerReady?: (
             controller: GameViewportController | null,
@@ -103,19 +106,20 @@ describe("GameViewportPanel", () => {
       },
     );
 
-    render(<GameViewportPanel showSandboxTools={false} />);
+    render(<GameViewportPanel showPerformanceTools={false} />);
 
     expect(createGameViewportMock).toHaveBeenCalledTimes(1);
     expect(createGameViewportMock.mock.calls[0]![0]).toHaveClass("canvas-root");
     expect(createGameViewportMock.mock.calls[0]![1]).toEqual(
       expect.objectContaining({
+        defaultBotsEnabled: true,
         enableSandboxStorage: false,
       }),
     );
 
     await waitFor(() => {
       expect(screen.getByTestId("combat-hud")).toHaveTextContent(
-        "controller:Ace Pilot:no-tools",
+        "controller:Ace Pilot:no-perf",
       );
     });
 
@@ -125,7 +129,7 @@ describe("GameViewportPanel", () => {
         hud: expect.objectContaining({
           playerLabel: "Ace Pilot",
         }),
-        showSandboxTools: false,
+        showPerformanceTools: false,
       }),
     );
   });

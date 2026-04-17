@@ -4,138 +4,298 @@ import {
   WebGPURenderer,
 } from "three/webgpu";
 
-export type ViewportRendererTarget =
-  | "authoritativeMatch"
-  | "combatSandbox"
-  | "modelShowcase"
-  | "sunInteraction";
-
 export interface ViewportRendererBackendPolicy {
   forceWebGL: boolean;
-  label: "webgl-fallback";
+  label: "webgl" | "webgpu";
   reason: string;
 }
 
-// The repo is still shipping the WebGL fallback backend on three@0.169.x.
-// This is an explicit engine decision now rather than an inline per-viewport
-// workaround scattered across entrypoints.
 export const PRODUCTION_VIEWPORT_RENDERER_BACKEND_POLICY: ViewportRendererBackendPolicy =
   {
-    forceWebGL: true,
-    label: "webgl-fallback",
+    forceWebGL: false,
+    label: "webgpu",
     reason:
-      "Native WebGPU is not the shipping backend on three@0.169.x because the current post-processing and sprite paths are still validated on the WebGL fallback.",
+      "Use native WebGPU when the current browser exposes WebGPU capability.",
   };
 
-interface RendererStatusController {
-  clear: () => void;
-  dispose: () => void;
-  show: (message: string) => void;
-}
+export const WEBGL_VIEWPORT_RENDERER_BACKEND_POLICY: ViewportRendererBackendPolicy =
+  {
+    forceWebGL: true,
+    label: "webgl",
+    reason:
+      "Use Three.js WebGL because WebGPU capability is unavailable in the current browser/device.",
+  };
 
 export interface ViewportRendererBootstrap {
-  backendPolicy: ViewportRendererBackendPolicy;
   dispose: () => void;
   renderer: WebGPURenderer;
-  status: Pick<RendererStatusController, "clear" | "show">;
+}
+
+interface ViewportRendererSession {
+  bootstrap: ViewportRendererBootstrap;
+  renderer: WebGPURenderer;
 }
 
 interface CreateViewportRendererBootstrapOptions {
   antialias?: boolean;
+  backendPolicy?: ViewportRendererBackendPolicy;
   hostElement: HTMLDivElement;
-  onContextRecovered?: () => void;
-  target: ViewportRendererTarget;
 }
 
-const createRendererStatusController = (
-  hostElement: HTMLDivElement,
-): RendererStatusController => {
-  const statusElement = hostElement.ownerDocument.createElement("div");
-  statusElement.className = "game-canvas-status";
-  statusElement.hidden = true;
+interface InitializeViewportRendererSessionOptions
+  extends CreateViewportRendererBootstrapOptions {
+  failureLogLabel: string;
+  isDisposed: () => boolean;
+}
 
-  return {
-    show(message) {
-      statusElement.textContent = message;
-      statusElement.hidden = false;
-      if (statusElement.parentElement !== hostElement) {
-        hostElement.append(statusElement);
-      }
+interface DisposeViewportRendererSessionOptions {
+  animationLoopController?: { dispose: () => void } | null;
+  bootstrap?: ViewportRendererBootstrap | null;
+  hostElement: HTMLDivElement;
+  renderer?: WebGPURenderer | null;
+}
+
+interface ReportViewportRendererFailureOptions {
+  error: unknown;
+  failureLogLabel: string;
+  hostElement: HTMLDivElement;
+  isDisposed: () => boolean;
+}
+
+interface NavigatorGpuLike {
+  requestAdapter?: unknown;
+}
+
+interface RendererBackendFlags {
+  isWebGLBackend?: boolean;
+  isWebGPUBackend?: boolean;
+}
+
+interface RendererValidationEntry {
+  backend: "webgl" | "webgpu" | null;
+  backendPolicy: ViewportRendererBackendPolicy["label"] | null;
+  error: string | null;
+  label: string;
+  route: string;
+  status: "failed" | "initialized";
+  timestampIso: string;
+}
+
+interface RendererValidationApi {
+  clear: () => void;
+  getState: () => RendererValidationEntry[];
+}
+
+interface RendererValidationWindow extends Window {
+  __3bodyRendererValidation?: RendererValidationApi;
+}
+
+const RENDERER_VALIDATION_QUERY_PARAM = "rendererValidation";
+const rendererValidationEntries: RendererValidationEntry[] = [];
+
+const isRendererBackendFlags = (
+  value: unknown,
+): value is RendererBackendFlags => typeof value === "object" && value !== null;
+
+const getRendererValidationWindow = (hostElement: HTMLDivElement) =>
+  hostElement.ownerDocument.defaultView as RendererValidationWindow | null;
+
+const isRendererValidationEnabled = (hostElement: HTMLDivElement) => {
+  const search = hostElement.ownerDocument.defaultView?.location.search ?? "";
+  return (
+    new URLSearchParams(search).get(RENDERER_VALIDATION_QUERY_PARAM) === "1"
+  );
+};
+
+const ensureRendererValidationApi = (hostElement: HTMLDivElement) => {
+  if (!isRendererValidationEnabled(hostElement)) {
+    return null;
+  }
+
+  const validationWindow = getRendererValidationWindow(hostElement);
+  if (validationWindow === null) {
+    return null;
+  }
+
+  validationWindow.__3bodyRendererValidation ??= {
+    clear: () => {
+      rendererValidationEntries.length = 0;
     },
-    clear() {
-      statusElement.textContent = "";
-      statusElement.hidden = true;
-    },
-    dispose() {
-      statusElement.remove();
-    },
+    getState: () => rendererValidationEntries.map((entry) => ({ ...entry })),
   };
+  return validationWindow.__3bodyRendererValidation;
+};
+
+const recordRendererValidationEntry = (
+  hostElement: HTMLDivElement,
+  entry: Omit<RendererValidationEntry, "route" | "timestampIso">,
+) => {
+  if (ensureRendererValidationApi(hostElement) === null) {
+    return;
+  }
+
+  const route = hostElement.ownerDocument.defaultView?.location.href ?? "";
+  rendererValidationEntries.push({
+    ...entry,
+    route,
+    timestampIso: new Date().toISOString(),
+  });
+};
+
+const getRendererFailureText = (error: unknown) => {
+  if (error instanceof Error) {
+    return `${error.name}: ${error.message}`;
+  }
+
+  return String(error);
+};
+
+const hasViewportWebGPUCapability = (hostElement: HTMLDivElement): boolean => {
+  const maybeNavigator = hostElement.ownerDocument.defaultView?.navigator as
+    | (Navigator & { gpu?: NavigatorGpuLike })
+    | undefined;
+  const gpu = maybeNavigator?.gpu;
+
+  return (
+    typeof gpu === "object" &&
+    gpu !== null &&
+    typeof gpu.requestAdapter === "function"
+  );
+};
+
+const resolveViewportRendererBackendPolicy = (
+  hostElement: HTMLDivElement,
+  requestedPolicy: ViewportRendererBackendPolicy,
+): ViewportRendererBackendPolicy => {
+  if (requestedPolicy.forceWebGL) {
+    return WEBGL_VIEWPORT_RENDERER_BACKEND_POLICY;
+  }
+
+  return hasViewportWebGPUCapability(hostElement)
+    ? PRODUCTION_VIEWPORT_RENDERER_BACKEND_POLICY
+    : WEBGL_VIEWPORT_RENDERER_BACKEND_POLICY;
+};
+
+const detectViewportRendererBackend = (
+  renderer: Pick<WebGPURenderer, "backend">,
+  backendPolicy: ViewportRendererBackendPolicy,
+) => {
+  const { backend } = renderer;
+  if (isRendererBackendFlags(backend)) {
+    if (backend.isWebGPUBackend === true) {
+      return "webgpu" as const;
+    }
+    if (backend.isWebGLBackend === true) {
+      return "webgl" as const;
+    }
+  }
+
+  return backendPolicy.forceWebGL ? ("webgl" as const) : ("webgpu" as const);
 };
 
 export const createViewportRendererBootstrap = async ({
   antialias = true,
+  backendPolicy = PRODUCTION_VIEWPORT_RENDERER_BACKEND_POLICY,
   hostElement,
-  onContextRecovered,
-  target,
 }: CreateViewportRendererBootstrapOptions): Promise<ViewportRendererBootstrap> => {
-  const status = createRendererStatusController(hostElement);
+  const resolvedBackendPolicy = resolveViewportRendererBackendPolicy(
+    hostElement,
+    backendPolicy,
+  );
   const renderer = new WebGPURenderer({
     antialias,
-    forceWebGL: PRODUCTION_VIEWPORT_RENDERER_BACKEND_POLICY.forceWebGL,
+    forceWebGL: resolvedBackendPolicy.forceWebGL,
     powerPreference: "high-performance",
   });
-
   await renderer.init();
-
   renderer.outputColorSpace = SRGBColorSpace;
   renderer.toneMapping = ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.05;
   renderer.domElement.className = "game-canvas";
-  renderer.domElement.dataset.viewportTarget = target;
-  renderer.domElement.dataset.rendererBackend =
-    PRODUCTION_VIEWPORT_RENDERER_BACKEND_POLICY.label;
-  const handleContextLost = (event: Event) => {
-    event.preventDefault();
-    status.show("Renderer context lost. Waiting for recovery...");
-  };
-  const handleContextRestored = () => {
-    status.clear();
-    onContextRecovered?.();
-  };
-  renderer.domElement.addEventListener("webglcontextlost", handleContextLost);
-  renderer.domElement.addEventListener(
-    "webglcontextrestored",
-    handleContextRestored,
-  );
-
   hostElement.replaceChildren(renderer.domElement);
 
   return {
-    backendPolicy: PRODUCTION_VIEWPORT_RENDERER_BACKEND_POLICY,
     renderer,
-    status: {
-      clear: status.clear,
-      show: status.show,
-    },
-    dispose() {
-      renderer.domElement.removeEventListener(
-        "webglcontextlost",
-        handleContextLost,
-      );
-      renderer.domElement.removeEventListener(
-        "webglcontextrestored",
-        handleContextRestored,
-      );
-      status.dispose();
-    },
+    dispose() {},
   };
 };
 
-export const showViewportRendererFailure = (
-  hostElement: HTMLDivElement,
-  message: string,
-) => {
+export const reportViewportRendererFailure = ({
+  error,
+  failureLogLabel,
+  hostElement,
+  isDisposed,
+}: ReportViewportRendererFailureOptions) => {
+  console.error(`[frontend] ${failureLogLabel} failed.`, error);
+  recordRendererValidationEntry(hostElement, {
+    backend: null,
+    backendPolicy: null,
+    error: getRendererFailureText(error),
+    label: failureLogLabel,
+    status: "failed",
+  });
+  if (!isDisposed()) {
+    hostElement.replaceChildren();
+  }
+};
+
+export const initializeViewportRendererSession = async ({
+  failureLogLabel,
+  hostElement,
+  isDisposed,
+  ...bootstrapOptions
+}: InitializeViewportRendererSessionOptions): Promise<ViewportRendererSession | null> => {
+  try {
+    const bootstrap = await createViewportRendererBootstrap({
+      hostElement,
+      ...bootstrapOptions,
+    });
+    const renderer = bootstrap.renderer;
+    const resolvedBackendPolicy = resolveViewportRendererBackendPolicy(
+      hostElement,
+      bootstrapOptions.backendPolicy ?? PRODUCTION_VIEWPORT_RENDERER_BACKEND_POLICY,
+    );
+
+    if (isDisposed()) {
+      disposeViewportRendererSession({
+        bootstrap,
+        hostElement,
+        renderer,
+      });
+      return null;
+    }
+
+    recordRendererValidationEntry(hostElement, {
+      backend: detectViewportRendererBackend(renderer, resolvedBackendPolicy),
+      backendPolicy: resolvedBackendPolicy.label,
+      error: null,
+      label: failureLogLabel,
+      status: "initialized",
+    });
+
+    return {
+      bootstrap,
+      renderer,
+    };
+  } catch (error) {
+    reportViewportRendererFailure({
+      error,
+      failureLogLabel,
+      hostElement,
+      isDisposed,
+    });
+    return null;
+  }
+};
+
+export const disposeViewportRendererSession = ({
+  animationLoopController,
+  bootstrap,
+  hostElement,
+  renderer,
+}: DisposeViewportRendererSessionOptions) => {
+  animationLoopController?.dispose();
+  bootstrap?.dispose();
+  renderer?.dispose();
   hostElement.replaceChildren();
-  const status = createRendererStatusController(hostElement);
-  status.show(message);
 };

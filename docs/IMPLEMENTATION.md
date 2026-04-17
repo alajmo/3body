@@ -51,9 +51,9 @@ Because both ends are TypeScript, **the simulation, entity types, balance consta
 ## 3. Rendering — Three.js
 
 - **three** (latest) with an **OrthographicCamera** by default. This gives you crisp 2D positioning while keeping the option of subtle 3D effects.
-- **Renderer target:** **`WebGPURenderer` from `three/webgpu`** with the built-in WebGL 2 fallback path where the browser cannot do WebGPU yet. Do not maintain two separate shader authoring systems unless forced by a missing feature.
+- **Renderer target:** **`WebGPURenderer` from `three/webgpu`** with explicit one-shot backend selection: use native WebGPU when the browser exposes WebGPU capability, otherwise use WebGL. Do not maintain automatic backend retry/demotion logic unless a real product requirement forces it.
 - **Camera language:** live play should smooth-follow the locally controlled planet and keep it near screen center. Read Mode widens zoom but does not unlock free camera; drone mode follows the drone; free camera is spectator-only.
-- **Shader authoring:** prefer **TSL node materials** (`three/tsl`) over handwritten GLSL strings. TSL keeps shader logic in TS/JS, aligns with Three's WebGPU path, and still targets the fallback backend.
+- **Shader authoring:** prefer **TSL node materials** (`three/tsl`) over handwritten GLSL strings. TSL keeps shader logic in TS/JS and aligns with the repo's WebGPU/WebGL renderer path without maintaining a second shader authoring stack.
 - **Planets as actual spheres** using `SphereGeometry` + a **TSL-driven node material**. The procedural planet shader runs on the sphere surface, so planets visibly rotate. Costs nothing visually compared to flat discs and looks dramatically better.
 - **Suns** as larger spheres with their own animated **TSL** material + corona via post-processing bloom.
 - **Arena boundary** as an always-visible ring mesh at `ARENA_RADIUS`; when a planet is outside it, intensify the ring and add a subtle screen-space vignette/desaturation as feedback.

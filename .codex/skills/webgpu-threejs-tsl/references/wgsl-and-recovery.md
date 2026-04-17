@@ -30,4 +30,4 @@ If a task needs:
 - compute-oriented simulation
 - a newer TSL helper set
 
-then call out whether the blocker is the current `three@0.169.x` version instead of forcing a brittle workaround.
+then call out whether the blocker is the current `three@^0.184.0` baseline instead of forcing a brittle workaround.

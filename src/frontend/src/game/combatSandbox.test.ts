@@ -20,6 +20,7 @@ import {
   stepSandbox,
 } from "./combatSandbox";
 import { DEFAULT_ORBIT_PRESET } from "./orbitPresets";
+import { SHIELD_OUTER_SCALE } from "./shieldPresentation";
 
 const DISABLED_BLACK_HOLE_SPEC: BlackHoleSpec = {
   ...BLACK_HOLE_SPEC,
@@ -37,9 +38,8 @@ const createStepInput = (
   boostRequested: false,
   wildcardRequested: false,
   droneLaunchRequested: false,
-  droneBurstRequested: false,
-  droneAutoReturnRequested: false,
-  droneRecallRequested: false,
+  droneTurnLeftHeld: false,
+  droneTurnRightHeld: false,
   ...overrides,
 });
 
@@ -127,6 +127,7 @@ const buildRocket = (
   color: "#ffffff",
   trailColor: "#b7e6ff",
   dragOnHit: false,
+  launchPlanetArchetype: "terra",
   turnRateMultiplier: 1,
   launchPlanetPos: { x: 0, y: 0 },
   launchPlanetRadius: 20,
@@ -148,6 +149,15 @@ describe("combatSandbox", () => {
       seeker: ROCKET_SPECS.seeker.startAmmo,
     });
     expect(state.caches.length).toBeGreaterThan(0);
+  });
+
+  it("can start the local sandbox with bot AI disabled", () => {
+    const state = createSandboxState(DEFAULT_ORBIT_PRESET, {
+      botsEnabled: false,
+    });
+
+    expect(state.bots).toEqual([]);
+    expect(state.planets).toHaveLength(DEFAULT_ORBIT_PRESET.planets.length);
   });
 
   it("fires a light rocket and starts its reload timer", () => {
@@ -389,7 +399,7 @@ describe("combatSandbox", () => {
       (planet) => planet.id === state.player.planetId,
     )!;
 
-    state.player.shieldActiveUntilTick = 100;
+    state.player.shieldActive = true;
     state.player.shieldAimDir = { x: 1, y: 0 };
     state.rockets = [
       buildRocket({
@@ -413,6 +423,61 @@ describe("combatSandbox", () => {
     expect(nextPlayerPlanet.hp).toBe(PLANET_HP);
     expect(next.rockets).toHaveLength(0);
     expect(next.impactBursts).toHaveLength(1);
+    expect(next.impactBursts[0]?.absorbedByShield).toBe(true);
+    expect(next.player.shieldMaxLoad).toBe(
+      state.player.shieldMaxLoad - ROCKET_SPECS.light.damage,
+    );
+    expect(next.player.shieldLoad).toBeLessThanOrEqual(
+      state.player.shieldLoad - ROCKET_SPECS.light.damage,
+    );
+  });
+
+  it("blocks rockets at the shield surface before they reach the planet body", () => {
+    const { state, enemyPlanetId } = createLinearCombatState();
+    const enemyPlanet = state.planets.find(
+      (planet) => planet.id === enemyPlanetId,
+    )!;
+    const playerPlanet = state.planets.find(
+      (planet) => planet.id === state.player.planetId,
+    )!;
+    const planetImpactRadiusMultiplier = 2;
+    const bodyImpactDistance =
+      ROCKET_SPECS.light.radius +
+      playerPlanet.radius * planetImpactRadiusMultiplier;
+    const shieldImpactDistance =
+      ROCKET_SPECS.light.radius +
+      playerPlanet.radius * planetImpactRadiusMultiplier * SHIELD_OUTER_SCALE;
+
+    state.player.shieldActive = true;
+    state.player.shieldAimDir = { x: 1, y: 0 };
+    state.rockets = [
+      buildRocket({
+        ownerId: enemyPlanet.playerId,
+        targetId: playerPlanet.id,
+        pos: {
+          x: (bodyImpactDistance + shieldImpactDistance) / 2,
+          y: 0,
+        },
+      }),
+    ];
+
+    const next = stepSandbox(
+      state,
+      createStepInput({
+        aimWorld: { x: 100, y: 0 },
+      }),
+      DISABLED_BLACK_HOLE_SPEC,
+      {
+        planetImpactRadiusMultiplier,
+      },
+    );
+    const nextPlayerPlanet = next.planets.find(
+      (planet) => planet.id === playerPlanet.id,
+    )!;
+
+    expect(nextPlayerPlanet.hp).toBe(PLANET_HP);
+    expect(next.rockets).toHaveLength(0);
+    expect(next.impactBursts[0]?.absorbedByShield).toBe(true);
   });
 
   it("blocks weapon fire while the player's shield is active", () => {
@@ -422,7 +487,7 @@ describe("combatSandbox", () => {
     )!;
     const lightAmmoBefore = state.player.ammo.light;
 
-    state.player.shieldActiveUntilTick = 20;
+    state.player.shieldActive = true;
 
     const next = stepSandbox(
       state,
@@ -436,6 +501,104 @@ describe("combatSandbox", () => {
 
     expect(next.rockets).toHaveLength(0);
     expect(next.player.ammo.light).toBe(lightAmmoBefore);
+  });
+
+  it("lets the player toggle the shield off and back on without a cooldown lock", () => {
+    const { state } = createLinearCombatState();
+    state.player.shieldActive = true;
+    state.player.shieldLoad = state.player.shieldMaxLoad / 2;
+
+    const toggledOff = stepSandbox(
+      state,
+      createStepInput({ shieldRequested: true }),
+      DISABLED_BLACK_HOLE_SPEC,
+    );
+    expect(toggledOff.player.shieldActive).toBe(false);
+
+    const toggledOn = stepSandbox(
+      toggledOff,
+      createStepInput({ shieldRequested: true }),
+      DISABLED_BLACK_HOLE_SPEC,
+    );
+    expect(toggledOn.player.shieldActive).toBe(true);
+  });
+
+  it("lets foresight reactivate from partial charge instead of waiting for full refill", () => {
+    const { state } = createLinearCombatState();
+
+    const activated = stepSandbox(
+      state,
+      createStepInput({ foresightRequested: true }),
+      DISABLED_BLACK_HOLE_SPEC,
+    );
+    expect(activated.player.foresightActiveUntilTick).toBeGreaterThan(
+      activated.tick,
+    );
+    const fullDurationRemaining =
+      activated.player.foresightActiveUntilTick - activated.tick;
+    let partiallyDrained = activated;
+    for (let index = 0; index < 12; index += 1) {
+      partiallyDrained = stepSandbox(
+        partiallyDrained,
+        createStepInput(),
+        DISABLED_BLACK_HOLE_SPEC,
+      );
+    }
+
+    const toggledOff = stepSandbox(
+      partiallyDrained,
+      createStepInput({ foresightRequested: true }),
+      DISABLED_BLACK_HOLE_SPEC,
+    );
+    expect(toggledOff.player.foresightActiveUntilTick).toBeLessThanOrEqual(
+      toggledOff.tick,
+    );
+    expect(toggledOff.player.foresightCooldownUntilTick).toBeGreaterThan(
+      toggledOff.tick,
+    );
+
+    const reactivated = stepSandbox(
+      toggledOff,
+      createStepInput({ foresightRequested: true }),
+      DISABLED_BLACK_HOLE_SPEC,
+    );
+    expect(reactivated.player.foresightActiveUntilTick).toBeGreaterThan(
+      reactivated.tick,
+    );
+    expect(
+      reactivated.player.foresightActiveUntilTick - reactivated.tick,
+    ).toBeLessThan(fullDurationRemaining);
+  });
+
+  it("drains shield load while it is active", () => {
+    const { state } = createLinearCombatState();
+    state.player.shieldActive = true;
+    const startingLoad = state.player.shieldLoad;
+
+    const next = stepSandbox(
+      state,
+      createStepInput(),
+      DISABLED_BLACK_HOLE_SPEC,
+    );
+
+    expect(next.player.shieldActive).toBe(true);
+    expect(next.player.shieldLoad).toBeLessThan(startingLoad);
+  });
+
+  it("recharges shield load back up to the current max while inactive", () => {
+    const { state } = createLinearCombatState();
+    state.player.shieldActive = false;
+    state.player.shieldLoad = 0;
+    state.player.shieldMaxLoad = 40;
+
+    let next = state;
+    for (let step = 0; step < 2000; step += 1) {
+      next = stepSandbox(next, createStepInput(), DISABLED_BLACK_HOLE_SPEC);
+    }
+
+    expect(next.player.shieldLoad).toBeGreaterThan(0);
+    expect(next.player.shieldLoad).toBeCloseTo(next.player.shieldMaxLoad, 5);
+    expect(next.player.shieldMaxLoad).toBe(40);
   });
 
   it("delivers caches collected by the player planet into ammo and respawn timers", () => {
@@ -468,7 +631,7 @@ describe("combatSandbox", () => {
     expect(next.cacheRespawnAtTicks[0]).toBeGreaterThan(next.tick);
   });
 
-  it("launches a drone and recalls it back into planet control", () => {
+  it("launches a drone and detonates it when the fuse expires", () => {
     const { state } = createLinearCombatState();
 
     const launched = stepSandbox(
@@ -484,19 +647,28 @@ describe("combatSandbox", () => {
     expect(launched.player.controlMode).toBe("drone");
     expect(launched.player.activeDroneId).toBe(launched.drones[0]!.id);
 
-    const recalled = stepSandbox(
-      launched,
+    const armed = {
+      ...launched,
+      drones: [
+        {
+          ...launched.drones[0]!,
+          ttlUntilTick: launched.tick + 1,
+        },
+      ],
+    };
+
+    const detonated = stepSandbox(
+      armed,
       createStepInput({
         aimWorld: { x: 220, y: 0 },
-        droneRecallRequested: true,
       }),
       DISABLED_BLACK_HOLE_SPEC,
     );
 
-    expect(recalled.drones).toHaveLength(0);
-    expect(recalled.player.controlMode).toBe("planet");
-    expect(recalled.player.activeDroneId).toBeNull();
-    expect(recalled.debris.length).toBeGreaterThan(0);
+    expect(detonated.drones).toHaveLength(0);
+    expect(detonated.player.controlMode).toBe("planet");
+    expect(detonated.player.activeDroneId).toBeNull();
+    expect(detonated.debris.length).toBeGreaterThan(0);
   });
 
   it("consumes a teleport-swap wildcard only when a target is aligned", () => {
@@ -553,9 +725,7 @@ describe("combatSandbox", () => {
         pos: { x: 120, y: -100 },
         vel: { x: 0, y: 0 },
         radius: 18,
-        fuel: 2,
         ttlUntilTick: 40,
-        mode: "piloted",
       },
     ];
     state.caches = [
@@ -675,10 +845,7 @@ describe("combatSandbox", () => {
         pos: { x: 10, y: 0 },
         vel: { x: 0, y: 0 },
         radius: 18,
-        fuel: 2,
         ttlUntilTick: 20,
-        mode: "piloted",
-        cargo: { kind: "shieldExt" },
       },
     ];
     state.player.activeDroneId = 502;
@@ -689,8 +856,7 @@ describe("combatSandbox", () => {
     expect(snapshot.lockTargetLabel).toBe(enemyPlanet.label);
     expect(snapshot.blackHoleActive).toBe(true);
     expect(snapshot.cacheCount).toBe(1);
-    expect(snapshot.droneMode).toBe("piloting");
-    expect(snapshot.droneCargoLabel).toBe("Shield Ext");
+    expect(snapshot.droneMode).toBe("active");
     expect(snapshot.wildcardLabel).toBe("Teleport Swap");
     expect(
       describeCacheContents({ kind: "wildcard", wildcard: { kind: "cloak" } }),

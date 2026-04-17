@@ -1,5 +1,7 @@
 import type { RocketKind, Vec2 } from "@3body/shared";
-import { bloom, type pass, renderOutput, rgbShift, ssaaPass } from "three/tsl";
+import { renderOutput } from "three/tsl";
+import { bloom } from "three/addons/tsl/display/BloomNode.js";
+import { rgbShift } from "three/addons/tsl/display/RGBShiftNode.js";
 import {
   CanvasTexture,
   CircleGeometry,
@@ -8,7 +10,7 @@ import {
   Mesh,
   OrthographicCamera,
   PlaneGeometry,
-  PostProcessing,
+  RenderPipeline,
   RingGeometry,
   Scene,
   SphereGeometry,
@@ -20,28 +22,33 @@ import { createSandboxState } from "./combatSandbox";
 import { DEFAULT_ORBIT_PRESET } from "./orbitPresets";
 import {
   CACHE_ICON_KEYS,
+  createBackgroundLayer,
+  createBackgroundLayerConfigs,
   createBackdropMaterial,
   createCacheBadgeSpriteMaterial,
   createPlanetGlowMaterial,
+  getPlanetForestProfile,
   createPlanetMaterial,
   createPlanetSpinAxis,
   createRocketFlameMaterial,
   createRocketMaterial,
   createRocketTrailMaterial,
-  createStarfieldLayer,
+  createSceneBackgroundColor,
   createSunCoreMaterial,
   createSunGlowMaterial,
   createWarpMaterial,
-  SCENE_BACKGROUND,
-  STARFIELD_LAYERS,
   wrapCentered,
   type CacheIconKey,
 } from "./showcaseVisuals";
 import { getRuntimeTuningDocument } from "./runtimeTuning";
 import {
-  createViewportRendererBootstrap,
-  showViewportRendererFailure,
+  disposeViewportRendererSession,
+  initializeViewportRendererSession,
+  reportViewportRendererFailure,
+  type ViewportRendererBootstrap,
 } from "./viewport/rendererBootstrap";
+import { createCompatibleScenePass } from "./viewport/postProcessingCompat";
+import { createViewportAnimationLoopController } from "./viewport/animationLoopController";
 
 const CAMERA_DISTANCE = 100;
 const MAX_PIXEL_RATIO = 2;
@@ -76,6 +83,7 @@ interface Bounds {
 }
 
 interface ShowcasePlanet {
+  auraScale: number;
   basePosition: Vec2;
   glowMesh: Mesh;
   mesh: Mesh;
@@ -170,12 +178,14 @@ export function createModelShowcaseViewport(
 ): () => void {
   let disposed = false;
   let renderer: WebGPURenderer | null = null;
-  let rendererBootstrap:
-    | Awaited<ReturnType<typeof createViewportRendererBootstrap>>
-    | null = null;
+  let rendererBootstrap: ViewportRendererBootstrap | null = null;
+  let animationLoopController: ReturnType<
+    typeof createViewportAnimationLoopController
+  > | null = null;
   let camera: OrthographicCamera | null = null;
   let backdropMesh: Mesh | null = null;
   const disposables: Array<{ dispose: () => void }> = [];
+  let cleanupComplete = false;
   const layoutBounds = createInitialBounds();
   let sceneCenterX = 0;
   let sceneCenterY = 0;
@@ -191,6 +201,7 @@ export function createModelShowcaseViewport(
   const showRockets = focus === "all" || focus === "rockets";
   const showCaches = focus === "all" || focus === "caches";
   let hasLayoutContent = false;
+  let rendererSessionToken = 0;
 
   const applyCameraFrame = () => {
     if (camera === null) {
@@ -244,25 +255,68 @@ export function createModelShowcaseViewport(
     applyCameraFrame();
   };
 
-  void (async () => {
-    try {
-      const bootstrap = await createViewportRendererBootstrap({
-        hostElement,
-        target: "modelShowcase",
-      });
-      const nextRenderer = bootstrap.renderer;
+  const disposeViewportSession = () => {
+    rendererSessionToken += 1;
+    window.removeEventListener("resize", resizeViewport);
 
-      if (disposed) {
-        bootstrap.dispose();
-        nextRenderer.dispose();
+    for (let index = disposables.length - 1; index >= 0; index -= 1) {
+      try {
+        disposables[index]!.dispose();
+      } catch (error) {
+        console.warn("[frontend] Failed to dispose showcase resource.", error);
+      }
+    }
+    disposables.length = 0;
+
+    disposeViewportRendererSession({
+      animationLoopController,
+      bootstrap: rendererBootstrap,
+      hostElement,
+      renderer,
+    });
+    animationLoopController = null;
+    rendererBootstrap = null;
+    renderer = null;
+    camera = null;
+    backdropMesh = null;
+  };
+
+  const handleViewportRenderError = (error: unknown) => {
+    disposeViewportSession();
+    reportViewportRendererFailure({
+      error,
+      failureLogLabel: "showcase viewport",
+      hostElement,
+      isDisposed: () => disposed,
+    });
+  };
+
+  const startViewport = async () => {
+    const sessionToken = ++rendererSessionToken;
+    try {
+      const rendererSession = await initializeViewportRendererSession({
+        failureLogLabel: "showcase viewport",
+        hostElement,
+        isDisposed: () => disposed,
+      });
+      if (rendererSession === null || sessionToken !== rendererSessionToken) {
+        if (rendererSession !== null) {
+          disposeViewportRendererSession({
+            bootstrap: rendererSession.bootstrap,
+            hostElement,
+            renderer: rendererSession.renderer,
+          });
+        }
         return;
       }
 
+      const { bootstrap, renderer: nextRenderer } = rendererSession;
       rendererBootstrap = bootstrap;
       renderer = nextRenderer;
 
+      const backgroundVisuals = getRuntimeTuningDocument().visuals.background;
       const scene = new Scene();
-      scene.background = SCENE_BACKGROUND.clone();
+      scene.background = createSceneBackgroundColor(backgroundVisuals);
 
       const nextCamera = new OrthographicCamera(-1, 1, 1, -1, -2000, 2000);
       nextCamera.position.set(0, 0, CAMERA_DISTANCE);
@@ -270,21 +324,17 @@ export function createModelShowcaseViewport(
       camera = nextCamera;
 
       const backdropGeometry = new PlaneGeometry(1, 1);
-      const backdropMaterial = createBackdropMaterial();
+      const backdropMaterial = createBackdropMaterial(backgroundVisuals);
       backdropMesh = new Mesh(backdropGeometry, backdropMaterial);
       backdropMesh.frustumCulled = false;
       backdropMesh.renderOrder = -40;
       scene.add(backdropMesh);
       registerDisposables(disposables, backdropGeometry, backdropMaterial);
 
-      const starfieldLayers = STARFIELD_LAYERS.map((layerConfig) => {
-        const layer = createStarfieldLayer(
-          layerConfig.count,
-          layerConfig.size,
-          layerConfig.alphaScale,
-          layerConfig.z,
-          layerConfig.parallax,
-        );
+      const backgroundLayers = createBackgroundLayerConfigs(
+        backgroundVisuals,
+      ).map((layerConfig) => {
+        const layer = createBackgroundLayer(layerConfig);
         scene.add(layer.group);
         registerDisposables(disposables, layer.geometry, layer.material);
         return layer;
@@ -322,22 +372,26 @@ export function createModelShowcaseViewport(
               planetVisuals.archetypes[
                 planet.archetype as keyof typeof planetVisuals.archetypes
               ];
-            const surfaceColor = archetypeVisuals?.color ?? planet.color;
+            const visualStyle =
+              archetypeVisuals ?? planetVisuals.archetypes.terra;
+            const forestProfile = getPlanetForestProfile(
+              planet.archetype,
+              planet.id,
+            );
             const material = createPlanetMaterial(
-              surfaceColor,
+              visualStyle,
               planet.id * 0.173,
-              archetypeVisuals?.forestDensity ?? 0,
-              archetypeVisuals?.forestColor ?? "#2c5a2a",
+              forestProfile,
             );
             const glowMaterial = createPlanetGlowMaterial(
-              surfaceColor,
+              visualStyle.color,
               planet.id * 0.173,
-              planetVisuals.auraScale,
-              planetVisuals.auraGap,
+              visualStyle.auraScale,
+              visualStyle.auraGap,
             );
             const mesh = new Mesh(planetGeometry, material);
             const glowMesh = new Mesh(glowGeometry, glowMaterial.material);
-            const renderRadius = planet.radius * planetVisuals.bodyScale;
+            const renderRadius = planet.radius * visualStyle.bodyScale;
             const spinAxis = createPlanetSpinAxis(planet.id);
             const spinPhase =
               ((planet.id * 0.173) % 1) * Math.PI * 2 + index * 0.37;
@@ -351,12 +405,13 @@ export function createModelShowcaseViewport(
               layoutBounds,
               basePosition.x,
               basePosition.y,
-              renderRadius * planetVisuals.auraScale,
-              renderRadius * planetVisuals.auraScale,
+              renderRadius * visualStyle.auraScale,
+              renderRadius * visualStyle.auraScale,
             );
             hasLayoutContent = true;
 
             return {
+              auraScale: visualStyle.auraScale,
               basePosition,
               glowMesh,
               mesh,
@@ -382,11 +437,16 @@ export function createModelShowcaseViewport(
               sun.color,
               sun.glowColor,
               sun.id,
+              sunVisuals.coreBrightness,
             );
-            const glowMaterial = createSunGlowMaterial(sun.glowColor, sun.id);
+            const glowMaterial = createSunGlowMaterial(
+              sun.glowColor,
+              sun.id,
+              sunVisuals.glowBrightness,
+            );
             const warpMaterial = createWarpMaterial(sun.glowColor, sun.id);
             const coreMesh = new Mesh(sunGeometry, coreMaterial);
-            const glowMesh = new Mesh(glowGeometry, glowMaterial);
+            const glowMesh = new Mesh(sunGeometry, glowMaterial);
             const warpMesh = new Mesh(warpGeometry, warpMaterial);
 
             coreMesh.renderOrder = -8;
@@ -439,13 +499,16 @@ export function createModelShowcaseViewport(
         const profile = rocketVisuals[kind];
         const mesh = new Mesh(
           rocketGeometry,
-          createRocketMaterial(profile.core),
+          createRocketMaterial(profile.core, profile.trail),
         );
         const trailMesh = new Mesh(
           ribbonGeometry,
-          createRocketTrailMaterial(profile.trail),
+          createRocketTrailMaterial(profile.core, profile.trail),
         );
-        const flameMesh = new Mesh(ribbonGeometry, createRocketFlameMaterial());
+        const flameMesh = new Mesh(
+          ribbonGeometry,
+          createRocketFlameMaterial(profile.core, profile.trail),
+        );
 
         trailMesh.renderOrder = 5;
         flameMesh.renderOrder = 6;
@@ -524,14 +587,15 @@ export function createModelShowcaseViewport(
         expandBounds(layoutBounds, 0, 0, 320, 220);
       }
 
-      hostElement.replaceChildren(nextRenderer.domElement);
       resizeViewport();
       window.addEventListener("resize", resizeViewport);
 
-      const scenePass = ssaaPass(scene, nextCamera) as ReturnType<
-        typeof pass
-      > & { sampleLevel: number };
-      scenePass.sampleLevel = SCENE_SSAA_LEVEL;
+      const scenePass = createCompatibleScenePass(
+        nextRenderer,
+        scene,
+        nextCamera,
+        SCENE_SSAA_LEVEL,
+      );
       const bloomNode = bloom(
         scenePass,
         BLOOM_STRENGTH,
@@ -543,186 +607,193 @@ export function createModelShowcaseViewport(
         nextRenderer.toneMapping,
         nextRenderer.outputColorSpace,
       );
-      const postProcessing = new PostProcessing(nextRenderer, outputFrame);
+      const postProcessing = new RenderPipeline(nextRenderer, outputFrame);
       postProcessing.outputColorTransform = false;
       registerDisposables(disposables, scenePass, bloomNode);
 
-      nextRenderer.setAnimationLoop(() => {
-        const nowSec = performance.now() / 1000;
+      animationLoopController = createViewportAnimationLoopController({
+        hostElement,
+        onActiveChange: (active) => {
+          if (active) {
+            resizeViewport();
+          }
+        },
+        onRenderError: (error) => {
+          handleViewportRenderError(error);
+        },
+        renderFrame: () => {
+          const nowSec = performance.now() / 1000;
 
-        for (const layer of starfieldLayers) {
-          layer.group.position.x = wrapCentered(
-            Math.sin(nowSec * 0.04) * 180 * layer.parallax,
-            layer.tileSize,
-          );
-          layer.group.position.y = wrapCentered(
-            Math.cos(nowSec * 0.03) * 140 * layer.parallax,
-            layer.tileSize,
-          );
-        }
+          for (const layer of backgroundLayers) {
+            layer.group.position.x = wrapCentered(
+              Math.sin(nowSec * 0.04) * 180 * layer.parallax +
+                nowSec * layer.driftX,
+              layer.tileSize,
+            );
+            layer.group.position.y = wrapCentered(
+              Math.cos(nowSec * 0.03) * 140 * layer.parallax +
+                nowSec * layer.driftY,
+              layer.tileSize,
+            );
+          }
 
-        for (const [index, planet] of showcasePlanets.entries()) {
-          planet.mesh.position.set(
-            planet.basePosition.x,
-            planet.basePosition.y,
-            0,
-          );
-          planet.glowMesh.position.set(
-            planet.basePosition.x,
-            planet.basePosition.y,
-            0.16,
-          );
-          planet.mesh.scale.set(
-            planet.renderRadius,
-            planet.renderRadius,
-            planet.renderRadius,
-          );
-          planet.glowMesh.scale.set(
-            planet.renderRadius * planetVisuals.auraScale,
-            planet.renderRadius * planetVisuals.auraScale,
-            1,
-          );
-          planet.mesh.quaternion.setFromAxisAngle(
-            planet.spinAxis,
-            planet.spinPhase + nowSec * planet.rotationSpeed,
-          );
-          planet.glowMesh.rotation.z = nowSec * (0.16 + index * 0.02);
-        }
+          for (const [index, planet] of showcasePlanets.entries()) {
+            planet.mesh.position.set(
+              planet.basePosition.x,
+              planet.basePosition.y,
+              0,
+            );
+            planet.glowMesh.position.set(
+              planet.basePosition.x,
+              planet.basePosition.y,
+              0.16,
+            );
+            planet.mesh.scale.set(
+              planet.renderRadius,
+              planet.renderRadius,
+              planet.renderRadius,
+            );
+            planet.glowMesh.scale.set(
+              planet.renderRadius * planet.auraScale,
+              planet.renderRadius * planet.auraScale,
+              1,
+            );
+            planet.mesh.quaternion.setFromAxisAngle(
+              planet.spinAxis,
+              planet.spinPhase + nowSec * planet.rotationSpeed,
+            );
+            planet.glowMesh.rotation.z = nowSec * (0.16 + index * 0.02);
+          }
 
-        for (const [index, sun] of showcaseSuns.entries()) {
-          sun.coreMesh.position.set(
-            sun.basePosition.x,
-            sun.basePosition.y,
-            0,
-          );
-          sun.glowMesh.position.set(
-            sun.basePosition.x,
-            sun.basePosition.y,
-            -2,
-          );
-          sun.warpMesh.position.set(
-            sun.basePosition.x,
-            sun.basePosition.y,
-            -4,
-          );
-          sun.coreMesh.scale.set(sun.radius, sun.radius, sun.radius);
-          sun.glowMesh.scale.set(
-            sun.radius * sunVisuals.glowScale,
-            sun.radius * sunVisuals.glowScale,
-            1,
-          );
-          sun.warpMesh.scale.set(
-            sun.radius * sunVisuals.warpScale,
-            sun.radius * sunVisuals.warpScale,
-            1,
-          );
-          sun.coreMesh.rotation.x = 0.38;
-          sun.coreMesh.rotation.y = nowSec * sun.rotationSpeed;
-          sun.glowMesh.rotation.z = nowSec * (0.05 + index * 0.02);
-          (sun.coreMesh.material as { opacity: number }).opacity = 1;
-          (sun.glowMesh.material as { opacity: number }).opacity = 0.92;
-          (sun.warpMesh.material as { opacity: number }).opacity = 0.78;
-        }
+          for (const [index, sun] of showcaseSuns.entries()) {
+            sun.coreMesh.position.set(
+              sun.basePosition.x,
+              sun.basePosition.y,
+              0,
+            );
+            sun.glowMesh.position.set(
+              sun.basePosition.x,
+              sun.basePosition.y,
+              -2,
+            );
+            sun.warpMesh.position.set(
+              sun.basePosition.x,
+              sun.basePosition.y,
+              -4,
+            );
+            sun.coreMesh.scale.set(sun.radius, sun.radius, sun.radius);
+            sun.glowMesh.scale.set(
+              sun.radius * sunVisuals.glowScale,
+              sun.radius * sunVisuals.glowScale,
+              sun.radius * sunVisuals.glowScale,
+            );
+            sun.warpMesh.scale.set(
+              sun.radius * sunVisuals.warpScale,
+              sun.radius * sunVisuals.warpScale,
+              1,
+            );
+            sun.coreMesh.rotation.x = 0.38;
+            sun.coreMesh.rotation.y = nowSec * sun.rotationSpeed;
+            sun.glowMesh.rotation.z = nowSec * (0.05 + index * 0.02);
+            (sun.coreMesh.material as { opacity: number }).opacity = 1;
+            (sun.glowMesh.material as { opacity: number }).opacity = 0.92;
+            (sun.warpMesh.material as { opacity: number }).opacity = 0.78;
+          }
 
-        for (const rocket of showcaseRockets) {
-          const profile = rocketVisuals[rocket.kind];
-          const angle =
-            rocket.kind === "heavy"
-              ? -0.14
-              : rocket.kind === "seeker"
-                ? 0.12
-                : 0;
-          const flamePulse = 0.9 + Math.sin(nowSec * 18 + rocket.phase) * 0.08;
-          const trailPulse = 0.94 + Math.sin(nowSec * 7 + rocket.phase) * 0.06;
+          for (const rocket of showcaseRockets) {
+            const profile = rocketVisuals[rocket.kind];
+            const angle =
+              rocket.kind === "heavy"
+                ? -0.14
+                : rocket.kind === "seeker"
+                  ? 0.12
+                  : 0;
+            const flamePulse =
+              0.9 + Math.sin(nowSec * 18 + rocket.phase) * 0.08;
+            const trailPulse =
+              0.94 + Math.sin(nowSec * 7 + rocket.phase) * 0.06;
 
-          rocket.mesh.position.set(
-            rocket.basePosition.x,
-            rocket.basePosition.y,
-            3,
-          );
-          rocket.mesh.rotation.z = angle;
-          rocket.mesh.scale.set(profile.bodyScale.x, profile.bodyScale.y, 1);
+            rocket.mesh.position.set(
+              rocket.basePosition.x,
+              rocket.basePosition.y,
+              3,
+            );
+            rocket.mesh.rotation.z = angle;
+            rocket.mesh.scale.set(profile.bodyScale.x, profile.bodyScale.y, 1);
 
-          rocket.trailMesh.position.set(
-            rocket.basePosition.x -
-              Math.cos(angle) * (profile.bodyScale.x * 0.58),
-            rocket.basePosition.y -
-              Math.sin(angle) * (profile.bodyScale.x * 0.58),
-            2.75,
-          );
-          rocket.trailMesh.rotation.z = angle;
-          rocket.trailMesh.scale.set(
-            profile.trailScale.x * trailPulse,
-            profile.trailScale.y,
-            1,
-          );
+            rocket.trailMesh.position.set(
+              rocket.basePosition.x -
+                Math.cos(angle) * (profile.bodyScale.x * 0.58),
+              rocket.basePosition.y -
+                Math.sin(angle) * (profile.bodyScale.x * 0.58),
+              2.75,
+            );
+            rocket.trailMesh.rotation.z = angle;
+            rocket.trailMesh.scale.set(
+              profile.trailScale.x * trailPulse,
+              profile.trailScale.y,
+              1,
+            );
 
-          rocket.flameMesh.position.set(
-            rocket.basePosition.x -
-              Math.cos(angle) * (profile.bodyScale.x * 0.52),
-            rocket.basePosition.y -
-              Math.sin(angle) * (profile.bodyScale.x * 0.52),
-            2.9,
-          );
-          rocket.flameMesh.rotation.z = angle;
-          rocket.flameMesh.scale.set(
-            profile.flameScale.x * flamePulse,
-            profile.flameScale.y,
-            1,
-          );
-        }
+            rocket.flameMesh.position.set(
+              rocket.basePosition.x -
+                Math.cos(angle) * (profile.bodyScale.x * 0.52),
+              rocket.basePosition.y -
+                Math.sin(angle) * (profile.bodyScale.x * 0.52),
+              2.9,
+            );
+            rocket.flameMesh.rotation.z = angle;
+            rocket.flameMesh.scale.set(
+              profile.flameScale.x * flamePulse,
+              profile.flameScale.y,
+              1,
+            );
+          }
 
-        for (const cache of showcaseCaches) {
-          const pulse = 0.94 + Math.sin(nowSec * cache.pulseRate) * 0.08;
+          for (const cache of showcaseCaches) {
+            const pulse = 0.94 + Math.sin(nowSec * cache.pulseRate) * 0.08;
 
-          cache.group.position.set(
-            cache.basePosition.x,
-            cache.basePosition.y,
-            0,
-          );
-          cache.group.rotation.z = 0;
-          cache.badgeSprite.scale.set(
-            cacheVisuals.badgeBaseSize * cacheVisuals.badgeScale * pulse,
-            cacheVisuals.badgeBaseSize * cacheVisuals.badgeScale * pulse,
-            1,
-          );
-        }
+            cache.group.position.set(
+              cache.basePosition.x,
+              cache.basePosition.y,
+              0,
+            );
+            cache.group.rotation.z = 0;
+            cache.badgeSprite.scale.set(
+              cacheVisuals.badgeBaseSize * cacheVisuals.badgeScale * pulse,
+              cacheVisuals.badgeBaseSize * cacheVisuals.badgeScale * pulse,
+              1,
+            );
+          }
 
-        postProcessing.render();
+          postProcessing.render();
+        },
+        renderer: nextRenderer,
       });
     } catch (error) {
-      console.error(
-        "[frontend] Failed to initialize showcase viewport.",
+      disposeViewportSession();
+      reportViewportRendererFailure({
         error,
-      );
-      if (!disposed) {
-        showViewportRendererFailure(
-          hostElement,
-          "Renderer initialization failed.",
-        );
-      }
+        failureLogLabel: "showcase viewport",
+        hostElement,
+        isDisposed: () => disposed,
+      });
     }
-  })();
+  };
+
+  const disposeViewport = () => {
+    if (cleanupComplete) {
+      return;
+    }
+
+    cleanupComplete = true;
+    disposeViewportSession();
+  };
+
+  void startViewport();
 
   return () => {
     disposed = true;
-    window.removeEventListener("resize", resizeViewport);
-
-    for (let index = disposables.length - 1; index >= 0; index -= 1) {
-      try {
-        disposables[index]!.dispose();
-      } catch (error) {
-        console.warn("[frontend] Failed to dispose showcase resource.", error);
-      }
-    }
-
-    if (renderer !== null) {
-      renderer.setAnimationLoop(null);
-      renderer.dispose();
-    }
-
-    rendererBootstrap?.dispose();
-
-    hostElement.replaceChildren();
+    disposeViewport();
   };
 }

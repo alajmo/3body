@@ -22,16 +22,19 @@ describe("createInitialHudState", () => {
     expect(first.foresightSettings).toEqual(DEFAULT_FORESIGHT_SETTINGS);
     expect(first.shieldSettings).toEqual(DEFAULT_SHIELD_SETTINGS);
     expect(first.boostSettings).toEqual(DEFAULT_BOOST_SETTINGS);
+    expect(first.botsEnabled).toBe(true);
     expect(first.planetBodyScale).toBe(DEFAULT_PLANET_BODY_SCALE);
     expect(first.planetAuraGap).toBe(DEFAULT_PLANET_AURA_GAP);
     expect(first.planetAuraScale).toBe(DEFAULT_PLANET_AURA_SCALE);
     expect(first.cacheBadgeScale).toBe(DEFAULT_CACHE_BADGE_SCALE);
     expect(first.profilingEnabled).toBe(false);
+    expect(first.playerHeadingDeg).toBeNull();
+    expect(first.playerSpeed).toBe(0);
     expect(first.connection).toEqual({
       extrapolating: false,
       fps: 0,
       frameTimeMs: 0,
-      label: "Local sandbox",
+      label: "Local",
       rttMs: 0,
       state: "local",
     });
@@ -58,6 +61,6 @@ describe("createInitialHudState", () => {
     expect(second.boostSettings.magnitude).toBe(
       DEFAULT_BOOST_SETTINGS.magnitude,
     );
-    expect(second.connection.label).toBe("Local sandbox");
+    expect(second.connection.label).toBe("Local");
   });
 });

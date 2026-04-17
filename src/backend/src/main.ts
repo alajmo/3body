@@ -1,6 +1,7 @@
 import { config } from "./config";
 import type { ConnectionWebSocketData } from "./connection";
 import {
+  loadEditorTuningIntoRuntime,
   readEditorTuningDocument,
   writeEditorTuningDocument,
 } from "./editor-tuning";
@@ -62,6 +63,8 @@ const jsonError = (status: number, message: string): Response =>
 const statsStore = new StatsStore(config.dataDir);
 const matchmaking = new MatchmakingService(config, statsStore);
 let shuttingDown = false;
+
+await loadEditorTuningIntoRuntime();
 
 const server: Bun.Server<ConnectionWebSocketData> = Bun.serve({
   hostname: config.host,

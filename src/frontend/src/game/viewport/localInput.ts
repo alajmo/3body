@@ -8,10 +8,12 @@ interface PendingAbilityRequests {
 }
 
 interface PendingDroneRequests {
-  autoReturn: boolean;
-  burst: boolean;
   launch: boolean;
-  recall: boolean;
+}
+
+interface DroneSteeringState {
+  leftHeld: boolean;
+  rightHeld: boolean;
 }
 
 interface PointerState {
@@ -31,6 +33,7 @@ export interface GameViewportInputRuntimeState {
   pendingShots: number;
   pointerState: PointerState;
   readModeHeld: boolean;
+  droneSteering: DroneSteeringState;
 }
 
 export interface ViewportInputPlayerSeed {
@@ -46,6 +49,7 @@ export interface ViewportPlayerControlState {
 interface CreateGameViewportInputControllerOptions {
   canvasElement: HTMLCanvasElement;
   getPlayerControlState: () => ViewportPlayerControlState;
+  isShieldActive: () => boolean;
   initialPlayer: ViewportInputPlayerSeed;
   isSandboxPaused: () => boolean;
   sandboxControlsEnabled: () => boolean;
@@ -61,20 +65,33 @@ const createPendingAbilityRequests = (): PendingAbilityRequests => ({
 });
 
 const createPendingDroneRequests = (): PendingDroneRequests => ({
-  autoReturn: false,
-  burst: false,
   launch: false,
-  recall: false,
 });
 
-const isEditableTarget = (
-  target: EventTarget | null,
-): target is HTMLElement =>
+const createDroneSteeringState = (): DroneSteeringState => ({
+  leftHeld: false,
+  rightHeld: false,
+});
+
+const isEditableTarget = (target: EventTarget | null): target is HTMLElement =>
   target instanceof HTMLElement &&
   (target.isContentEditable ||
     target.tagName === "INPUT" ||
     target.tagName === "TEXTAREA" ||
     target.tagName === "SELECT");
+
+const blurActiveSandboxPanelControl = (windowTarget: Window) => {
+  const activeElement = windowTarget.document.activeElement;
+  if (!(activeElement instanceof HTMLElement)) {
+    return;
+  }
+
+  if (activeElement.closest(".sandbox-panel") === null) {
+    return;
+  }
+
+  activeElement.blur();
+};
 
 export const createGameViewportInputController = (
   options: CreateGameViewportInputControllerOptions,
@@ -87,7 +104,7 @@ export const createGameViewportInputController = (
   state: GameViewportInputRuntimeState;
 } => {
   const state: GameViewportInputRuntimeState = {
-    fullViewEnabled: false,
+    fullViewEnabled: true,
     inputState: {
       aimWorld: {
         x: options.initialPlayer.aimWorld.x,
@@ -104,6 +121,7 @@ export const createGameViewportInputController = (
       hasPointer: false,
     },
     readModeHeld: false,
+    droneSteering: createDroneSteeringState(),
   };
 
   const clearStepScopedRequests = () => {
@@ -111,10 +129,7 @@ export const createGameViewportInputController = (
     state.pendingAbilityRequests.shield = false;
     state.pendingAbilityRequests.boost = false;
     state.pendingAbilityRequests.wildcard = false;
-    state.pendingDroneRequests.autoReturn = false;
-    state.pendingDroneRequests.burst = false;
     state.pendingDroneRequests.launch = false;
-    state.pendingDroneRequests.recall = false;
   };
 
   const clearPendingGameplayRequests = () => {
@@ -128,6 +143,8 @@ export const createGameViewportInputController = (
       y: player.aimWorld.y,
     };
     state.inputState.selectedRocketKind = player.selectedRocketKind;
+    state.droneSteering.leftHeld = false;
+    state.droneSteering.rightHeld = false;
     clearPendingGameplayRequests();
   };
 
@@ -138,6 +155,13 @@ export const createGameViewportInputController = (
 
     state.pendingShots -= 1;
     return true;
+  };
+
+  const selectWeapon = (rocketKind: RocketKind) => {
+    state.inputState.selectedRocketKind = rocketKind;
+    if (options.isShieldActive()) {
+      state.pendingAbilityRequests.shield = true;
+    }
   };
 
   const handleKeyDown = (event: KeyboardEvent) => {
@@ -166,30 +190,20 @@ export const createGameViewportInputController = (
       return;
     }
 
-    if (event.code === "Digit1") {
-      state.inputState.selectedRocketKind = "light";
+    if (event.code === "Digit1" && !event.repeat) {
+      selectWeapon("light");
       event.preventDefault();
       return;
     }
 
-    if (event.code === "Digit2") {
-      state.inputState.selectedRocketKind = "heavy";
+    if (event.code === "Digit2" && !event.repeat) {
+      selectWeapon("heavy");
       event.preventDefault();
       return;
     }
 
-    if (event.code === "Digit3") {
-      state.inputState.selectedRocketKind = "seeker";
-      event.preventDefault();
-      return;
-    }
-
-    if (event.code === "Digit4" && !event.repeat) {
-      if (options.getPlayerControlState().activeDroneId !== null) {
-        state.pendingDroneRequests.recall = true;
-      } else {
-        state.pendingDroneRequests.launch = true;
-      }
+    if (event.code === "Digit3" && !event.repeat) {
+      selectWeapon("seeker");
       event.preventDefault();
       return;
     }
@@ -217,21 +231,13 @@ export const createGameViewportInputController = (
       event.preventDefault();
       return;
     }
-
-    if (
-      event.code === "Escape" &&
-      !event.repeat &&
-      options.getPlayerControlState().controlMode === "drone"
-    ) {
-      state.pendingDroneRequests.autoReturn = true;
-      event.preventDefault();
-    }
   };
 
   const handleKeyUp = (event: KeyboardEvent) => {
     if (event.code === "ShiftLeft" || event.code === "ShiftRight") {
       state.readModeHeld = false;
       event.preventDefault();
+      return;
     }
   };
 
@@ -251,6 +257,7 @@ export const createGameViewportInputController = (
       return;
     }
 
+    blurActiveSandboxPanelControl(options.windowTarget);
     state.pointerState.clientX = event.clientX;
     state.pointerState.clientY = event.clientY;
     state.pointerState.hasPointer = true;
@@ -267,18 +274,15 @@ export const createGameViewportInputController = (
     }
 
     if (event.button === 2) {
-      if (options.getPlayerControlState().activeDroneId !== null) {
-        state.pendingDroneRequests.recall = true;
-      }
       event.preventDefault();
       return;
     }
 
     if (options.getPlayerControlState().controlMode === "drone") {
-      state.pendingDroneRequests.burst = true;
-    } else {
-      state.pendingShots += 1;
+      event.preventDefault();
+      return;
     }
+    state.pendingShots += 1;
     event.preventDefault();
   };
 
@@ -301,9 +305,18 @@ export const createGameViewportInputController = (
       options.windowTarget.removeEventListener("keydown", handleKeyDown);
       options.windowTarget.removeEventListener("keyup", handleKeyUp);
       options.windowTarget.removeEventListener("blur", handleWindowBlur);
-      options.canvasElement.removeEventListener("pointermove", handlePointerMove);
-      options.canvasElement.removeEventListener("pointerdown", handlePointerDown);
-      options.canvasElement.removeEventListener("contextmenu", handleContextMenu);
+      options.canvasElement.removeEventListener(
+        "pointermove",
+        handlePointerMove,
+      );
+      options.canvasElement.removeEventListener(
+        "pointerdown",
+        handlePointerDown,
+      );
+      options.canvasElement.removeEventListener(
+        "contextmenu",
+        handleContextMenu,
+      );
     },
     resetForPlayer,
     state,

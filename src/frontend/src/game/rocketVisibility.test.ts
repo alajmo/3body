@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_ORBIT_PRESET } from "./orbitPresets";
 import {
+  getCannonMuzzleDistanceFromLayout,
   getCannonMuzzleDistance,
   getCannonMuzzleOrigin,
+  getCannonWorldLayout,
   getLaunchBurstHandoffDuration,
   getLaunchBurstTravelDistance,
   getMaxConcurrentRocketsForControllers,
@@ -24,23 +26,11 @@ describe("rocketVisibility", () => {
   });
 
   it("clamps the rendered rocket width to a minimum screen-space size", () => {
-    expect(
-      getMinScreenAxisScale(
-        { x: 24, y: 0.8 },
-        1.8,
-        2,
-      ),
-    ).toEqual({
+    expect(getMinScreenAxisScale({ x: 24, y: 0.8 }, 1.8, 2)).toEqual({
       x: 24,
       y: 3.6,
     });
-    expect(
-      getMinScreenAxisScale(
-        { x: 24, y: 4.2 },
-        1.8,
-        2,
-      ),
-    ).toEqual({
+    expect(getMinScreenAxisScale({ x: 24, y: 4.2 }, 1.8, 2)).toEqual({
       x: 24,
       y: 4.2,
     });
@@ -48,14 +38,29 @@ describe("rocketVisibility", () => {
 
   it("computes the cannon muzzle tip from the rendered cannon layout", () => {
     const muzzleDistance = getCannonMuzzleDistance(44, 4, 11, 26);
+    const layout = getCannonWorldLayout(
+      {
+        barrelLength: 26,
+        barrelWidth: 9,
+        bandLength: 3.5,
+        bandWidth: 11.5,
+        breechDepth: 14,
+        breechLength: 11,
+        breechWidth: 16,
+        flashDurationSec: 0.14,
+        flashRadius: 16,
+        muzzleLength: 4,
+        muzzleRadius: 5.6,
+        stemLength: 4,
+        stemWidth: 8,
+      },
+      1,
+    );
 
     expect(muzzleDistance).toBe(85);
+    expect(getCannonMuzzleDistanceFromLayout(44, layout)).toBe(85);
     expect(
-      getCannonMuzzleOrigin(
-        { x: 100, y: 50 },
-        { x: 1, y: 0 },
-        muzzleDistance,
-      ),
+      getCannonMuzzleOrigin({ x: 100, y: 50 }, { x: 1, y: 0 }, muzzleDistance),
     ).toEqual({
       x: 185,
       y: 50,

@@ -1,5 +1,11 @@
-import { AuthoritativeGamePanel } from "./AuthoritativeGamePanel";
+import { GameViewportPanel } from "./GameViewportPanel";
 
 export function GamePage() {
-  return <AuthoritativeGamePanel className="app-shell" />;
+  return (
+    <GameViewportPanel
+      className="app-shell"
+      defaultBotsEnabled={false}
+      showPerformanceTools
+    />
+  );
 }

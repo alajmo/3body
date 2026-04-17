@@ -1,6 +1,5 @@
 import {
   ARCHETYPE_IDS,
-  CURRENT_GAME_TUNING,
   type ClientMsg,
   type DeltaSnapshotMsg,
   type ErrorMsg,
@@ -21,12 +20,28 @@ import {
   type AuthoritativeMatchRuntimeState,
 } from "./game/authoritativeMatchRuntime";
 import { createAuthoritativeViewport } from "./game/createAuthoritativeViewport";
-import { createInitialHudState } from "./game/viewportHud";
+import { getRuntimeTuningDocument } from "./game/runtimeTuning";
+import {
+  createInitialHudState,
+  type GameViewportController,
+} from "./game/viewportHud";
+import {
+  loadViewportSettings,
+  persistProfilingEnabled,
+} from "./game/viewport/settings";
 
 const PROFILE_TOKEN_STORAGE_KEY = "3body.profileToken";
 const RESUME_TOKEN_STORAGE_KEY = "3body.resumeToken";
 const ROOM_ID_STORAGE_KEY = "3body.roomId";
 const PLAYER_NAME_STORAGE_KEY = "3body.playerName";
+
+const readStoredViewportProfilingEnabled = (): boolean => {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  return loadViewportSettings(window.localStorage).profilingEnabled;
+};
 
 interface MatchPanelUiState {
   connectionError: string | null;
@@ -154,14 +169,76 @@ export function AuthoritativeGamePanel({
 }: {
   className?: string;
 }) {
+  const initialProfilingEnabledRef = useRef<boolean | null>(null);
+  if (initialProfilingEnabledRef.current === null) {
+    initialProfilingEnabledRef.current = readStoredViewportProfilingEnabled();
+  }
+  const authoritativePerformanceStateRef = useRef({
+    profilingEnabled: initialProfilingEnabledRef.current,
+    resetToken: 0,
+  });
   const viewportElementRef = useRef<HTMLDivElement | null>(null);
+  const controllerRef = useRef<GameViewportController | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const runtimeRef = useRef(createInitialAuthoritativeMatchRuntimeState());
-  const [hudState, setHudState] = useState(createInitialHudState);
+  const [hudState, setHudState] = useState(() => ({
+    ...createInitialHudState(),
+    profilingEnabled: initialProfilingEnabledRef.current ?? false,
+  }));
   const [uiState, setUiState] = useState<MatchPanelUiState>(() =>
     snapshotUiState(runtimeRef.current),
   );
   const [nowMs, setNowMs] = useState(() => Date.now());
+
+  const resetAuthoritativeProfiling = () => {
+    authoritativePerformanceStateRef.current.resetToken += 1;
+    startTransition(() => {
+      setHudState((current) => ({
+        ...current,
+        debugItems: [],
+      }));
+    });
+  };
+
+  const setAuthoritativeProfilingEnabled = (value: boolean) => {
+    authoritativePerformanceStateRef.current.profilingEnabled = value;
+    authoritativePerformanceStateRef.current.resetToken += 1;
+    persistProfilingEnabled(window.localStorage, value);
+    startTransition(() => {
+      setHudState((current) => ({
+        ...current,
+        debugItems: [],
+        profilingEnabled: value,
+      }));
+    });
+  };
+
+  if (controllerRef.current === null) {
+    controllerRef.current = {
+      resetProfiling: () => {
+        resetAuthoritativeProfiling();
+      },
+      resetAbilitySettings: () => {},
+      resetBlackHoleSettings: () => {},
+      resetPlanetVisualSettings: () => {},
+      setBotsEnabled: () => {},
+      setBoostSetting: () => {},
+      setBlackHoleSetting: () => {},
+      setCacheBadgeScale: () => {},
+      setForesightSetting: () => {},
+      setPlanetBodyScale: () => {},
+      setPlanetAuraGap: () => {},
+      setPlanetAuraScale: () => {},
+      setProfilingEnabled: (value) => {
+        setAuthoritativeProfilingEnabled(value);
+      },
+      pauseSandbox: () => {},
+      playSandbox: () => {},
+      resetSandbox: () => {},
+      setShieldSetting: () => {},
+      setOrbitPreset: () => {},
+    };
+  }
 
   useEffect(() => {
     const timerId = window.setInterval(() => {
@@ -188,6 +265,7 @@ export function AuthoritativeGamePanel({
           socket.send(JSON.stringify(message));
         }
       },
+      getPerformanceState: () => authoritativePerformanceStateRef.current,
       getRuntimeState: () => runtimeRef.current,
       onHudStateChange: (nextHudState) => {
         startTransition(() => {
@@ -274,7 +352,10 @@ export function AuthoritativeGamePanel({
       const usedArchetypes = new Set(
         runtime.pickState.picks
           .map((pick) => pick.archetypeId)
-          .filter((archetype): archetype is NonNullable<typeof archetype> => archetype !== undefined),
+          .filter(
+            (archetype): archetype is NonNullable<typeof archetype> =>
+              archetype !== undefined,
+          ),
       );
       const nextArchetype =
         ARCHETYPE_IDS.find((archetype) => !usedArchetypes.has(archetype)) ??
@@ -367,14 +448,8 @@ export function AuthoritativeGamePanel({
             runtimeRef.current.role = message.role;
             runtimeRef.current.roomId = message.roomId;
             runtimeRef.current.roomRoster = message.roster;
-            storage.setItem(
-              PROFILE_TOKEN_STORAGE_KEY,
-              message.profileToken,
-            );
-            storage.setItem(
-              RESUME_TOKEN_STORAGE_KEY,
-              message.resumeToken,
-            );
+            storage.setItem(PROFILE_TOKEN_STORAGE_KEY, message.profileToken);
+            storage.setItem(RESUME_TOKEN_STORAGE_KEY, message.resumeToken);
             storage.setItem(ROOM_ID_STORAGE_KEY, message.roomId);
             runtimeRef.current.phase = "lobby";
             syncUiState();
@@ -403,7 +478,9 @@ export function AuthoritativeGamePanel({
             return;
 
           case "countdown":
-            runtimeRef.current.countdownEndsAtMs = (parsed as { endsAtMs: number }).endsAtMs;
+            runtimeRef.current.countdownEndsAtMs = (
+              parsed as { endsAtMs: number }
+            ).endsAtMs;
             runtimeRef.current.phase = "countdown";
             syncUiState();
             return;
@@ -443,7 +520,10 @@ export function AuthoritativeGamePanel({
                   ? currentSnapshot.self
                   : (deltaSnapshot.self ?? null),
               tick: deltaSnapshot.tick,
-              world: applyDeltaSnapshotToWorld(currentSnapshot.world, deltaSnapshot),
+              world: applyDeltaSnapshotToWorld(
+                currentSnapshot.world,
+                deltaSnapshot,
+              ),
             };
             runtimeRef.current.phase = "combat";
             socket.send(
@@ -485,7 +565,10 @@ export function AuthoritativeGamePanel({
           case "error": {
             const message = parsed as ErrorMsg;
             runtimeRef.current.connectionError = message.message;
-            if (message.code === "bad_resume_token" || message.code === "invalid_room") {
+            if (
+              message.code === "bad_resume_token" ||
+              message.code === "invalid_room"
+            ) {
               clearSession();
               runtimeRef.current.roomId = null;
               runtimeRef.current.phase = "reconnecting";
@@ -512,7 +595,8 @@ export function AuthoritativeGamePanel({
       });
 
       socket.addEventListener("error", () => {
-        runtimeRef.current.connectionError = "Authoritative match connection failed.";
+        runtimeRef.current.connectionError =
+          "Authoritative match connection failed.";
         runtimeRef.current.connectionState = "reconnecting";
         syncUiState();
       });
@@ -538,10 +622,10 @@ export function AuthoritativeGamePanel({
       <div ref={viewportElementRef} className="canvas-root" />
       <div className="hud-root">
         <CombatHud
-          controller={null}
+          controller={controllerRef.current}
           hud={hudState}
-          hudTuning={CURRENT_GAME_TUNING.visuals.hud}
-          showSandboxTools={false}
+          hudTuning={getRuntimeTuningDocument().visuals.hud}
+          showPerformanceTools
         />
       </div>
       <div className="page-overlay page-overlay--page">

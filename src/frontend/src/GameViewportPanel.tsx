@@ -10,17 +10,22 @@ import {
 
 export function GameViewportPanel({
   className = "app-shell",
+  defaultBotsEnabled = true,
   enableSandboxStorage = false,
   hudTuning = getRuntimeTuningDocument().visuals.hud,
-  showSandboxTools = false,
+  showPerformanceTools = true,
 }: {
   className?: string;
+  defaultBotsEnabled?: boolean;
   enableSandboxStorage?: boolean;
   hudTuning?: HudVisualTuning;
-  showSandboxTools?: boolean;
+  showPerformanceTools?: boolean;
 }) {
   const viewportElementRef = useRef<HTMLDivElement | null>(null);
-  const [hudState, setHudState] = useState(createInitialHudState);
+  const [hudState, setHudState] = useState(() => ({
+    ...createInitialHudState(),
+    botsEnabled: defaultBotsEnabled,
+  }));
   const [viewportController, setViewportController] =
     useState<GameViewportController | null>(null);
 
@@ -31,6 +36,7 @@ export function GameViewportPanel({
     }
 
     return createGameViewport(viewportElement, {
+      defaultBotsEnabled,
       enableSandboxStorage,
       onControllerReady: setViewportController,
       onHudStateChange: (nextState) => {
@@ -39,7 +45,7 @@ export function GameViewportPanel({
         });
       },
     });
-  }, [enableSandboxStorage]);
+  }, [defaultBotsEnabled, enableSandboxStorage]);
 
   return (
     <div className={className}>
@@ -49,7 +55,7 @@ export function GameViewportPanel({
           controller={viewportController}
           hud={hudState}
           hudTuning={hudTuning}
-          showSandboxTools={showSandboxTools}
+          showPerformanceTools={showPerformanceTools}
         />
       </div>
     </div>

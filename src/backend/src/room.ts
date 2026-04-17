@@ -6,12 +6,10 @@ import {
   type ArchetypeId,
   type BotDifficulty,
   type CountdownMsg,
-  type DroneInputMsg,
   type EntityId,
   type FireRocketMsg,
   type FullSnapshotMsg,
   type InputMsg,
-  type LaunchDroneMsg,
   type LobbyPlayerSummary,
   type LobbyStateMsg,
   type MatchEndMsg,
@@ -75,8 +73,8 @@ export interface RocketRuntimeState {
 export interface CombatPlayerRuntime {
   activeDroneId: EntityId | null;
   controlMode: "planet" | "drone";
-  droneAimDir: Vec2;
-  droneBurstRequested: boolean;
+  droneTurnLeft: boolean;
+  droneTurnRight: boolean;
   boundaryEnteredTick?: number;
   deathTick?: number;
   kills: number;
@@ -150,25 +148,6 @@ export type QueuedCombatMessage =
       playerId: PlayerId;
       slot: AbilityMsg["slot"];
       aimDir?: AbilityMsg["aimDir"];
-    }
-  | {
-      type: "launchDrone";
-      playerId: PlayerId;
-      aimDir: LaunchDroneMsg["aimDir"];
-    }
-  | {
-      type: "droneInput";
-      playerId: PlayerId;
-      aimDir: DroneInputMsg["aimDir"];
-      burst: DroneInputMsg["burst"];
-    }
-  | {
-      type: "droneAutoReturn";
-      playerId: PlayerId;
-    }
-  | {
-      type: "droneRecall";
-      playerId: PlayerId;
     };
 
 export interface RoomParticipant {
@@ -650,8 +629,8 @@ export class Room {
     runtime = {
       activeDroneId: null,
       controlMode: "planet",
-      droneAimDir: { ...DEFAULT_INPUT_DIR },
-      droneBurstRequested: false,
+      droneTurnLeft: false,
+      droneTurnRight: false,
       kills: 0,
       nearMisses: 0,
       damageDealt: 0,
@@ -934,8 +913,8 @@ export class Room {
       this.combatPlayerRuntime.set(participant.playerId, {
         activeDroneId: null,
         controlMode: "planet",
-        droneAimDir: { ...DEFAULT_INPUT_DIR },
-        droneBurstRequested: false,
+        droneTurnLeft: false,
+        droneTurnRight: false,
         kills: 0,
         nearMisses: 0,
         damageDealt: 0,
