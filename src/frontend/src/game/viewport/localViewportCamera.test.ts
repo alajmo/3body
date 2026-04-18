@@ -38,7 +38,7 @@ describe("getLocalViewportCameraFrame", () => {
     expect(frame.centerY).not.toBe(otherPlanet.pos.y);
   });
 
-  it("uses the configured read mode world height", () => {
+  it("uses the configured read mode world height as the sandbox baseline", () => {
     const tunedDocument = structuredClone(CURRENT_GAME_TUNING);
     tunedDocument.gameplay.camera.viewportWorldHeight = 5100;
     tunedDocument.gameplay.camera.readModeWorldHeight = 7800;
@@ -57,7 +57,7 @@ describe("getLocalViewportCameraFrame", () => {
       state,
     });
 
-    expect(followFrame.visibleWorldHeight).toBe(5100);
+    expect(followFrame.visibleWorldHeight).toBe(7800);
     expect(readModeFrame.visibleWorldHeight).toBe(7800);
   });
 });

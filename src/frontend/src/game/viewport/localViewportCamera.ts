@@ -34,7 +34,8 @@ const getLocalViewportCameraHeights = () => {
   const cameraTuning = getRuntimeTuningDocument().gameplay.camera;
 
   return {
-    followWorldHeight: cameraTuning.viewportWorldHeight,
+    // Local sandbox uses the read-mode height as its baseline gameplay camera.
+    followWorldHeight: cameraTuning.readModeWorldHeight,
     readModeWorldHeight: cameraTuning.readModeWorldHeight,
   };
 };

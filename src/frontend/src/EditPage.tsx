@@ -2214,7 +2214,7 @@ export function EditPage() {
           <>
             <InspectorSection
               title="Gameplay camera"
-              note="Fixed gameplay zoom. Set read mode equal to viewport height to remove the extra Shift zoom."
+              note="Viewport world height drives the standard follow camera. Local sandbox uses read mode world height as its baseline view, and Shift no longer adds extra sandbox zoom."
               resetDisabled={sectionResetDisabled}
               onReset={() =>
                 resetInspectorSection((draft, defaults) => {
