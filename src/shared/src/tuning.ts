@@ -11,7 +11,7 @@ import type {
   RocketSpec,
 } from "./constants";
 import type { ArchetypeId, RocketKind } from "./entities";
-import { fromAngle, scale, type Vec2 } from "./vec2";
+import { type Vec2 } from "./vec2";
 
 export interface ShieldSpec extends AbilitySpec {
   arcDeg: number;
@@ -326,15 +326,9 @@ export interface OrbitPlanetGameplayTuning {
   vel: Vec2;
 }
 
-export interface OrbitSystemDriftGameplayTuning {
-  directionDeg: number;
-  speed: number;
-}
-
 export interface OrbitGameplayTuning {
   sunStartDistanceScale: number;
   planetCircleRadius: number;
-  systemDrift: OrbitSystemDriftGameplayTuning;
   suns: [
     OrbitSunGameplayTuning,
     OrbitSunGameplayTuning,
@@ -411,14 +405,6 @@ export const getOrbitGameplayPlanet = (
 export const getOrbitPlanetCircleRadius = (
   tuning: OrbitGameplayTuning,
 ): number => tuning.planetCircleRadius;
-
-export const getOrbitSystemDriftVelocity = (
-  tuning: OrbitGameplayTuning,
-): Vec2 =>
-  scale(
-    fromAngle((tuning.systemDrift.directionDeg * Math.PI) / 180),
-    tuning.systemDrift.speed,
-  );
 
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
