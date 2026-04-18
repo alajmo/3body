@@ -25,7 +25,7 @@
 
 ## 3. The Arena
 
-- **Shape:** Bounded circular play area (radius ~2000 units). Outside the boundary = soft "deep space" zone where planets take escalating damage over time. Crossing the boundary should also produce stronger visual feedback (brighter boundary ring, subtle vignette/desaturation), but **not** hide enemies or add fog-of-war.
+- **Shape:** Bounded circular play area (radius ~2000 units). Crossing the boundary is an immediate kill. It should also produce stronger visual feedback at the edge (brighter boundary ring, subtle vignette/desaturation), but **not** hide enemies or add fog-of-war.
 - **The 3 Suns:** Three massive bodies, themselves mutually attracted (real three-body simulation). They influence planets but planets do *not* meaningfully influence them (one-way gravity for stability; otherwise the system explodes within seconds).
   - All 3 suns use the same `SUN_MASS` in V1. Tune that shared mass so that a stable-ish chaotic dance lasts the full match length; asymmetric masses are a future variant, not part of MVP.
   - Suns are deadly on contact: any planet touching a sun is instantly destroyed.
@@ -196,7 +196,7 @@ The Wildcard is intentionally rare (~10% of cache rolls) and game-swinging — i
 - Light rocket: 15 dmg. Heavy: 70 dmg. Seeker: 35 dmg.
 - Sun contact: instant death.
 - Planet-to-planet contact: both planets are instantly destroyed.
-- Boundary "deep space" damage: 5 HP/s, ramps to 20/s after 5s outside.
+- Boundary crossing: immediate death on leaving the arena.
 - Black Hole contact: instant death.
 - A destroyed planet leaves a brief debris field (visual only, no gameplay effect) and the player enters spectator mode. They can still chat and watch.
 - If the final two planets die on the same tick, the round ends in a draw rather than inventing a winner.

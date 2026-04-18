@@ -1,4 +1,5 @@
 import {
+  ARENA_RADIUS,
   FIXED_STEP_SEC,
   ROCKET_SPECS,
   getShieldLoadCapacity,
@@ -12,6 +13,7 @@ import type {
   CombatSandboxDrone,
   CombatSandboxState,
 } from "../combatSandbox";
+import { getActiveCombatSuns } from "../combatSandbox";
 import type {
   GameViewportDebugItem,
   GameViewportHudState,
@@ -20,7 +22,7 @@ import type {
   GameViewportShortcut,
   HudStatusMode,
 } from "../viewportHud";
-import { getPlayerMotionHud } from "../viewportHud";
+import { createHudMinimapState, getPlayerMotionHud } from "../viewportHud";
 import { getForesightMeterProgress } from "./foresightMeter";
 import type { ViewportPerformanceSnapshot } from "./performanceProfiler";
 import type { ViewportEffectsQuality } from "./renderQuality";
@@ -53,6 +55,7 @@ export interface BuildLocalSandboxHudStateParams {
   currentSsaaLevel: number;
   currentState: Pick<
     CombatSandboxState,
+    | "blackHole"
     | "caches"
     | "debris"
     | "drones"
@@ -61,6 +64,7 @@ export interface BuildLocalSandboxHudStateParams {
     | "planets"
     | "player"
     | "rockets"
+    | "suns"
     | "tick"
   >;
   debug: CombatSandboxDebugSnapshot;
@@ -286,13 +290,6 @@ const buildPrimaryShortcuts = (
           label: "Seeker",
         },
         {
-          active: params.fullViewEnabled,
-          detail: params.fullViewEnabled ? "arena" : "focus",
-          id: "full-view",
-          keyLabel: "F",
-          label: "Full view",
-        },
-        {
           active: params.foresightMode === "active",
           detail:
             params.foresightMode === "ready"
@@ -323,16 +320,26 @@ const buildPrimaryShortcuts = (
           keyLabel: "E",
           label: "Boost",
         },
-        ...(params.debug.wildcardLabel === null
-          ? []
-          : [
+        ...(params.debug.gravityPulseHeld
+          ? [
               {
                 active: true,
-                id: "wildcard",
-                keyLabel: "R",
-                label: params.debug.wildcardLabel,
+                id: "gravity-pulse",
+                keyLabel: "G",
+                label: "Gravity Pulse",
               },
-            ]),
+            ]
+          : []),
+        ...(params.debug.cloakHeld
+          ? [
+              {
+                active: true,
+                id: "cloak",
+                keyLabel: "C",
+                label: "Cloak",
+              },
+            ]
+          : []),
         {
           active: params.readModeHeld,
           id: "read-mode",
@@ -409,20 +416,34 @@ const buildAbilities = (
               : "ready",
           valueText: "INF",
         },
-        ...(params.debug.wildcardLabel === null
-          ? []
-          : [
+        ...(params.debug.gravityPulseHeld
+          ? [
               {
                 accent: params.colors.wildcard,
-                id: "wildcard" as const,
-                keyLabel: "R",
-                label: "Wildcard",
+                id: "gravityPulse" as const,
+                keyLabel: "G",
+                label: "Gravity Pulse",
                 mode: "ready" as const,
                 progress: 1,
-                statusText: params.debug.wildcardLabel,
+                statusText: "Gravity Pulse",
                 valueText: "armed",
               },
-            ]),
+            ]
+          : []),
+        ...(params.debug.cloakHeld
+          ? [
+              {
+                accent: params.colors.wildcard,
+                id: "cloak" as const,
+                keyLabel: "C",
+                label: "Cloak",
+                mode: "ready" as const,
+                progress: 1,
+                statusText: "Cloak",
+                valueText: "armed",
+              },
+            ]
+          : []),
       ]
     : [];
 
@@ -458,6 +479,19 @@ export const buildLocalSandboxHudState = (
       (planet) => planet.id === params.currentState.player.planetId,
     ) ?? null;
   const playerMotion = getPlayerMotionHud(playerPlanet?.vel);
+  const highlightedMinimapEntity =
+    params.currentState.player.controlMode === "drone" &&
+    params.activeDrone !== null
+      ? {
+          id: params.activeDrone.id,
+          kind: "drone" as const,
+        }
+      : playerPlanet?.alive
+        ? {
+            id: playerPlanet.id,
+            kind: "planet" as const,
+          }
+        : null;
 
   return {
     abilities: buildAbilities(params),
@@ -484,11 +518,17 @@ export const buildLocalSandboxHudState = (
     damageFlash: params.playerDamageFlash,
     debugItems: buildProfilerDebugItems(params),
     foresightSettings: { ...params.foresightSettings },
-    hudOpacity:
-      params.readModeHeld && !params.fullViewEnabled
-        ? params.readModeHudOpacity
-        : 1,
+    hudOpacity: params.readModeHeld ? params.readModeHudOpacity : 1,
     killFeed: params.killFeed,
+    minimap: createHudMinimapState({
+      arenaRadius: ARENA_RADIUS,
+      blackHole: params.currentState.blackHole,
+      caches: params.currentState.caches,
+      drones: params.currentState.drones,
+      highlightedEntity: highlightedMinimapEntity,
+      planets: params.currentState.planets.filter((planet) => planet.alive),
+      suns: getActiveCombatSuns(params.currentState.suns),
+    }),
     planetAuraGap: params.planetAuraGap,
     planetAuraScale: params.planetAuraScale,
     planetBars: params.planetBars ?? [],

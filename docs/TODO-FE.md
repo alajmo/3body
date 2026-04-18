@@ -75,7 +75,7 @@ Still single-player and local-sim. Build the loop, then network it.
 - [x] Implement HP per planet (default 100) and damage on hit.
 - [x] Implement **death**: planet destroyed on HP=0, sun contact, Black Hole contact, or planet↔planet collision. Spawn debris particle burst.
 - [ ] In networked mode, render authoritative `Debris` entities from snapshots/events so remote deaths use the same visual language as local ones.
-- [x] Implement **deep space damage** when outside arena boundary (5 HP/s ramping to 20), plus clear feedback: stronger boundary ring + subtle vignette/desaturation. No fog-of-war or hidden enemies.
+- [x] Treat the arena boundary as a killzone, plus clear feedback: stronger boundary ring + subtle vignette/desaturation. No fog-of-war or hidden enemies.
 - [x] After 5:00 elapsed combat time, reveal and render the central Black Hole from authoritative match state: readable event horizon, strong inward pull, and instant-kill radius on contact.
 
 **Done when:** you can fly around, fire all 3 rocket types, tell them apart at a glance, kill a stationary dummy planet, and die to a sun.

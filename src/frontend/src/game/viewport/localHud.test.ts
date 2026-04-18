@@ -149,8 +149,20 @@ describe("buildLocalSandboxHudState", () => {
     expect(
       hud.primaryShortcuts.some((shortcut) => shortcut.id === "read-mode"),
     ).toBe(true);
+    expect(
+      hud.primaryShortcuts.some((shortcut) => shortcut.id === "full-view"),
+    ).toBe(false);
     expect(hud.playerSpeed).toBeCloseTo(len(playerPlanet.vel));
     expect(hud.playerHeadingDeg).toBeCloseTo(expectedHeadingDeg);
+    expect(hud.minimap.arenaRadius).toBeGreaterThan(0);
+    expect(hud.minimap.entities.some((entity) => entity.kind === "sun")).toBe(
+      true,
+    );
+    expect(
+      hud.minimap.entities.some(
+        (entity) => entity.kind === "planet" && entity.highlighted,
+      ),
+    ).toBe(true);
   });
 
   it("omits control affordances in viewer mode", () => {
@@ -162,6 +174,7 @@ describe("buildLocalSandboxHudState", () => {
     expect(hud.primaryShortcuts).toEqual([]);
     expect(hud.contextualShortcuts).toEqual([]);
     expect(hud.sandboxControlsEnabled).toBe(false);
+    expect(hud.minimap.entities.length).toBeGreaterThan(0);
   });
 
   it("shows depleted shield capacity when max load has been damaged", () => {
@@ -255,6 +268,34 @@ describe("buildLocalSandboxHudState", () => {
     ).toEqual(
       expect.objectContaining({
         progress: 0.875,
+      }),
+    );
+  });
+
+  it("shows gravity pulse and cloak as separate held sandbox abilities", () => {
+    const params = createHudParams(true);
+    params.debug = {
+      ...params.debug,
+      gravityPulseHeld: true,
+      cloakHeld: true,
+    };
+
+    const hud = buildLocalSandboxHudState(params);
+
+    expect(
+      hud.abilities.find((ability) => ability.id === "gravityPulse"),
+    ).toEqual(
+      expect.objectContaining({
+        keyLabel: "G",
+        label: "Gravity Pulse",
+        statusText: "Gravity Pulse",
+      }),
+    );
+    expect(hud.abilities.find((ability) => ability.id === "cloak")).toEqual(
+      expect.objectContaining({
+        keyLabel: "C",
+        label: "Cloak",
+        statusText: "Cloak",
       }),
     );
   });

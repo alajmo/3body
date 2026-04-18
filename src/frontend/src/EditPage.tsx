@@ -1,7 +1,9 @@
 import {
+  ARENA_RADIUS_MIN,
   ARCHETYPE_IDS,
   ARCHETYPES,
   DEFAULT_GAME_TUNING,
+  clamp,
   cloneGameTuningDocument,
   sanitizeGameTuning,
   type GameTuningDocument,
@@ -9,6 +11,7 @@ import {
   type RocketKind,
 } from "@3body/shared";
 import {
+  type MouseEvent as ReactMouseEvent,
   startTransition,
   type ReactNode,
   useEffect,
@@ -16,10 +19,21 @@ import {
   useState,
 } from "react";
 import { EditorPreviewStage } from "./EditorPreviewStage";
+import { getDefaultOrbitSunLabel } from "./game/orbitPresets";
 import {
   applyRuntimeTuningDocument,
   getRuntimeTuningDocument,
 } from "./game/runtimeTuning";
+import {
+  CACHE_ICON_KEYS,
+  getCacheIconAccent,
+  getCacheIconLabel,
+  type CacheIconKey,
+} from "./game/showcaseVisuals";
+import {
+  CACHE_ARENA_BADGE_SIZE_FACTOR,
+  getCacheArenaBadgeSize,
+} from "./game/viewport/cacheVisuals";
 
 type EditorItemId =
   | "overview"
@@ -36,6 +50,8 @@ type EditorItemId =
   | "foresight"
   | "shield"
   | "boost"
+  | "gravityPulse"
+  | "cloak"
   | "cache";
 
 type EditorItemMeta = {
@@ -49,7 +65,7 @@ const EDITOR_ITEM_QUERY_PARAM = "item";
 const EDITOR_VIEW_ITEMS = [
   { id: "overview", label: "Overview", note: "Showcase + HUD" },
   { id: "hud", label: "HUD", note: "HUD only" },
-  { id: "orbits", label: "Orbits", note: "Suns rotating" },
+  { id: "orbits", label: "Orbits", note: "Orbit seed tuning" },
 ] as const;
 
 const EDITOR_GROUPS = [
@@ -58,7 +74,7 @@ const EDITOR_GROUPS = [
     items: [
       { id: "background", label: "Background", note: "Backdrop and starfield" },
       { id: "planets", label: "Planets", note: "Scale and archetype colors" },
-      { id: "suns", label: "Suns", note: "Glow and warp" },
+      { id: "suns", label: "Suns", note: "Per-sun size and glow" },
       { id: "blackHole", label: "Black Hole", note: "Gameplay and visuals" },
       { id: "cache", label: "Caches", note: "Spawn and badge size" },
     ],
@@ -78,6 +94,12 @@ const EDITOR_GROUPS = [
       { id: "foresight", label: "Foresight", note: "Path style and timing" },
       { id: "shield", label: "Shield", note: "Arc and active tint" },
       { id: "boost", label: "Boost", note: "Charges and impulse" },
+      {
+        id: "gravityPulse",
+        label: "Gravity Pulse",
+        note: "Wildcard shockwave",
+      },
+      { id: "cloak", label: "Cloak", note: "Wildcard concealment" },
     ],
   },
 ] as const satisfies readonly {
@@ -92,6 +114,82 @@ const ROCKET_KIND_BY_ITEM: Record<
   rocketLight: "light",
   rocketHeavy: "heavy",
   rocketSeeker: "seeker",
+};
+
+const CACHE_EFFECT_COPY: Record<
+  CacheIconKey,
+  {
+    description: string;
+    title: string;
+  }
+> = {
+  heavyAmmo: {
+    title: "Heavy Ammo",
+    description: "Delivery grants +1 heavy rocket ammo.",
+  },
+  seekerPack: {
+    title: "Seeker Pack",
+    description: "Delivery grants +2 seeker rockets.",
+  },
+  repair: {
+    title: "Repair",
+    description: "Restores 40 HP, capped at full health.",
+  },
+  shieldExt: {
+    title: "Shield Ext",
+    description: "Extends the next shield to double capacity.",
+  },
+  foresightExt: {
+    title: "Foresight Max",
+    description:
+      "Refills foresight to full and doubles the next foresight use.",
+  },
+  wildcardGravityPulse: {
+    title: "Gravity Pulse",
+    description:
+      "Wildcard cache. Press G to emit a pulse that blasts planets, rockets, drones, and caches within its blast radius away from your planet. Force falls off linearly with distance.",
+  },
+  wildcardCloak: {
+    title: "Cloak",
+    description: "Wildcard cache. Press C to hide your trail for 5 seconds.",
+  },
+};
+
+const WILDCARD_ABILITY_COPY = {
+  gravityPulse: {
+    description:
+      "Press G to emit a pulse that shoves planets, rockets, drones, and caches within its blast radius away from you. Force falls off linearly with distance.",
+    title: "Gravity Pulse",
+  },
+  cloak: {
+    description:
+      "Press C to cloak your planet for 5 seconds, hiding its trail while the effect lasts.",
+    title: "Cloak",
+  },
+} as const;
+
+const getDisplayedCacheBadgeSize = (
+  documentValue: GameTuningDocument,
+): number =>
+  Math.round(
+    getCacheArenaBadgeSize(
+      documentValue.visuals.caches.badgeBaseSize,
+      documentValue.visuals.caches.badgeScale,
+    ),
+  );
+
+const setDisplayedCacheBadgeSize = (
+  draft: GameTuningDocument,
+  value: number,
+) => {
+  draft.visuals.caches.badgeBaseSize = Math.max(
+    16,
+    Math.min(
+      400,
+      Math.round(Math.round(value) / CACHE_ARENA_BADGE_SIZE_FACTOR),
+    ),
+  );
+  draft.visuals.caches.badgeScale = 1;
 };
 
 type PlanetMaterialNumberKey = Exclude<
@@ -127,6 +225,55 @@ type PlanetAuraTintKey = Extract<
 >;
 type PlanetVariationKey =
   keyof GameTuningDocument["visuals"]["planets"]["variation"];
+type SunProfileNumberKey = Exclude<
+  keyof GameTuningDocument["visuals"]["suns"]["profiles"][number],
+  "color" | "glowColor"
+>;
+type SunProfileColorKey = Extract<
+  keyof GameTuningDocument["visuals"]["suns"]["profiles"][number],
+  "color" | "glowColor"
+>;
+type OrbitSunNumberKey = Exclude<
+  keyof GameTuningDocument["gameplay"]["orbits"]["suns"][number],
+  "pos" | "vel"
+>;
+type OrbitSunVectorKey = Extract<
+  keyof GameTuningDocument["gameplay"]["orbits"]["suns"][number],
+  "pos" | "vel"
+>;
+type OrbitVectorComponentKey =
+  keyof GameTuningDocument["gameplay"]["orbits"]["suns"][number]["pos"];
+type OrbitBoundaryDebrisNumberKey = Exclude<
+  keyof GameTuningDocument["visuals"]["orbits"]["boundaryDebris"],
+  "coolColor" | "warmColor"
+>;
+type OrbitBoundaryDebrisColorKey = Extract<
+  keyof GameTuningDocument["visuals"]["orbits"]["boundaryDebris"],
+  "coolColor" | "warmColor"
+>;
+
+const ARENA_RADIUS_STEP = 10;
+const ORBIT_PLANET_CIRCLE_RADIUS_MIN = 400;
+const ORBIT_PLANET_CIRCLE_RADIUS_STEP = 10;
+const ORBIT_BOUNDARY_DEBRIS_DENSITY_MIN = 0.25;
+const ORBIT_BOUNDARY_DEBRIS_DENSITY_STEP = 0.05;
+const ORBIT_BOUNDARY_DEBRIS_DUST_SIZE_MIN = 1;
+const ORBIT_BOUNDARY_DEBRIS_DUST_SIZE_STEP = 0.1;
+const ORBIT_BOUNDARY_DEBRIS_SCALE_MIN = 0.25;
+const ORBIT_BOUNDARY_DEBRIS_SCALE_STEP = 0.05;
+const ORBIT_BOUNDARY_DEBRIS_SPEED_MIN = 0.1;
+const ORBIT_BOUNDARY_DEBRIS_SPEED_STEP = 0.05;
+const ORBIT_BOUNDARY_DEBRIS_THICKNESS_MIN = 24;
+const ORBIT_BOUNDARY_DEBRIS_THICKNESS_STEP = 2;
+const ORBIT_SUN_DISTANCE_SCALE_MIN = 0.5;
+const ORBIT_SUN_DISTANCE_SCALE_MAX = 2.5;
+const ORBIT_SUN_DISTANCE_SCALE_STEP = 0.05;
+const ORBIT_SYSTEM_DRIFT_DIRECTION_MAX = 360;
+const ORBIT_SYSTEM_DRIFT_DIRECTION_STEP = 1;
+const ORBIT_SYSTEM_DRIFT_SPEED_STEP = 10;
+const ORBIT_START_POSITION_MIN = -10000;
+const ORBIT_START_POSITION_MAX = 10000;
+const ORBIT_START_POSITION_STEP = 10;
 
 type NumericFieldConfig<Key extends string> = {
   key: Key;
@@ -551,6 +698,8 @@ const EDITOR_ITEM_QUERY_VALUES = {
   foresight: "foresight",
   shield: "shield",
   boost: "boost",
+  gravityPulse: "gravity-pulse",
+  cloak: "cloak",
   cache: "cache",
 } as const satisfies Record<EditorItemId, string>;
 
@@ -571,6 +720,7 @@ EDITOR_ITEM_ID_BY_QUERY_VALUE.set("rocketseeker", "rocketSeeker");
 EDITOR_ITEM_ID_BY_QUERY_VALUE.set("light-missile", "rocketLight");
 EDITOR_ITEM_ID_BY_QUERY_VALUE.set("heavy-missile", "rocketHeavy");
 EDITOR_ITEM_ID_BY_QUERY_VALUE.set("seeker-missile", "rocketSeeker");
+EDITOR_ITEM_ID_BY_QUERY_VALUE.set("gravitypulse", "gravityPulse");
 
 const DEFAULT_EDITOR_ITEM_ID: EditorItemId = "overview";
 
@@ -671,7 +821,19 @@ const replaceDocumentContents = (
   draft.visuals = nextDocument.visuals;
 };
 
-const canResetItem = (itemId: EditorItemId): boolean => itemId !== "orbits";
+const resetObjectFields = <T extends object, K extends keyof T>(
+  target: T,
+  defaults: T,
+  keys: readonly K[],
+) => {
+  for (const key of keys) {
+    target[key] = defaults[key];
+  }
+};
+
+const canResetItem = (itemId: EditorItemId): boolean => itemId !== "cloak";
+const canRestartPreview = (itemId: EditorItemId): boolean =>
+  itemId === "orbits";
 
 const getResetLabel = (itemId: EditorItemId): string =>
   itemId === "overview" ? "Reset all" : "Reset item";
@@ -731,11 +893,20 @@ const resetItemToDefaults = (
       draft.visuals.abilities.boostColor =
         defaults.visuals.abilities.boostColor;
       return;
+    case "gravityPulse":
+      draft.gameplay.abilities.gravityPulse =
+        defaults.gameplay.abilities.gravityPulse;
+      return;
+    case "cloak":
+      return;
     case "cache":
       draft.gameplay.cache = defaults.gameplay.cache;
       draft.visuals.caches = defaults.visuals.caches;
       return;
     case "orbits":
+      draft.gameplay.arena = defaults.gameplay.arena;
+      draft.gameplay.orbits = defaults.gameplay.orbits;
+      draft.visuals.orbits = defaults.visuals.orbits;
       return;
   }
 };
@@ -754,88 +925,73 @@ const serializeEditorTuningDocument = (value: GameTuningDocument): unknown => {
 const getPreviewMode = (
   itemId: EditorItemId,
 ): {
-  label: string;
   showHud: boolean;
 } => {
   switch (itemId) {
     case "overview":
       return {
-        label: "Live sandbox + HUD",
         showHud: true,
       };
     case "hud":
       return {
-        label: "HUD over live sandbox",
         showHud: true,
       };
     case "orbits":
       return {
-        label: "Live orbit sandbox",
         showHud: false,
       };
     case "background":
       return {
-        label: "Live sandbox backdrop",
         showHud: false,
       };
     case "planets":
       return {
-        label: "Live sandbox planets",
         showHud: false,
       };
     case "suns":
       return {
-        label: "Live sandbox suns",
         showHud: false,
       };
     case "blackHole":
       return {
-        label: "Live sandbox black hole",
         showHud: false,
       };
     case "cannon":
       return {
-        label: "Live sandbox turret",
         showHud: false,
       };
     case "cache":
       return {
-        label: "Live sandbox caches",
         showHud: false,
       };
     case "rocketLight":
       return {
-        label: "Live sandbox light missile",
         showHud: false,
       };
     case "rocketHeavy":
       return {
-        label: "Live sandbox heavy missile",
         showHud: false,
       };
     case "rocketSeeker":
       return {
-        label: "Live sandbox seeker missile",
         showHud: false,
       };
     case "foresight":
       return {
-        label: "Live sandbox foresight",
         showHud: false,
       };
     case "shield":
       return {
-        label: "Live sandbox shield",
         showHud: false,
       };
     case "boost":
+    case "gravityPulse":
+    case "cloak":
       return {
-        label: "Live sandbox boost",
         showHud: false,
       };
     default:
       return {
-        label: "Preview unavailable",
         showHud: false,
       };
   }
@@ -873,24 +1029,60 @@ function InspectorSection({
   children,
   collapsible = false,
   defaultOpen = true,
+  onReset,
+  resetDisabled = false,
 }: {
   children: ReactNode;
   collapsible?: boolean;
   defaultOpen?: boolean;
   note?: string;
+  onReset?: () => void;
+  resetDisabled?: boolean;
   title: string;
 }) {
+  const resetLabel = `Reset ${title}`;
+  const handleResetClick = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onReset?.();
+  };
+  const headerContent = (
+    <div className="edit-inspector__section-header">
+      <div className="edit-inspector__section-header-row">
+        <div className="edit-inspector__section-heading">
+          <div className="edit-inspector__section-title">{title}</div>
+          {note ? (
+            <div className="edit-inspector__section-note">{note}</div>
+          ) : null}
+        </div>
+        {onReset ? (
+          <button
+            type="button"
+            className="edit-action-button edit-inspector__section-reset"
+            disabled={resetDisabled}
+            onClick={handleResetClick}
+          >
+            {resetLabel}
+          </button>
+        ) : null}
+        {collapsible ? (
+          <span
+            aria-hidden="true"
+            className="edit-inspector__section-disclosure"
+          />
+        ) : null}
+      </div>
+    </div>
+  );
+
   if (collapsible) {
     return (
       <details
         className="edit-inspector__section edit-inspector__section--collapsible"
         open={defaultOpen}
       >
-        <summary className="edit-inspector__section-header edit-inspector__section-summary">
-          <div className="edit-inspector__section-title">{title}</div>
-          {note ? (
-            <div className="edit-inspector__section-note">{note}</div>
-          ) : null}
+        <summary className="edit-inspector__section-summary">
+          {headerContent}
         </summary>
         <div className="edit-inspector__field-grid">{children}</div>
       </details>
@@ -899,12 +1091,7 @@ function InspectorSection({
 
   return (
     <section className="edit-inspector__section">
-      <header className="edit-inspector__section-header">
-        <div className="edit-inspector__section-title">{title}</div>
-        {note ? (
-          <div className="edit-inspector__section-note">{note}</div>
-        ) : null}
-      </header>
+      {headerContent}
       <div className="edit-inspector__field-grid">{children}</div>
     </section>
   );
@@ -1119,10 +1306,6 @@ function EditorItemPreview({
       const bodyOpacity = background.distantBodiesEnabled
         ? 0.16 + background.distantBodiesOpacity * 0.5
         : 0;
-      const streakOpacity = background.movingObjectsEnabled
-        ? 0.12 + background.movingObjectsBrightness * 0.18
-        : 0;
-
       return (
         <div
           className="edit-object-preview edit-object-preview--background"
@@ -1143,10 +1326,6 @@ function EditorItemPreview({
               background: background.distantBodiesColor,
               opacity: bodyOpacity,
             }}
-          />
-          <span
-            className="edit-object-preview__background-streak"
-            style={{ opacity: streakOpacity }}
           />
           <span
             className="edit-object-preview__background-star edit-object-preview__background-star--a"
@@ -1192,9 +1371,30 @@ function EditorItemPreview({
       );
     case "suns":
       return (
-        <div className="edit-object-preview edit-object-preview--sun">
-          <span className="edit-object-preview__sun-core" />
-          <span className="edit-object-preview__sun-halo" />
+        <div className="edit-object-preview edit-object-preview--suns">
+          {documentValue.visuals.suns.profiles.map((sunVisuals, index) => (
+            <span
+              key={getDefaultOrbitSunLabel(index)}
+              className="edit-object-preview__sun-swatch"
+              style={{
+                background: `radial-gradient(circle, ${sunVisuals.color} 0%, ${sunVisuals.color} 40%, ${sunVisuals.glowColor} 72%, rgba(255, 255, 255, 0) 100%)`,
+                height: `${clamp(
+                  8 *
+                    (documentValue.gameplay.orbits.suns[index]!.radius /
+                      DEFAULT_GAME_TUNING.gameplay.orbits.suns[index]!.radius),
+                  6,
+                  13,
+                )}px`,
+                width: `${clamp(
+                  8 *
+                    (documentValue.gameplay.orbits.suns[index]!.radius /
+                      DEFAULT_GAME_TUNING.gameplay.orbits.suns[index]!.radius),
+                  6,
+                  13,
+                )}px`,
+              }}
+            />
+          ))}
         </div>
       );
     case "blackHole":
@@ -1260,11 +1460,13 @@ function EditorItemPreview({
       );
     case "shield":
       return (
-        <div className="edit-object-preview edit-object-preview--shield">
-          <span
-            className="edit-object-preview__shield-arc"
-            style={{ borderColor: documentValue.visuals.abilities.shieldColor }}
-          />
+        <div
+          className="edit-object-preview edit-object-preview--shield"
+          style={{ color: documentValue.visuals.abilities.shieldColor }}
+        >
+          <span className="edit-object-preview__shield-glow" />
+          <span className="edit-object-preview__shield-arc" />
+          <span className="edit-object-preview__shield-core" />
         </div>
       );
     case "boost":
@@ -1276,10 +1478,41 @@ function EditorItemPreview({
           />
         </div>
       );
+    case "gravityPulse":
+      return (
+        <div
+          className="edit-object-preview edit-object-preview--gravity-pulse"
+          style={{ color: documentValue.visuals.abilities.wildcardColor }}
+        >
+          <span className="edit-object-preview__gravity-core" />
+          <span className="edit-object-preview__gravity-ring" />
+          <span className="edit-object-preview__gravity-ring edit-object-preview__gravity-ring--outer" />
+        </div>
+      );
+    case "cloak":
+      return (
+        <div
+          className="edit-object-preview edit-object-preview--cloak"
+          style={{ color: documentValue.visuals.abilities.wildcardColor }}
+        >
+          <span className="edit-object-preview__cloak-core" />
+          <span className="edit-object-preview__cloak-halo" />
+          <span className="edit-object-preview__cloak-sheen" />
+        </div>
+      );
     case "cache":
       return (
-        <div className="edit-object-preview edit-object-preview--cache">
-          <span className="edit-object-preview__cache-badge">C</span>
+        <div className="edit-object-preview edit-object-preview--caches">
+          {CACHE_ICON_KEYS.map((iconKey) => (
+            <span
+              key={iconKey}
+              className="edit-object-preview__cache-chip"
+              style={{
+                background: `linear-gradient(180deg, ${getCacheIconAccent(iconKey)}66, ${getCacheIconAccent(iconKey)}22)`,
+                boxShadow: `0 0 10px ${getCacheIconAccent(iconKey)}44`,
+              }}
+            />
+          ))}
         </div>
       );
     case "hud":
@@ -1304,6 +1537,7 @@ export function EditPage() {
     "idle" | "loading" | "saving" | "saved" | "error"
   >("loading");
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [previewResetRevision, setPreviewResetRevision] = useState(0);
   const documentRef = useRef(documentValue);
 
   useEffect(() => {
@@ -1435,6 +1669,23 @@ export function EditPage() {
       resetItemToDefaults(draft, selectedItemId);
     });
   };
+  const resetInspectorSection = (
+    resetter: (draft: GameTuningDocument, defaults: GameTuningDocument) => void,
+  ) => {
+    commitChange((draft) => {
+      resetter(draft, createDefaultDocumentSnapshot());
+    });
+  };
+  const sectionResetDisabled =
+    saveStatus === "loading" || saveStatus === "saving";
+
+  const restartSelectedPreview = () => {
+    if (!canRestartPreview(selectedItemId)) {
+      return;
+    }
+
+    setPreviewResetRevision((current) => current + 1);
+  };
 
   const renderRocketInspector = (rocketKind: RocketKind) => {
     const rocket = documentValue.gameplay.rockets[rocketKind];
@@ -1442,7 +1693,17 @@ export function EditPage() {
 
     return (
       <>
-        <InspectorSection title="Gameplay" note="Match rules and ammo flow">
+        <InspectorSection
+          title="Gameplay"
+          note="Match rules and ammo flow"
+          resetDisabled={sectionResetDisabled}
+          onReset={() =>
+            resetInspectorSection((draft, defaults) => {
+              draft.gameplay.rockets[rocketKind] =
+                defaults.gameplay.rockets[rocketKind];
+            })
+          }
+        >
           <NumberField
             label="Damage"
             min={0}
@@ -1581,7 +1842,17 @@ export function EditPage() {
           />
         </InspectorSection>
 
-        <InspectorSection title="Visuals" note="Mesh silhouette and HUD accent">
+        <InspectorSection
+          title="Visuals"
+          note="Mesh silhouette and HUD accent"
+          resetDisabled={sectionResetDisabled}
+          onReset={() =>
+            resetInspectorSection((draft, defaults) => {
+              draft.visuals.rockets[rocketKind] =
+                defaults.visuals.rockets[rocketKind];
+            })
+          }
+        >
           <ColorField
             label="Core"
             value={visuals.core}
@@ -1746,7 +2017,22 @@ export function EditPage() {
 
     return (
       <>
-        <InspectorSection title="Mount" note="Stem and breech proportions">
+        <InspectorSection
+          title="Mount"
+          note="Stem and breech proportions"
+          resetDisabled={sectionResetDisabled}
+          onReset={() =>
+            resetInspectorSection((draft, defaults) => {
+              resetObjectFields(draft.visuals.cannon, defaults.visuals.cannon, [
+                "stemLength",
+                "stemWidth",
+                "breechLength",
+                "breechWidth",
+                "breechDepth",
+              ]);
+            })
+          }
+        >
           <NumberField
             label="Stem length"
             min={0.5}
@@ -1800,7 +2086,23 @@ export function EditPage() {
           />
         </InspectorSection>
 
-        <InspectorSection title="Barrel" note="Main silhouette and muzzle">
+        <InspectorSection
+          title="Barrel"
+          note="Main silhouette and muzzle"
+          resetDisabled={sectionResetDisabled}
+          onReset={() =>
+            resetInspectorSection((draft, defaults) => {
+              resetObjectFields(draft.visuals.cannon, defaults.visuals.cannon, [
+                "barrelLength",
+                "barrelWidth",
+                "bandLength",
+                "bandWidth",
+                "muzzleLength",
+                "muzzleRadius",
+              ]);
+            })
+          }
+        >
           <NumberField
             label="Barrel length"
             min={1}
@@ -1865,7 +2167,19 @@ export function EditPage() {
           />
         </InspectorSection>
 
-        <InspectorSection title="Flash" note="Muzzle bloom size and timing">
+        <InspectorSection
+          title="Flash"
+          note="Muzzle bloom size and timing"
+          resetDisabled={sectionResetDisabled}
+          onReset={() =>
+            resetInspectorSection((draft, defaults) => {
+              resetObjectFields(draft.visuals.cannon, defaults.visuals.cannon, [
+                "flashRadius",
+                "flashDurationSec",
+              ]);
+            })
+          }
+        >
           <NumberField
             label="Flash radius"
             min={0.5}
@@ -1897,15 +2211,53 @@ export function EditPage() {
     switch (selectedItemId) {
       case "overview":
         return (
-          <InspectorSection
-            title="Overview"
-            note="Full lineup reference with the HUD layered on top"
-          >
-            <div className="edit-panel__body">
-              Use this to scan planets, suns, rockets, caches, and the HUD
-              together before drilling into a specific item.
-            </div>
-          </InspectorSection>
+          <>
+            <InspectorSection
+              title="Gameplay camera"
+              note="Fixed gameplay zoom. Set read mode equal to viewport height to remove the extra Shift zoom."
+              resetDisabled={sectionResetDisabled}
+              onReset={() =>
+                resetInspectorSection((draft, defaults) => {
+                  draft.gameplay.camera = defaults.gameplay.camera;
+                })
+              }
+            >
+              <NumberField
+                label="Viewport world height"
+                min={100}
+                max={10000}
+                step={10}
+                value={documentValue.gameplay.camera.viewportWorldHeight}
+                onPreviewChange={(value) =>
+                  applyPreviewChange((draft) => {
+                    draft.gameplay.camera.viewportWorldHeight = value;
+                  })
+                }
+                onCommit={(value) =>
+                  commitChange((draft) => {
+                    draft.gameplay.camera.viewportWorldHeight = value;
+                  })
+                }
+              />
+              <NumberField
+                label="Read mode world height"
+                min={100}
+                max={10000}
+                step={10}
+                value={documentValue.gameplay.camera.readModeWorldHeight}
+                onPreviewChange={(value) =>
+                  applyPreviewChange((draft) => {
+                    draft.gameplay.camera.readModeWorldHeight = value;
+                  })
+                }
+                onCommit={(value) =>
+                  commitChange((draft) => {
+                    draft.gameplay.camera.readModeWorldHeight = value;
+                  })
+                }
+              />
+            </InspectorSection>
+          </>
         );
       case "hud":
         return (
@@ -1913,6 +2265,22 @@ export function EditPage() {
             <InspectorSection
               title="HUD layout"
               note="Outer placement and widths"
+              resetDisabled={sectionResetDisabled}
+              onReset={() =>
+                resetInspectorSection((draft, defaults) => {
+                  resetObjectFields(draft.visuals.hud, defaults.visuals.hud, [
+                    "topInset",
+                    "sideInset",
+                    "bottomInset",
+                    "leftColumnWidth",
+                    "timerWidth",
+                    "connectionWidth",
+                    "panelGap",
+                    "dockGap",
+                    "shortcutsSectionGap",
+                  ]);
+                })
+              }
             >
               <NumberField
                 label="Top inset"
@@ -2071,6 +2439,19 @@ export function EditPage() {
             <InspectorSection
               title="HUD panels"
               note="Radius and glass treatment"
+              resetDisabled={sectionResetDisabled}
+              onReset={() =>
+                resetInspectorSection((draft, defaults) => {
+                  resetObjectFields(draft.visuals.hud, defaults.visuals.hud, [
+                    "panelRadius",
+                    "pillRadius",
+                    "cardRadius",
+                    "compactCardRadius",
+                    "killFeedEntryRadius",
+                    "panelBlurPx",
+                  ]);
+                })
+              }
             >
               <NumberField
                 label="Panel radius"
@@ -2177,24 +2558,383 @@ export function EditPage() {
             </InspectorSection>
           </>
         );
-      case "orbits":
-        return (
-          <InspectorSection
-            title="Orbit preview"
-            note="Sun interaction sandbox with the HUD layered on top"
-          >
-            <div className="edit-panel__body">
-              Use this to check orbit motion and HUD composition together while
-              the actual sun visual controls stay under <code>Suns</code>.
-            </div>
-          </InspectorSection>
+      case "orbits": {
+        const orbitPlanetCircleRadiusMax = Math.max(
+          documentValue.gameplay.arena.radius,
+          documentValue.gameplay.orbits.planetCircleRadius,
         );
+        const debrisVisuals = documentValue.visuals.orbits.boundaryDebris;
+        const previewDebrisNumber = (
+          key: OrbitBoundaryDebrisNumberKey,
+          value: number,
+        ) =>
+          applyPreviewChange((draft) => {
+            draft.visuals.orbits.boundaryDebris[key] = value;
+          });
+        const commitDebrisNumber = (
+          key: OrbitBoundaryDebrisNumberKey,
+          value: number,
+        ) =>
+          commitChange((draft) => {
+            draft.visuals.orbits.boundaryDebris[key] = value;
+          });
+        const previewDebrisColor = (
+          key: OrbitBoundaryDebrisColorKey,
+          value: string,
+        ) =>
+          applyPreviewChange((draft) => {
+            draft.visuals.orbits.boundaryDebris[key] = value;
+          });
+        const commitDebrisColor = (
+          key: OrbitBoundaryDebrisColorKey,
+          value: string,
+        ) =>
+          commitChange((draft) => {
+            draft.visuals.orbits.boundaryDebris[key] = value;
+          });
+        return (
+          <>
+            <InspectorSection
+              title="Arena"
+              resetDisabled={sectionResetDisabled}
+              onReset={() =>
+                resetInspectorSection((draft, defaults) => {
+                  draft.gameplay.arena = defaults.gameplay.arena;
+                })
+              }
+            >
+              <NumberField
+                label="Arena radius"
+                min={ARENA_RADIUS_MIN}
+                step={ARENA_RADIUS_STEP}
+                value={documentValue.gameplay.arena.radius}
+                onPreviewChange={(value) =>
+                  applyPreviewChange((draft) => {
+                    draft.gameplay.arena.radius = value;
+                  })
+                }
+                onCommit={(value) =>
+                  commitChange((draft) => {
+                    draft.gameplay.arena.radius = value;
+                  })
+                }
+              />
+              <ToggleField
+                label="Instant death outside arena"
+                value={documentValue.gameplay.arena.instantDeath}
+                onCommit={(value) =>
+                  commitChange((draft) => {
+                    draft.gameplay.arena.instantDeath = value;
+                  })
+                }
+              />
+            </InspectorSection>
+            <InspectorSection
+              title="Sun system"
+              note="Distance keeps the stable orbit ratio and derives starting speed automatically"
+              resetDisabled={sectionResetDisabled}
+              onReset={() =>
+                resetInspectorSection((draft, defaults) => {
+                  draft.gameplay.orbits.sunStartDistanceScale =
+                    defaults.gameplay.orbits.sunStartDistanceScale;
+                })
+              }
+            >
+              <NumberField
+                label="Start distance scale"
+                min={ORBIT_SUN_DISTANCE_SCALE_MIN}
+                max={ORBIT_SUN_DISTANCE_SCALE_MAX}
+                step={ORBIT_SUN_DISTANCE_SCALE_STEP}
+                value={documentValue.gameplay.orbits.sunStartDistanceScale}
+                onPreviewChange={(value) =>
+                  applyPreviewChange((draft) => {
+                    draft.gameplay.orbits.sunStartDistanceScale = value;
+                  })
+                }
+                onCommit={(value) =>
+                  commitChange((draft) => {
+                    draft.gameplay.orbits.sunStartDistanceScale = value;
+                  })
+                }
+              />
+            </InspectorSection>
+            <InspectorSection
+              title="System drift"
+              note="Applies to suns, caches, and debris. Planets keep their seeded motion. Direction is in deg: 0 east/right, 90 north/up, 180 west/left, 270 south/down."
+              resetDisabled={sectionResetDisabled}
+              onReset={() =>
+                resetInspectorSection((draft, defaults) => {
+                  draft.gameplay.orbits.systemDrift =
+                    defaults.gameplay.orbits.systemDrift;
+                })
+              }
+            >
+              <NumberField
+                label="Direction (deg)"
+                min={0}
+                max={ORBIT_SYSTEM_DRIFT_DIRECTION_MAX}
+                step={ORBIT_SYSTEM_DRIFT_DIRECTION_STEP}
+                value={documentValue.gameplay.orbits.systemDrift.directionDeg}
+                onPreviewChange={(value) =>
+                  applyPreviewChange((draft) => {
+                    draft.gameplay.orbits.systemDrift.directionDeg = value;
+                  })
+                }
+                onCommit={(value) =>
+                  commitChange((draft) => {
+                    draft.gameplay.orbits.systemDrift.directionDeg = value;
+                  })
+                }
+              />
+              <NumberField
+                label="Drift speed"
+                min={0}
+                step={ORBIT_SYSTEM_DRIFT_SPEED_STEP}
+                value={documentValue.gameplay.orbits.systemDrift.speed}
+                onPreviewChange={(value) =>
+                  applyPreviewChange((draft) => {
+                    draft.gameplay.orbits.systemDrift.speed = value;
+                  })
+                }
+                onCommit={(value) =>
+                  commitChange((draft) => {
+                    draft.gameplay.orbits.systemDrift.speed = value;
+                  })
+                }
+              />
+            </InspectorSection>
+            <InspectorSection
+              title="Planet ring"
+              resetDisabled={sectionResetDisabled}
+              onReset={() =>
+                resetInspectorSection((draft, defaults) => {
+                  draft.gameplay.orbits.planetCircleRadius =
+                    defaults.gameplay.orbits.planetCircleRadius;
+                })
+              }
+            >
+              <NumberField
+                label="Planet Orbit Radius"
+                min={ORBIT_PLANET_CIRCLE_RADIUS_MIN}
+                max={orbitPlanetCircleRadiusMax}
+                step={ORBIT_PLANET_CIRCLE_RADIUS_STEP}
+                value={documentValue.gameplay.orbits.planetCircleRadius}
+                onPreviewChange={(value) =>
+                  applyPreviewChange((draft) => {
+                    draft.gameplay.orbits.planetCircleRadius = value;
+                  })
+                }
+                onCommit={(value) =>
+                  commitChange((draft) => {
+                    draft.gameplay.orbits.planetCircleRadius = value;
+                  })
+                }
+              />
+            </InspectorSection>
+            <InspectorSection
+              title="Boundary debris"
+              note="3D rocks orbiting just outside the arena edge"
+              resetDisabled={sectionResetDisabled}
+              onReset={() =>
+                resetInspectorSection((draft, defaults) => {
+                  draft.visuals.orbits.boundaryDebris =
+                    defaults.visuals.orbits.boundaryDebris;
+                })
+              }
+            >
+              <NumberField
+                label="Debris density"
+                min={ORBIT_BOUNDARY_DEBRIS_DENSITY_MIN}
+                step={ORBIT_BOUNDARY_DEBRIS_DENSITY_STEP}
+                value={debrisVisuals.density}
+                onPreviewChange={(value) =>
+                  previewDebrisNumber("density", value)
+                }
+                onCommit={(value) => commitDebrisNumber("density", value)}
+              />
+              <NumberField
+                label="Debris speed"
+                min={ORBIT_BOUNDARY_DEBRIS_SPEED_MIN}
+                step={ORBIT_BOUNDARY_DEBRIS_SPEED_STEP}
+                value={debrisVisuals.speed}
+                onPreviewChange={(value) => previewDebrisNumber("speed", value)}
+                onCommit={(value) => commitDebrisNumber("speed", value)}
+              />
+              <NumberField
+                label="Large rock scale"
+                min={ORBIT_BOUNDARY_DEBRIS_SCALE_MIN}
+                step={ORBIT_BOUNDARY_DEBRIS_SCALE_STEP}
+                value={debrisVisuals.largeRockScale}
+                onPreviewChange={(value) =>
+                  previewDebrisNumber("largeRockScale", value)
+                }
+                onCommit={(value) =>
+                  commitDebrisNumber("largeRockScale", value)
+                }
+              />
+              <NumberField
+                label="Small rock scale"
+                min={ORBIT_BOUNDARY_DEBRIS_SCALE_MIN}
+                step={ORBIT_BOUNDARY_DEBRIS_SCALE_STEP}
+                value={debrisVisuals.smallRockScale}
+                onPreviewChange={(value) =>
+                  previewDebrisNumber("smallRockScale", value)
+                }
+                onCommit={(value) =>
+                  commitDebrisNumber("smallRockScale", value)
+                }
+              />
+              <NumberField
+                label="Dust size"
+                min={ORBIT_BOUNDARY_DEBRIS_DUST_SIZE_MIN}
+                step={ORBIT_BOUNDARY_DEBRIS_DUST_SIZE_STEP}
+                value={debrisVisuals.dustSize}
+                onPreviewChange={(value) =>
+                  previewDebrisNumber("dustSize", value)
+                }
+                onCommit={(value) => commitDebrisNumber("dustSize", value)}
+              />
+              <NumberField
+                label="Thickness"
+                min={ORBIT_BOUNDARY_DEBRIS_THICKNESS_MIN}
+                step={ORBIT_BOUNDARY_DEBRIS_THICKNESS_STEP}
+                value={debrisVisuals.thickness}
+                onPreviewChange={(value) =>
+                  previewDebrisNumber("thickness", value)
+                }
+                onCommit={(value) => commitDebrisNumber("thickness", value)}
+              />
+              <ColorField
+                label="Cool rim color"
+                value={debrisVisuals.coolColor}
+                onPreviewChange={(value) =>
+                  previewDebrisColor("coolColor", value)
+                }
+                onCommit={(value) => commitDebrisColor("coolColor", value)}
+              />
+              <ColorField
+                label="Warm rim color"
+                value={debrisVisuals.warmColor}
+                onPreviewChange={(value) =>
+                  previewDebrisColor("warmColor", value)
+                }
+                onCommit={(value) => commitDebrisColor("warmColor", value)}
+              />
+            </InspectorSection>
+            {documentValue.gameplay.orbits.suns.map((sunOrbit, index) => {
+              const sunLabel = getDefaultOrbitSunLabel(index);
+              const previewOrbitNumber = (
+                key: OrbitSunNumberKey,
+                value: number,
+              ) =>
+                applyPreviewChange((draft) => {
+                  draft.gameplay.orbits.suns[index]![key] = value;
+                });
+              const commitOrbitNumber = (
+                key: OrbitSunNumberKey,
+                value: number,
+              ) =>
+                commitChange((draft) => {
+                  draft.gameplay.orbits.suns[index]![key] = value;
+                });
+              const previewOrbitVector = (
+                key: OrbitSunVectorKey,
+                component: OrbitVectorComponentKey,
+                value: number,
+              ) =>
+                applyPreviewChange((draft) => {
+                  draft.gameplay.orbits.suns[index]![key][component] = value;
+                });
+              const commitOrbitVector = (
+                key: OrbitSunVectorKey,
+                component: OrbitVectorComponentKey,
+                value: number,
+              ) =>
+                commitChange((draft) => {
+                  draft.gameplay.orbits.suns[index]![key][component] = value;
+                });
+
+              return (
+                <InspectorSection
+                  key={sunLabel}
+                  title={sunLabel}
+                  note="Mass, radius, and initial orbit state"
+                  collapsible
+                  defaultOpen={index === 0}
+                  resetDisabled={sectionResetDisabled}
+                  onReset={() =>
+                    resetInspectorSection((draft, defaults) => {
+                      draft.gameplay.orbits.suns[index] =
+                        defaults.gameplay.orbits.suns[index];
+                    })
+                  }
+                >
+                  <NumberField
+                    label="Mass"
+                    min={1000}
+                    max={5000000}
+                    step={1000}
+                    value={sunOrbit.mass}
+                    onPreviewChange={(value) =>
+                      previewOrbitNumber("mass", value)
+                    }
+                    onCommit={(value) => commitOrbitNumber("mass", value)}
+                  />
+                  <NumberField
+                    label="Radius"
+                    min={8}
+                    max={500}
+                    step={1}
+                    value={sunOrbit.radius}
+                    onPreviewChange={(value) =>
+                      previewOrbitNumber("radius", value)
+                    }
+                    onCommit={(value) => commitOrbitNumber("radius", value)}
+                  />
+                  <NumberField
+                    label="Start X"
+                    min={ORBIT_START_POSITION_MIN}
+                    max={ORBIT_START_POSITION_MAX}
+                    step={ORBIT_START_POSITION_STEP}
+                    value={sunOrbit.pos.x}
+                    onPreviewChange={(value) =>
+                      previewOrbitVector("pos", "x", value)
+                    }
+                    onCommit={(value) => commitOrbitVector("pos", "x", value)}
+                  />
+                  <NumberField
+                    label="Start Y"
+                    min={ORBIT_START_POSITION_MIN}
+                    max={ORBIT_START_POSITION_MAX}
+                    step={ORBIT_START_POSITION_STEP}
+                    value={sunOrbit.pos.y}
+                    onPreviewChange={(value) =>
+                      previewOrbitVector("pos", "y", value)
+                    }
+                    onCommit={(value) => commitOrbitVector("pos", "y", value)}
+                  />
+                </InspectorSection>
+              );
+            })}
+          </>
+        );
+      }
       case "background":
         return (
           <>
             <InspectorSection
               title="Backdrop"
               note="Scene clear color, upper glow wash, and broad sky color"
+              resetDisabled={sectionResetDisabled}
+              onReset={() =>
+                resetInspectorSection((draft, defaults) => {
+                  resetObjectFields(
+                    draft.visuals.background,
+                    defaults.visuals.background,
+                    ["baseColor", "glowColor"],
+                  );
+                })
+              }
             >
               <ColorField
                 label="Base color"
@@ -2228,6 +2968,24 @@ export function EditPage() {
             <InspectorSection
               title="Stars"
               note="Primary star system, color spread, and twinkle strength"
+              resetDisabled={sectionResetDisabled}
+              onReset={() =>
+                resetInspectorSection((draft, defaults) => {
+                  resetObjectFields(
+                    draft.visuals.background,
+                    defaults.visuals.background,
+                    [
+                      "starsEnabled",
+                      "starDensity",
+                      "starBrightness",
+                      "starSize",
+                      "starTwinkleEnabled",
+                      "starTwinkleAmount",
+                      "starColorVariance",
+                    ],
+                  );
+                })
+              }
             >
               <ToggleField
                 label="Enable stars"
@@ -2336,6 +3094,22 @@ export function EditPage() {
             <InspectorSection
               title="Nebula"
               note="Soft drifting cloud layers behind the stars"
+              resetDisabled={sectionResetDisabled}
+              onReset={() =>
+                resetInspectorSection((draft, defaults) => {
+                  resetObjectFields(
+                    draft.visuals.background,
+                    defaults.visuals.background,
+                    [
+                      "nebulaEnabled",
+                      "nebulaColor",
+                      "nebulaStrength",
+                      "nebulaScale",
+                      "nebulaDrift",
+                    ],
+                  );
+                })
+              }
             >
               <ToggleField
                 label="Enable nebula"
@@ -2415,6 +3189,22 @@ export function EditPage() {
             <InspectorSection
               title="Dust"
               note="Large faint particles that drift slower than the star field"
+              resetDisabled={sectionResetDisabled}
+              onReset={() =>
+                resetInspectorSection((draft, defaults) => {
+                  resetObjectFields(
+                    draft.visuals.background,
+                    defaults.visuals.background,
+                    [
+                      "dustEnabled",
+                      "dustDensity",
+                      "dustBrightness",
+                      "dustSize",
+                      "dustDrift",
+                    ],
+                  );
+                })
+              }
             >
               <ToggleField
                 label="Enable dust"
@@ -2495,90 +3285,23 @@ export function EditPage() {
               />
             </InspectorSection>
             <InspectorSection
-              title="Moving Objects"
-              note="Rare distant traffic and streaking objects crossing the sky"
-            >
-              <ToggleField
-                label="Enable movers"
-                value={documentValue.visuals.background.movingObjectsEnabled}
-                onCommit={(value) =>
-                  commitChange((draft) => {
-                    draft.visuals.background.movingObjectsEnabled = value;
-                  })
-                }
-              />
-              <NumberField
-                label="Mover density"
-                min={0}
-                max={3}
-                step={0.05}
-                value={documentValue.visuals.background.movingObjectsDensity}
-                onPreviewChange={(value) =>
-                  applyPreviewChange((draft) => {
-                    draft.visuals.background.movingObjectsDensity = value;
-                  })
-                }
-                onCommit={(value) =>
-                  commitChange((draft) => {
-                    draft.visuals.background.movingObjectsDensity = value;
-                  })
-                }
-              />
-              <NumberField
-                label="Mover brightness"
-                min={0}
-                max={2}
-                step={0.05}
-                value={documentValue.visuals.background.movingObjectsBrightness}
-                onPreviewChange={(value) =>
-                  applyPreviewChange((draft) => {
-                    draft.visuals.background.movingObjectsBrightness = value;
-                  })
-                }
-                onCommit={(value) =>
-                  commitChange((draft) => {
-                    draft.visuals.background.movingObjectsBrightness = value;
-                  })
-                }
-              />
-              <NumberField
-                label="Mover size"
-                min={0.5}
-                max={4}
-                step={0.05}
-                value={documentValue.visuals.background.movingObjectsSize}
-                onPreviewChange={(value) =>
-                  applyPreviewChange((draft) => {
-                    draft.visuals.background.movingObjectsSize = value;
-                  })
-                }
-                onCommit={(value) =>
-                  commitChange((draft) => {
-                    draft.visuals.background.movingObjectsSize = value;
-                  })
-                }
-              />
-              <NumberField
-                label="Mover speed"
-                min={0}
-                max={3}
-                step={0.05}
-                value={documentValue.visuals.background.movingObjectsSpeed}
-                onPreviewChange={(value) =>
-                  applyPreviewChange((draft) => {
-                    draft.visuals.background.movingObjectsSpeed = value;
-                  })
-                }
-                onCommit={(value) =>
-                  commitChange((draft) => {
-                    draft.visuals.background.movingObjectsSpeed = value;
-                  })
-                }
-              />
-            </InspectorSection>
-            <InspectorSection
               title="Distant Bodies"
               note="Huge dim planet limbs and far-off body silhouettes"
+              resetDisabled={sectionResetDisabled}
+              onReset={() =>
+                resetInspectorSection((draft, defaults) => {
+                  resetObjectFields(
+                    draft.visuals.background,
+                    defaults.visuals.background,
+                    [
+                      "distantBodiesEnabled",
+                      "distantBodiesColor",
+                      "distantBodiesOpacity",
+                      "distantBodiesScale",
+                    ],
+                  );
+                })
+              }
             >
               <ToggleField
                 label="Enable bodies"
@@ -2641,6 +3364,16 @@ export function EditPage() {
             <InspectorSection
               title="Events"
               note="Rare flashes and distant activity layered into the sky"
+              resetDisabled={sectionResetDisabled}
+              onReset={() =>
+                resetInspectorSection((draft, defaults) => {
+                  resetObjectFields(
+                    draft.visuals.background,
+                    defaults.visuals.background,
+                    ["eventsEnabled", "eventsIntensity", "eventsFrequency"],
+                  );
+                })
+              }
             >
               <ToggleField
                 label="Enable events"
@@ -2768,6 +3501,13 @@ export function EditPage() {
                   note="Colors, terrain, forests, and atmosphere"
                   collapsible
                   defaultOpen={archetype === "terra"}
+                  resetDisabled={sectionResetDisabled}
+                  onReset={() =>
+                    resetInspectorSection((draft, defaults) => {
+                      draft.visuals.planets.archetypes[archetype] =
+                        defaults.visuals.planets.archetypes[archetype];
+                    })
+                  }
                 >
                   <ColorField
                     label="Surface"
@@ -2957,79 +3697,116 @@ export function EditPage() {
       }
       case "suns":
         return (
-          <InspectorSection
-            title="Sun visuals"
-            note="Brightness, halation, and distortion"
-          >
-            <NumberField
-              label="Core brightness"
-              min={0}
-              max={4}
-              step={0.05}
-              value={documentValue.visuals.suns.coreBrightness}
-              onPreviewChange={(value) =>
+          <>
+            {documentValue.visuals.suns.profiles.map((sunVisuals, index) => {
+              const sunLabel = getDefaultOrbitSunLabel(index);
+              const previewSunColor = (
+                key: SunProfileColorKey,
+                value: string,
+              ) =>
                 applyPreviewChange((draft) => {
-                  draft.visuals.suns.coreBrightness = value;
-                })
-              }
-              onCommit={(value) =>
+                  draft.visuals.suns.profiles[index]![key] = value;
+                });
+              const commitSunColor = (key: SunProfileColorKey, value: string) =>
                 commitChange((draft) => {
-                  draft.visuals.suns.coreBrightness = value;
-                })
-              }
-            />
-            <NumberField
-              label="Glow brightness"
-              min={0}
-              max={4}
-              step={0.05}
-              value={documentValue.visuals.suns.glowBrightness}
-              onPreviewChange={(value) =>
+                  draft.visuals.suns.profiles[index]![key] = value;
+                });
+              const previewSunNumber = (
+                key: SunProfileNumberKey,
+                value: number,
+              ) =>
                 applyPreviewChange((draft) => {
-                  draft.visuals.suns.glowBrightness = value;
-                })
-              }
-              onCommit={(value) =>
+                  draft.visuals.suns.profiles[index]![key] = value;
+                });
+              const commitSunNumber = (
+                key: SunProfileNumberKey,
+                value: number,
+              ) =>
                 commitChange((draft) => {
-                  draft.visuals.suns.glowBrightness = value;
-                })
-              }
-            />
-            <NumberField
-              label="Glow scale"
-              min={0.5}
-              max={8}
-              step={0.05}
-              value={documentValue.visuals.suns.glowScale}
-              onPreviewChange={(value) =>
-                applyPreviewChange((draft) => {
-                  draft.visuals.suns.glowScale = value;
-                })
-              }
-              onCommit={(value) =>
-                commitChange((draft) => {
-                  draft.visuals.suns.glowScale = value;
-                })
-              }
-            />
-            <NumberField
-              label="Warp scale"
-              min={0.5}
-              max={8}
-              step={0.05}
-              value={documentValue.visuals.suns.warpScale}
-              onPreviewChange={(value) =>
-                applyPreviewChange((draft) => {
-                  draft.visuals.suns.warpScale = value;
-                })
-              }
-              onCommit={(value) =>
-                commitChange((draft) => {
-                  draft.visuals.suns.warpScale = value;
-                })
-              }
-            />
-          </InspectorSection>
+                  draft.visuals.suns.profiles[index]![key] = value;
+                });
+
+              return (
+                <InspectorSection
+                  key={sunLabel}
+                  title={sunLabel}
+                  note="Color, brightness, and distortion"
+                  collapsible
+                  defaultOpen={index === 0}
+                  resetDisabled={sectionResetDisabled}
+                  onReset={() =>
+                    resetInspectorSection((draft, defaults) => {
+                      draft.visuals.suns.profiles[index] =
+                        defaults.visuals.suns.profiles[index];
+                    })
+                  }
+                >
+                  <ColorField
+                    label="Core color"
+                    value={sunVisuals.color}
+                    onPreviewChange={(value) => previewSunColor("color", value)}
+                    onCommit={(value) => commitSunColor("color", value)}
+                  />
+                  <ColorField
+                    label="Glow color"
+                    value={sunVisuals.glowColor}
+                    onPreviewChange={(value) =>
+                      previewSunColor("glowColor", value)
+                    }
+                    onCommit={(value) => commitSunColor("glowColor", value)}
+                  />
+                  <NumberField
+                    label="Core brightness"
+                    min={0}
+                    max={4}
+                    step={0.05}
+                    value={sunVisuals.coreBrightness}
+                    onPreviewChange={(value) =>
+                      previewSunNumber("coreBrightness", value)
+                    }
+                    onCommit={(value) =>
+                      commitSunNumber("coreBrightness", value)
+                    }
+                  />
+                  <NumberField
+                    label="Glow brightness"
+                    min={0}
+                    max={4}
+                    step={0.05}
+                    value={sunVisuals.glowBrightness}
+                    onPreviewChange={(value) =>
+                      previewSunNumber("glowBrightness", value)
+                    }
+                    onCommit={(value) =>
+                      commitSunNumber("glowBrightness", value)
+                    }
+                  />
+                  <NumberField
+                    label="Glow scale"
+                    min={0.5}
+                    max={8}
+                    step={0.05}
+                    value={sunVisuals.glowScale}
+                    onPreviewChange={(value) =>
+                      previewSunNumber("glowScale", value)
+                    }
+                    onCommit={(value) => commitSunNumber("glowScale", value)}
+                  />
+                  <NumberField
+                    label="Warp scale"
+                    min={0.5}
+                    max={8}
+                    step={0.05}
+                    value={sunVisuals.warpScale}
+                    onPreviewChange={(value) =>
+                      previewSunNumber("warpScale", value)
+                    }
+                    onCommit={(value) => commitSunNumber("warpScale", value)}
+                  />
+                </InspectorSection>
+              );
+            })}
+          </>
         );
       case "blackHole":
         return (
@@ -3037,6 +3814,12 @@ export function EditPage() {
             <InspectorSection
               title="Gameplay"
               note="Overtime timing and gravity"
+              resetDisabled={sectionResetDisabled}
+              onReset={() =>
+                resetInspectorSection((draft, defaults) => {
+                  draft.gameplay.blackHole = defaults.gameplay.blackHole;
+                })
+              }
             >
               <NumberField
                 label="Spawn time"
@@ -3111,6 +3894,12 @@ export function EditPage() {
             <InspectorSection
               title="Visuals"
               note="Disc, lens, and shock radius"
+              resetDisabled={sectionResetDisabled}
+              onReset={() =>
+                resetInspectorSection((draft, defaults) => {
+                  draft.visuals.blackHole = defaults.visuals.blackHole;
+                })
+              }
             >
               <NumberField
                 label="Core radius"
@@ -3177,7 +3966,17 @@ export function EditPage() {
       case "foresight":
         return (
           <>
-            <InspectorSection title="Gameplay" note="Prediction cadence">
+            <InspectorSection
+              title="Gameplay"
+              note="Prediction cadence"
+              resetDisabled={sectionResetDisabled}
+              onReset={() =>
+                resetInspectorSection((draft, defaults) => {
+                  draft.gameplay.abilities.foresight =
+                    defaults.gameplay.abilities.foresight;
+                })
+              }
+            >
               <NumberField
                 label="Cooldown"
                 min={0}
@@ -3213,7 +4012,30 @@ export function EditPage() {
                 }
               />
             </InspectorSection>
-            <InspectorSection title="Path Style" note="Live forecast rendering">
+            <InspectorSection
+              title="Path Style"
+              note="Live forecast rendering"
+              resetDisabled={sectionResetDisabled}
+              onReset={() =>
+                resetInspectorSection((draft, defaults) => {
+                  resetObjectFields(
+                    draft.visuals.abilities.foresight,
+                    defaults.visuals.abilities.foresight,
+                    [
+                      "showDots",
+                      "showLine",
+                      "pointSize",
+                      "dotOpacity",
+                      "lineOpacity",
+                      "leadGap",
+                      "nearStride",
+                      "midStride",
+                      "farStride",
+                    ],
+                  );
+                })
+              }
+            >
               <ToggleField
                 label="Show dots"
                 value={documentValue.visuals.abilities.foresight.showDots}
@@ -3352,7 +4174,22 @@ export function EditPage() {
                 }
               />
             </InspectorSection>
-            <InspectorSection title="Colors" note="HUD accent and path colors">
+            <InspectorSection
+              title="Colors"
+              note="HUD accent and path colors"
+              resetDisabled={sectionResetDisabled}
+              onReset={() =>
+                resetInspectorSection((draft, defaults) => {
+                  draft.visuals.abilities.foresightColor =
+                    defaults.visuals.abilities.foresightColor;
+                  resetObjectFields(
+                    draft.visuals.abilities.foresight,
+                    defaults.visuals.abilities.foresight,
+                    ["dotColor", "lineColor"],
+                  );
+                })
+              }
+            >
               <ColorField
                 label="HUD accent"
                 value={documentValue.visuals.abilities.foresightColor}
@@ -3401,7 +4238,17 @@ export function EditPage() {
       case "shield":
         return (
           <>
-            <InspectorSection title="Gameplay" note="Tracking arc and uptime">
+            <InspectorSection
+              title="Gameplay"
+              note="Tracking arc and uptime"
+              resetDisabled={sectionResetDisabled}
+              onReset={() =>
+                resetInspectorSection((draft, defaults) => {
+                  draft.gameplay.abilities.shield =
+                    defaults.gameplay.abilities.shield;
+                })
+              }
+            >
               <NumberField
                 label="Cooldown"
                 min={0}
@@ -3454,7 +4301,17 @@ export function EditPage() {
                 }
               />
             </InspectorSection>
-            <InspectorSection title="Visuals" note="HUD and arc tint">
+            <InspectorSection
+              title="Visuals"
+              note="HUD and arc tint"
+              resetDisabled={sectionResetDisabled}
+              onReset={() =>
+                resetInspectorSection((draft, defaults) => {
+                  draft.visuals.abilities.shieldColor =
+                    defaults.visuals.abilities.shieldColor;
+                })
+              }
+            >
               <ColorField
                 label="Accent"
                 value={documentValue.visuals.abilities.shieldColor}
@@ -3475,7 +4332,17 @@ export function EditPage() {
       case "boost":
         return (
           <>
-            <InspectorSection title="Gameplay" note="Charge and impulse">
+            <InspectorSection
+              title="Gameplay"
+              note="Charge and impulse"
+              resetDisabled={sectionResetDisabled}
+              onReset={() =>
+                resetInspectorSection((draft, defaults) => {
+                  draft.gameplay.abilities.boost =
+                    defaults.gameplay.abilities.boost;
+                })
+              }
+            >
               <NumberField
                 label="Charges"
                 min={1}
@@ -3528,7 +4395,17 @@ export function EditPage() {
                 }
               />
             </InspectorSection>
-            <InspectorSection title="Visuals" note="Burst tint">
+            <InspectorSection
+              title="Visuals"
+              note="Burst tint"
+              resetDisabled={sectionResetDisabled}
+              onReset={() =>
+                resetInspectorSection((draft, defaults) => {
+                  draft.visuals.abilities.boostColor =
+                    defaults.visuals.abilities.boostColor;
+                })
+              }
+            >
               <ColorField
                 label="Accent"
                 value={documentValue.visuals.abilities.boostColor}
@@ -3546,12 +4423,88 @@ export function EditPage() {
             </InspectorSection>
           </>
         );
+      case "gravityPulse":
+        return (
+          <>
+            <InspectorSection
+              title="Gameplay"
+              note="Reach and max force"
+              resetDisabled={sectionResetDisabled}
+              onReset={() =>
+                resetInspectorSection((draft, defaults) => {
+                  draft.gameplay.abilities.gravityPulse =
+                    defaults.gameplay.abilities.gravityPulse;
+                })
+              }
+            >
+              <NumberField
+                label="Blast radius"
+                min={50}
+                max={10000}
+                step={10}
+                value={documentValue.gameplay.abilities.gravityPulse.radius}
+                onPreviewChange={(value) =>
+                  applyPreviewChange((draft) => {
+                    draft.gameplay.abilities.gravityPulse.radius = value;
+                  })
+                }
+                onCommit={(value) =>
+                  commitChange((draft) => {
+                    draft.gameplay.abilities.gravityPulse.radius = value;
+                  })
+                }
+              />
+              <NumberField
+                label="Blast force"
+                min={0}
+                max={20000}
+                step={10}
+                value={documentValue.gameplay.abilities.gravityPulse.force}
+                onPreviewChange={(value) =>
+                  applyPreviewChange((draft) => {
+                    draft.gameplay.abilities.gravityPulse.force = value;
+                  })
+                }
+                onCommit={(value) =>
+                  commitChange((draft) => {
+                    draft.gameplay.abilities.gravityPulse.force = value;
+                  })
+                }
+              />
+            </InspectorSection>
+            <InspectorSection title="Ability">
+              <div className="edit-inspector__note-stack">
+                <article className="edit-inspector__note-card">
+                  <strong>{WILDCARD_ABILITY_COPY.gravityPulse.title}</strong>
+                  <span>{WILDCARD_ABILITY_COPY.gravityPulse.description}</span>
+                </article>
+              </div>
+            </InspectorSection>
+          </>
+        );
+      case "cloak":
+        return (
+          <InspectorSection title="Ability">
+            <div className="edit-inspector__note-stack">
+              <article className="edit-inspector__note-card">
+                <strong>{WILDCARD_ABILITY_COPY.cloak.title}</strong>
+                <span>{WILDCARD_ABILITY_COPY.cloak.description}</span>
+              </article>
+            </div>
+          </InspectorSection>
+        );
       case "cache":
         return (
           <>
             <InspectorSection
               title="Gameplay"
               note="Pickup pressure and rotation"
+              resetDisabled={sectionResetDisabled}
+              onReset={() =>
+                resetInspectorSection((draft, defaults) => {
+                  draft.gameplay.cache = defaults.gameplay.cache;
+                })
+              }
             >
               <NumberField
                 label="Count"
@@ -3605,38 +4558,59 @@ export function EditPage() {
                 }
               />
             </InspectorSection>
-            <InspectorSection title="Visuals" note="Badge scale in the arena">
+            <InspectorSection title="Effects" note="What each cache grants">
+              <div className="edit-inspector__cache-guide">
+                {CACHE_ICON_KEYS.map((iconKey) => (
+                  <article
+                    key={iconKey}
+                    className="edit-inspector__cache-guide-item"
+                  >
+                    <span
+                      className="edit-inspector__cache-guide-badge"
+                      style={{
+                        background: `linear-gradient(180deg, ${getCacheIconAccent(iconKey)}66, ${getCacheIconAccent(iconKey)}22)`,
+                        boxShadow: `0 0 12px ${getCacheIconAccent(iconKey)}44`,
+                        color: getCacheIconAccent(iconKey),
+                      }}
+                    >
+                      {getCacheIconLabel(iconKey)}
+                    </span>
+                    <div className="edit-inspector__cache-guide-copy">
+                      <strong>{CACHE_EFFECT_COPY[iconKey].title}</strong>
+                      <span>{CACHE_EFFECT_COPY[iconKey].description}</span>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </InspectorSection>
+            <InspectorSection
+              title="Visuals"
+              note="Badge size as rendered in /sandbox"
+              resetDisabled={sectionResetDisabled}
+              onReset={() =>
+                resetInspectorSection((draft, defaults) => {
+                  resetObjectFields(
+                    draft.visuals.caches,
+                    defaults.visuals.caches,
+                    ["badgeBaseSize", "badgeScale"],
+                  );
+                })
+              }
+            >
               <NumberField
-                label="Badge scale"
-                min={0.5}
-                max={3}
-                step={0.05}
-                value={documentValue.visuals.caches.badgeScale}
-                onPreviewChange={(value) =>
-                  applyPreviewChange((draft) => {
-                    draft.visuals.caches.badgeScale = value;
-                  })
-                }
-                onCommit={(value) =>
-                  commitChange((draft) => {
-                    draft.visuals.caches.badgeScale = value;
-                  })
-                }
-              />
-              <NumberField
-                label="Base size"
-                min={16}
-                max={240}
+                label="Badge size"
+                min={Math.round(getCacheArenaBadgeSize(16, 1))}
+                max={Math.round(getCacheArenaBadgeSize(400, 1))}
                 step={1}
-                value={documentValue.visuals.caches.badgeBaseSize}
+                value={getDisplayedCacheBadgeSize(documentValue)}
                 onPreviewChange={(value) =>
                   applyPreviewChange((draft) => {
-                    draft.visuals.caches.badgeBaseSize = value;
+                    setDisplayedCacheBadgeSize(draft, value);
                   })
                 }
                 onCommit={(value) =>
                   commitChange((draft) => {
-                    draft.visuals.caches.badgeBaseSize = value;
+                    setDisplayedCacheBadgeSize(draft, value);
                   })
                 }
               />
@@ -3716,15 +4690,11 @@ export function EditPage() {
         <div className="edit-preview-frame">
           <EditorPreviewStage
             documentValue={documentValue}
+            externalRevision={previewResetRevision}
             hudTuning={documentValue.visuals.hud}
             itemId={selectedItemId}
             showHud={previewMode.showHud}
           />
-          <div className="edit-preview-overlay">
-            <div className="edit-preview-overlay__badge">
-              {previewMode.label}
-            </div>
-          </div>
         </div>
       </main>
 
@@ -3732,25 +4702,32 @@ export function EditPage() {
         <div className="edit-panel edit-panel--sticky">
           <div className="edit-panel__header">
             <div>
-              <div className="edit-panel__eyebrow">Inspector</div>
               <div className="edit-panel__title edit-panel__title--small">
                 {getEditorItemMeta(selectedItemId)?.label}
               </div>
             </div>
-            {canResetItem(selectedItemId) ? (
-              <button
-                type="button"
-                className="edit-action-button"
-                disabled={saveStatus === "loading" || saveStatus === "saving"}
-                onClick={resetSelectedItem}
-              >
-                {getResetLabel(selectedItemId)}
-              </button>
-            ) : null}
-          </div>
-          <div className="edit-panel__body">
-            Saved values go directly into the editor tuning store. Use reset to
-            jump back to the shipped defaults for the current scope.
+            <div className="edit-panel__actions">
+              {canRestartPreview(selectedItemId) ? (
+                <button
+                  type="button"
+                  className="edit-action-button"
+                  disabled={saveStatus === "loading"}
+                  onClick={restartSelectedPreview}
+                >
+                  Restart sim
+                </button>
+              ) : null}
+              {canResetItem(selectedItemId) ? (
+                <button
+                  type="button"
+                  className="edit-action-button"
+                  disabled={saveStatus === "loading" || saveStatus === "saving"}
+                  onClick={resetSelectedItem}
+                >
+                  {getResetLabel(selectedItemId)}
+                </button>
+              ) : null}
+            </div>
           </div>
         </div>
         <div className="edit-inspector">{renderInspector()}</div>

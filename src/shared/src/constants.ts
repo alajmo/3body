@@ -23,6 +23,11 @@ export interface BoostSpec {
   magnitude: number;
 }
 
+export interface GravityPulseSpec {
+  force: number;
+  radius: number;
+}
+
 export interface DroneSpec {
   damage: number;
   speed: number;
@@ -36,12 +41,6 @@ export interface CacheSpec {
   count: number;
   respawnSec: number;
   wildcardChance: number;
-}
-
-export interface BoundaryDamageSpec {
-  baseDps: number;
-  maxDps: number;
-  rampAfterSec: number;
 }
 
 export interface BlackHoleSpec {
@@ -58,11 +57,22 @@ export interface MatchTimerSpec {
   rematchVoteSec: number;
 }
 
+export interface ArenaBoundarySpec {
+  baseDps: number;
+  instantDeath: boolean;
+  maxDps: number;
+  rampAfterSec: number;
+}
+
+const initialGameplay = CURRENT_GAME_TUNING.gameplay;
+
 export const G = 500;
 export const EPS2 = 2500;
 export const SUN_MASS = 220_000;
 export const PLANET_MASS = 1_000;
-export const ARENA_RADIUS = 2000;
+export const DEFAULT_ARENA_RADIUS = 2_000;
+export const ARENA_RADIUS_MIN = 1_400;
+export let ARENA_RADIUS = initialGameplay.arena.radius;
 export const OUTER_RING_MIN = 1300;
 export const OUTER_RING_MAX = 1825;
 export const SIM_HZ = 120;
@@ -70,8 +80,6 @@ export const FIXED_STEP_SEC = 1 / SIM_HZ;
 export const SNAPSHOT_HZ = 30;
 export const PLANET_HP = 100;
 export const ROOM_CAPACITY = 7;
-
-const initialGameplay = CURRENT_GAME_TUNING.gameplay;
 
 export const ROCKET_SPECS = {
   light: { ...initialGameplay.rockets.light },
@@ -91,6 +99,10 @@ export const BOOST_SPEC: BoostSpec = {
   ...initialGameplay.abilities.boost,
 };
 
+export const GRAVITY_PULSE_SPEC: GravityPulseSpec = {
+  ...initialGameplay.abilities.gravityPulse,
+};
+
 export const DRONE_SPEC: DroneSpec = {
   ...initialGameplay.drone,
 };
@@ -99,8 +111,12 @@ export const CACHE_SPEC: CacheSpec = {
   ...initialGameplay.cache,
 };
 
-export const BOUNDARY_DAMAGE_SPEC: BoundaryDamageSpec = {
+const OUTER_RING_MIN_RATIO = OUTER_RING_MIN / DEFAULT_ARENA_RADIUS;
+const OUTER_RING_MAX_RATIO = OUTER_RING_MAX / DEFAULT_ARENA_RADIUS;
+
+export const ARENA_BOUNDARY_SPEC: ArenaBoundarySpec = {
   baseDps: 5,
+  instantDeath: initialGameplay.arena.instantDeath,
   maxDps: 20,
   rampAfterSec: 5,
 };
@@ -121,32 +137,41 @@ export const CACHE_TANGENTIAL_SPEED_MAX = 58;
 
 export let DRONE_LAUNCH_SPEED = DRONE_SPEC.speed * 0.48;
 
+export const getOuterRingMin = (arenaRadius = ARENA_RADIUS): number =>
+  arenaRadius * OUTER_RING_MIN_RATIO;
+
+export const getOuterRingMax = (arenaRadius = ARENA_RADIUS): number =>
+  arenaRadius * OUTER_RING_MAX_RATIO;
+
 export const REPAIR_AMOUNT = 40;
 export const SHIELD_EXT_MULTIPLIER = 2;
 export const FORESIGHT_EXT_MULTIPLIER = 2;
 
-export const GRAVITY_PULSE_RADIUS = 480;
-export const GRAVITY_PULSE_IMPULSE = 440;
-export const TELEPORT_SWAP_MIN_DOT = Math.cos(Math.PI / 5);
+export let GRAVITY_PULSE_RADIUS = GRAVITY_PULSE_SPEC.radius;
+export let GRAVITY_PULSE_IMPULSE = GRAVITY_PULSE_SPEC.force;
 
 export const DEBRIS_TTL_SEC = 1.35;
 
 export const WILDCARD_KINDS = [
   "gravityPulse",
   "cloak",
-  "teleportSwap",
 ] as const satisfies readonly WildcardKind[];
 
 export const applyGameplayTuning = (gameplay: GameplayTuning) => {
   Object.assign(ROCKET_SPECS.light, gameplay.rockets.light);
   Object.assign(ROCKET_SPECS.heavy, gameplay.rockets.heavy);
   Object.assign(ROCKET_SPECS.seeker, gameplay.rockets.seeker);
+  ARENA_RADIUS = gameplay.arena.radius;
+  ARENA_BOUNDARY_SPEC.instantDeath = gameplay.arena.instantDeath;
   Object.assign(FORESIGHT_SPEC, gameplay.abilities.foresight);
   Object.assign(SHIELD_SPEC, gameplay.abilities.shield);
   Object.assign(BOOST_SPEC, gameplay.abilities.boost);
+  Object.assign(GRAVITY_PULSE_SPEC, gameplay.abilities.gravityPulse);
   Object.assign(DRONE_SPEC, gameplay.drone);
   Object.assign(CACHE_SPEC, gameplay.cache);
   Object.assign(BLACK_HOLE_SPEC, gameplay.blackHole);
   Object.assign(MATCH_TIMERS, gameplay.timers);
   DRONE_LAUNCH_SPEED = DRONE_SPEC.speed * 0.48;
+  GRAVITY_PULSE_RADIUS = GRAVITY_PULSE_SPEC.radius;
+  GRAVITY_PULSE_IMPULSE = GRAVITY_PULSE_SPEC.force;
 };

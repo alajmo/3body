@@ -1,5 +1,5 @@
 import { ARCHETYPES } from "./archetypes";
-import { ARENA_RADIUS, BLACK_HOLE_SPEC, ROCKET_SPECS } from "./constants";
+import { BLACK_HOLE_SPEC, ROCKET_SPECS } from "./constants";
 import type {
   PlanetPrivateState,
   PlanetPublic,
@@ -420,7 +420,7 @@ const assessSurvival = (
     }
   }
 
-  if (!danger && len(self.pos) >= ARENA_RADIUS * 0.94) {
+  if (!danger && len(self.pos) >= world.arenaRadius * 0.94) {
     danger = true;
     escapeVec = inwardDir(self.pos);
   }

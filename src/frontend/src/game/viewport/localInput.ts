@@ -4,7 +4,8 @@ interface PendingAbilityRequests {
   boost: boolean;
   foresight: boolean;
   shield: boolean;
-  wildcard: boolean;
+  gravityPulse: boolean;
+  cloak: boolean;
 }
 
 interface PendingDroneRequests {
@@ -61,7 +62,8 @@ const createPendingAbilityRequests = (): PendingAbilityRequests => ({
   boost: false,
   foresight: false,
   shield: false,
-  wildcard: false,
+  gravityPulse: false,
+  cloak: false,
 });
 
 const createPendingDroneRequests = (): PendingDroneRequests => ({
@@ -104,7 +106,7 @@ export const createGameViewportInputController = (
   state: GameViewportInputRuntimeState;
 } => {
   const state: GameViewportInputRuntimeState = {
-    fullViewEnabled: true,
+    fullViewEnabled: false,
     inputState: {
       aimWorld: {
         x: options.initialPlayer.aimWorld.x,
@@ -128,7 +130,8 @@ export const createGameViewportInputController = (
     state.pendingAbilityRequests.foresight = false;
     state.pendingAbilityRequests.shield = false;
     state.pendingAbilityRequests.boost = false;
-    state.pendingAbilityRequests.wildcard = false;
+    state.pendingAbilityRequests.gravityPulse = false;
+    state.pendingAbilityRequests.cloak = false;
     state.pendingDroneRequests.launch = false;
   };
 
@@ -171,12 +174,6 @@ export const createGameViewportInputController = (
 
     if (event.code === "ShiftLeft" || event.code === "ShiftRight") {
       state.readModeHeld = true;
-      event.preventDefault();
-      return;
-    }
-
-    if (event.code === "KeyF" && !event.repeat) {
-      state.fullViewEnabled = !state.fullViewEnabled;
       event.preventDefault();
       return;
     }
@@ -226,8 +223,14 @@ export const createGameViewportInputController = (
       return;
     }
 
-    if (event.code === "KeyR" && !event.repeat) {
-      state.pendingAbilityRequests.wildcard = true;
+    if (event.code === "KeyG" && !event.repeat) {
+      state.pendingAbilityRequests.gravityPulse = true;
+      event.preventDefault();
+      return;
+    }
+
+    if (event.code === "KeyC" && !event.repeat) {
+      state.pendingAbilityRequests.cloak = true;
       event.preventDefault();
       return;
     }

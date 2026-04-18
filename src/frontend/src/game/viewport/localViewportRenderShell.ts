@@ -33,7 +33,7 @@ interface StarfieldLayerConfig {
   coolColor: string;
   driftX: number;
   driftY: number;
-  kind: "dust" | "movingObjects" | "stars";
+  kind: "dust" | "stars";
   parallax: number;
   size: number;
   twinkleAmount: number;

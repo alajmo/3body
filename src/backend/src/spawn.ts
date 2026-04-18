@@ -9,11 +9,11 @@ import {
   createInitialAmmo,
   fromAngle,
   G,
+  getOuterRingMax,
+  getOuterRingMin,
   getShieldLoadCapacity,
   mulberry32,
   nextFloat,
-  OUTER_RING_MAX,
-  OUTER_RING_MIN,
   PLANET_HP,
   rollCacheContents,
   scale,
@@ -37,7 +37,8 @@ const SUN_RADIUS = 96;
 const SUN_RING_RADIUS = 360;
 const SUN_TANGENTIAL_SPEED = 78;
 const PLANET_RADIUS = 34;
-const PLANET_RING_RADIUS = 900;
+// Keep authoritative spawns aligned with the safer local sandbox opener for now.
+const PLANET_RING_RADIUS = 1_150;
 
 const createSun = (
   index: number,
@@ -109,6 +110,8 @@ const createPlanet = (
         droneCooldownUntilTick: 0,
       },
       boostCharges,
+      gravityPulseHeld: false,
+      cloakHeld: false,
       nextShieldExt: false,
       nextForesightExt: false,
     },
@@ -117,7 +120,7 @@ const createPlanet = (
 
 const createCache = (entityIds: EntityIdSequence, rng: () => number): Cache => {
   const angle = rng() * Math.PI * 2 + (rng() - 0.5) * 0.24;
-  const radius = nextFloat(rng, OUTER_RING_MIN, OUTER_RING_MAX);
+  const radius = nextFloat(rng, getOuterRingMin(), getOuterRingMax());
   const tangent = fromAngle(angle + (Math.PI / 2) * (rng() < 0.5 ? -1 : 1));
   const speed = nextFloat(
     rng,

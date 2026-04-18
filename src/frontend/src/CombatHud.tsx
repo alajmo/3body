@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   clamp,
   type HudVisualTuning,
@@ -8,6 +8,8 @@ import {
 } from "@3body/shared";
 import type {
   GameViewportController,
+  GameViewportMinimapEntityKind,
+  GameViewportMinimapState,
   GameViewportHudState,
 } from "./game/viewportHud";
 
@@ -41,9 +43,8 @@ const formatCompass = (headingDeg: number | null): string => {
 
   const roundedHeadingDeg = Math.round(headingDeg) % 360;
   const point =
-    COMPASS_POINTS[
-      Math.round(headingDeg / 45) % COMPASS_POINTS.length
-    ] ?? COMPASS_POINTS[0];
+    COMPASS_POINTS[Math.round(headingDeg / 45) % COMPASS_POINTS.length] ??
+    COMPASS_POINTS[0];
 
   return `${point} · ${roundedHeadingDeg}°`;
 };
@@ -85,6 +86,433 @@ const WEAPON_KEY_LABELS: Record<RocketKind, string> = {
   heavy: "2",
   seeker: "3",
 };
+const MINIMAP_SCAN_EDGE_HOLD_MS = 90;
+const MINIMAP_SCAN_CYCLE_MS = 2400;
+const MINIMAP_VIEWBOX_SIZE = 160;
+const MINIMAP_PADDING = 12;
+const MINIMAP_DRAWABLE_RADIUS =
+  (MINIMAP_VIEWBOX_SIZE - MINIMAP_PADDING * 2) / 2;
+const MINIMAP_SCAN_TAIL_PX = 46;
+const MINIMAP_SCAN_HEAD_PX = 9;
+const MINIMAP_MARKER_PERSISTENCE_PX = 44;
+const MINIMAP_MARKER_PRECHARGE_PX = 18;
+const MINIMAP_RANGE_EXPONENT = 0.68;
+const MINIMAP_MIN_MARKER_RADIUS: Record<GameViewportMinimapEntityKind, number> =
+  {
+    blackHole: 4.8,
+    cache: 2.4,
+    drone: 2.4,
+    planet: 2.8,
+    sun: 3.2,
+  };
+const MINIMAP_LAYER_ORDER: Record<GameViewportMinimapEntityKind, number> = {
+  blackHole: 0,
+  sun: 1,
+  planet: 2,
+  cache: 3,
+  drone: 4,
+};
+
+const countMinimapEntities = (minimap: GameViewportMinimapState) => {
+  const counts = {
+    blackHole: 0,
+    cache: 0,
+    drone: 0,
+    planet: 0,
+    sun: 0,
+  } satisfies Record<GameViewportMinimapEntityKind, number>;
+
+  for (const entity of minimap.entities) {
+    counts[entity.kind] += 1;
+  }
+
+  return counts;
+};
+
+const formatMinimapAriaLabel = (
+  counts: Record<GameViewportMinimapEntityKind, number>,
+): string =>
+  [
+    counts.sun > 0 ? `${counts.sun} suns` : null,
+    counts.planet > 0 ? `${counts.planet} planets` : null,
+    counts.cache > 0 ? `${counts.cache} caches` : null,
+    counts.drone > 0 ? `${counts.drone} drones` : null,
+    counts.blackHole > 0 ? `${counts.blackHole} black holes` : null,
+  ]
+    .filter((value): value is string => value !== null)
+    .join(", ");
+
+const projectMinimapRadius = (radius: number, extentRadius: number): number =>
+  MINIMAP_DRAWABLE_RADIUS *
+  Math.pow(clamp(radius / extentRadius, 0, 1), MINIMAP_RANGE_EXPONENT);
+
+const projectMinimapPoint = (x: number, y: number, extentRadius: number) => {
+  const center = MINIMAP_VIEWBOX_SIZE / 2;
+  const radialDistance = Math.hypot(x, y);
+  if (!(radialDistance > 0)) {
+    return {
+      x: center,
+      y: center,
+    };
+  }
+
+  const projectedDistance = projectMinimapRadius(radialDistance, extentRadius);
+  const scale = projectedDistance / radialDistance;
+  return {
+    x: center + x * scale,
+    y: center - y * scale,
+  };
+};
+
+const getMinimapMarkerRadius = (
+  entity: GameViewportMinimapState["entities"][number],
+  extentRadius: number,
+): number => {
+  const scale = MINIMAP_DRAWABLE_RADIUS / extentRadius;
+  return Math.max(
+    MINIMAP_MIN_MARKER_RADIUS[entity.kind],
+    Math.max(entity.radius, 0) * scale * 1.15,
+  );
+};
+
+const getMinimapNowMs = (): number =>
+  typeof performance === "undefined" ? Date.now() : performance.now();
+
+const getMinimapEntityKey = (
+  entity: Pick<GameViewportMinimapState["entities"][number], "id" | "kind">,
+): string => `${entity.kind}:${entity.id}`;
+
+const getMinimapScanlineY = (scanProgress: number): number =>
+  clamp(scanProgress, 0, 1) * MINIMAP_VIEWBOX_SIZE;
+
+const getMinimapSwapThresholdY = ({
+  extentRadius,
+  sourceEntity,
+  targetEntity,
+}: {
+  extentRadius: number;
+  sourceEntity: GameViewportMinimapState["entities"][number] | null;
+  targetEntity: GameViewportMinimapState["entities"][number] | null;
+}): number => {
+  const sourceY =
+    sourceEntity === null
+      ? null
+      : projectMinimapPoint(
+          sourceEntity.pos.x,
+          sourceEntity.pos.y,
+          extentRadius,
+        ).y;
+  const targetY =
+    targetEntity === null
+      ? null
+      : projectMinimapPoint(
+          targetEntity.pos.x,
+          targetEntity.pos.y,
+          extentRadius,
+        ).y;
+
+  if (sourceY === null) {
+    return targetY ?? MINIMAP_VIEWBOX_SIZE / 2;
+  }
+
+  if (targetY === null) {
+    return sourceY;
+  }
+
+  // Wait until the sweep has crossed both the old and new rows so markers
+  // never jump ahead of the visible scanline.
+  return Math.max(sourceY, targetY);
+};
+
+const getMinimapMarkerStyle = (
+  pointY: number,
+  scanlineY: number,
+): CSSProperties => {
+  const deltaY = scanlineY - pointY;
+  const persistence =
+    deltaY >= 0 ? Math.exp(-deltaY / MINIMAP_MARKER_PERSISTENCE_PX) : 0;
+  const precharge =
+    deltaY < 0 ? Math.exp(deltaY / MINIMAP_MARKER_PRECHARGE_PX) : 0;
+  const energy = clamp(0.18 + persistence * 0.82 + precharge * 0.16, 0.18, 1);
+
+  return {
+    "--minimap-marker-energy": `${energy.toFixed(3)}`,
+    "--minimap-marker-glow": `${(1.4 + energy * 7).toFixed(2)}px`,
+    "--minimap-marker-opacity": `${clamp(0.4 + energy * 0.54, 0.4, 0.94).toFixed(3)}`,
+  } as CSSProperties;
+};
+
+const createBlankMinimapState = (
+  minimap: GameViewportMinimapState,
+): GameViewportMinimapState => ({
+  arenaRadius: minimap.arenaRadius,
+  extentRadius: minimap.extentRadius,
+  entities: [],
+});
+
+function WorldMinimap({ minimap }: { minimap: GameViewportMinimapState }) {
+  const latestMinimapRef = useRef(minimap);
+  const [scanWindow, setScanWindow] = useState(() => ({
+    source: createBlankMinimapState(minimap),
+    target: minimap,
+  }));
+  const scanStartedAtMsRef = useRef(getMinimapNowMs());
+  const [scanProgress, setScanProgress] = useState(0);
+
+  useEffect(() => {
+    latestMinimapRef.current = minimap;
+  }, [minimap]);
+
+  useEffect(() => {
+    let frameId = 0;
+
+    const tick = () => {
+      const nowMs = getMinimapNowMs();
+      const elapsedMs = nowMs - scanStartedAtMsRef.current;
+      if (elapsedMs >= MINIMAP_SCAN_CYCLE_MS) {
+        setScanProgress(1);
+        if (elapsedMs >= MINIMAP_SCAN_CYCLE_MS + MINIMAP_SCAN_EDGE_HOLD_MS) {
+          scanStartedAtMsRef.current = nowMs;
+          setScanProgress(0);
+          setScanWindow((current) => ({
+            source: current.target,
+            target: latestMinimapRef.current,
+          }));
+        }
+      } else {
+        setScanProgress(elapsedMs / MINIMAP_SCAN_CYCLE_MS);
+      }
+
+      frameId = requestAnimationFrame(tick);
+    };
+
+    frameId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frameId);
+  }, []);
+
+  const extentRadius = Math.max(
+    scanWindow.source.extentRadius,
+    scanWindow.source.arenaRadius,
+    scanWindow.target.extentRadius,
+    scanWindow.target.arenaRadius,
+    1,
+  );
+  const sourceEntitiesByKey = new Map(
+    scanWindow.source.entities.map((entity) => [
+      getMinimapEntityKey(entity),
+      entity,
+    ]),
+  );
+  const targetEntitiesByKey = new Map(
+    scanWindow.target.entities.map((entity) => [
+      getMinimapEntityKey(entity),
+      entity,
+    ]),
+  );
+  const renderedEntities = [
+    ...new Set([...sourceEntitiesByKey.keys(), ...targetEntitiesByKey.keys()]),
+  ]
+    .map((entityKey) => {
+      const sourceEntity = sourceEntitiesByKey.get(entityKey) ?? null;
+      const targetEntity = targetEntitiesByKey.get(entityKey) ?? null;
+      if (sourceEntity === null && targetEntity === null) {
+        return null;
+      }
+
+      const thresholdY = getMinimapSwapThresholdY({
+        extentRadius,
+        sourceEntity,
+        targetEntity,
+      });
+      if (getMinimapScanlineY(scanProgress) >= thresholdY) {
+        return targetEntity;
+      }
+      return sourceEntity;
+    })
+    .filter((entity): entity is NonNullable<typeof entity> => entity !== null);
+  const entities = renderedEntities.sort(
+    (left, right) =>
+      MINIMAP_LAYER_ORDER[left.kind] - MINIMAP_LAYER_ORDER[right.kind],
+  );
+  const counts = countMinimapEntities({
+    ...scanWindow.target,
+    entities,
+  });
+  const minimapLabel = formatMinimapAriaLabel(counts);
+  const scanlineY = getMinimapScanlineY(scanProgress);
+  const scanSweepHeightPercent =
+    ((MINIMAP_SCAN_TAIL_PX + MINIMAP_SCAN_HEAD_PX) / MINIMAP_VIEWBOX_SIZE) *
+    100;
+  const scanlinePercent = (scanlineY / MINIMAP_VIEWBOX_SIZE) * 100;
+  const phosphorStyle = {
+    height: `${scanlinePercent.toFixed(3)}%`,
+  } as CSSProperties;
+  const scanSweepStyle = {
+    height: `${scanSweepHeightPercent.toFixed(3)}%`,
+    top: `${(
+      ((scanlineY - MINIMAP_SCAN_TAIL_PX) / MINIMAP_VIEWBOX_SIZE) * 100
+    ).toFixed(3)}%`,
+  } as CSSProperties;
+
+  return (
+    <section className="minimap-panel hud-panel hud-panel--subtle">
+      <div className="minimap-panel__map-frame">
+        <div className="minimap-panel__grid" aria-hidden="true" />
+        <svg
+          className="minimap-panel__map"
+          viewBox={`0 0 ${MINIMAP_VIEWBOX_SIZE} ${MINIMAP_VIEWBOX_SIZE}`}
+          role="img"
+          aria-label={
+            minimapLabel.length > 0
+              ? `Delayed world minimap showing ${minimapLabel}`
+              : "Delayed world minimap"
+          }
+        >
+          {entities.map((entity) => {
+            const point = projectMinimapPoint(
+              entity.pos.x,
+              entity.pos.y,
+              extentRadius,
+            );
+            const markerRadius = getMinimapMarkerRadius(entity, extentRadius);
+            const markerStyle = getMinimapMarkerStyle(point.y, scanlineY);
+            const highlight = entity.highlighted ? (
+              <circle
+                className="minimap__marker-highlight"
+                cx={point.x}
+                cy={point.y}
+                r={markerRadius + 2.1}
+              />
+            ) : null;
+
+            switch (entity.kind) {
+              case "blackHole":
+                return (
+                  <g
+                    key={`${entity.kind}-${entity.id}`}
+                    className="minimap__entity"
+                    style={markerStyle}
+                  >
+                    {highlight}
+                    <circle
+                      className="minimap__marker minimap__marker--black-hole"
+                      cx={point.x}
+                      cy={point.y}
+                      r={markerRadius}
+                    />
+                    <circle
+                      className="minimap__marker-core minimap__marker-core--black-hole"
+                      cx={point.x}
+                      cy={point.y}
+                      r={Math.max(1.8, markerRadius * 0.24)}
+                    />
+                  </g>
+                );
+              case "cache":
+                return (
+                  <g
+                    key={`${entity.kind}-${entity.id}`}
+                    className="minimap__entity"
+                    style={markerStyle}
+                  >
+                    {highlight}
+                    <rect
+                      className="minimap__marker minimap__marker--cache"
+                      x={point.x - markerRadius * 0.95}
+                      y={point.y - markerRadius * 0.72}
+                      width={markerRadius * 1.9}
+                      height={markerRadius * 1.44}
+                      rx={1.4}
+                    />
+                    <rect
+                      className="minimap__marker minimap__marker--cache-latch"
+                      x={point.x - markerRadius * 0.46}
+                      y={point.y - markerRadius * 0.96}
+                      width={markerRadius * 0.92}
+                      height={markerRadius * 0.22}
+                      rx={0.5}
+                    />
+                    <rect
+                      className="minimap__marker minimap__marker--cache-core"
+                      x={point.x - markerRadius * 0.5}
+                      y={point.y - markerRadius * 0.26}
+                      width={markerRadius * 2}
+                      height={markerRadius * 0.52}
+                      rx={0.5}
+                    />
+                  </g>
+                );
+              case "drone": {
+                const points = [
+                  `${point.x},${point.y - markerRadius}`,
+                  `${point.x + markerRadius * 0.9},${point.y + markerRadius * 0.85}`,
+                  `${point.x - markerRadius * 0.9},${point.y + markerRadius * 0.85}`,
+                ].join(" ");
+
+                return (
+                  <g
+                    key={`${entity.kind}-${entity.id}`}
+                    className="minimap__entity"
+                    style={markerStyle}
+                  >
+                    {highlight}
+                    <polygon
+                      className="minimap__marker minimap__marker--drone"
+                      points={points}
+                    />
+                  </g>
+                );
+              }
+              case "sun":
+                return (
+                  <g
+                    key={`${entity.kind}-${entity.id}`}
+                    className="minimap__entity"
+                    style={markerStyle}
+                  >
+                    {highlight}
+                    <circle
+                      className="minimap__marker minimap__marker--sun"
+                      cx={point.x}
+                      cy={point.y}
+                      r={markerRadius}
+                    />
+                  </g>
+                );
+              case "planet":
+                return (
+                  <g
+                    key={`${entity.kind}-${entity.id}`}
+                    className="minimap__entity"
+                    style={markerStyle}
+                  >
+                    {highlight}
+                    <circle
+                      className="minimap__marker minimap__marker--planet"
+                      cx={point.x}
+                      cy={point.y}
+                      r={markerRadius}
+                    />
+                  </g>
+                );
+            }
+          })}
+        </svg>
+        <div
+          className="minimap-panel__phosphor"
+          style={phosphorStyle}
+          aria-hidden="true"
+        />
+        <div className="minimap-panel__scan-lines" aria-hidden="true" />
+        <div
+          className="minimap-panel__scan-sweep"
+          style={scanSweepStyle}
+          aria-hidden="true"
+        />
+      </div>
+    </section>
+  );
+}
 
 function CockpitSummaryCard({
   label,
@@ -151,9 +579,13 @@ function CockpitMovementHud({
             : `Compass heading ${headingLabel}`
         }
       >
-        <span className="hud-compass__marker hud-compass__marker--north">N</span>
+        <span className="hud-compass__marker hud-compass__marker--north">
+          N
+        </span>
         <span className="hud-compass__marker hud-compass__marker--east">E</span>
-        <span className="hud-compass__marker hud-compass__marker--south">S</span>
+        <span className="hud-compass__marker hud-compass__marker--south">
+          S
+        </span>
         <span className="hud-compass__marker hud-compass__marker--west">W</span>
         <div className="hud-compass__ring" aria-hidden="true" />
         <div className="hud-compass__needle" aria-hidden="true" />
@@ -212,6 +644,9 @@ export function CombatHud({
     : hud.blackHoleWarning
       ? `Black Hole in ${formatClock(hud.blackHoleRemainingSec)}`
       : null;
+  const showWorldMinimap =
+    showPerformanceTools &&
+    (hud.minimap.arenaRadius > 0 || hud.minimap.entities.length > 0);
 
   return (
     <div
@@ -222,7 +657,7 @@ export function CombatHud({
     >
       <div className="combat-hud__damage-flash" aria-hidden="true" />
       {hud.sandboxControlsEnabled ? (
-        <div className="combat-hud__top-left">
+        <div className="combat-hud__movement-hud">
           <CockpitMovementHud
             headingDeg={hud.playerHeadingDeg}
             speed={hud.playerSpeed}
@@ -296,7 +731,9 @@ export function CombatHud({
                   <div className="sandbox-panel__stats-grid">
                     {hud.debugItems.map((item) => (
                       <div key={item.label} className="sandbox-stat">
-                        <span className="sandbox-stat__label">{item.label}</span>
+                        <span className="sandbox-stat__label">
+                          {item.label}
+                        </span>
                         <strong className="sandbox-stat__value">
                           {item.value}
                         </strong>
@@ -347,6 +784,11 @@ export function CombatHud({
               </div>
             ) : null}
           </section>
+        </div>
+      ) : null}
+      {showWorldMinimap ? (
+        <div className="combat-hud__minimap">
+          <WorldMinimap minimap={hud.minimap} />
         </div>
       ) : null}
 
@@ -406,40 +848,6 @@ export function CombatHud({
               />
             </div>
           </div>
-          {hud.abilities.length > 0 ? (
-            <div className="shortcuts-dock__section">
-              <div className="cockpit-abilities">
-                {hud.abilities.map((ability) => {
-                  const meterFill = getAbilityMeterFill(ability);
-
-                  return (
-                    <article
-                      key={ability.id}
-                      className={`ability-card ability-card--compact ability-card--${ability.mode}`}
-                      style={
-                        {
-                          "--ability-accent": ability.accent,
-                          "--ability-meter-fill": `${meterFill}`,
-                        } as CSSProperties
-                      }
-                    >
-                      <div className="ability-card__header">
-                        <span className="ability-card__key">
-                          {ability.keyLabel}
-                        </span>
-                        <span className="ability-card__title">
-                          {ability.label}
-                        </span>
-                      </div>
-                      <div className="ability-card__meter" aria-hidden="true">
-                        <div className="ability-card__meter-fill" />
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            </div>
-          ) : null}
           {hud.weapons.length > 0 ? (
             <div className="shortcuts-dock__section">
               <div className="cockpit-weapons">
@@ -469,6 +877,40 @@ export function CombatHud({
                         </span>
                         <span className="ability-card__value">
                           {getWeaponAmmoLabel(weapon)}
+                        </span>
+                      </div>
+                      <div className="ability-card__meter" aria-hidden="true">
+                        <div className="ability-card__meter-fill" />
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+          {hud.abilities.length > 0 ? (
+            <div className="shortcuts-dock__section">
+              <div className="cockpit-abilities">
+                {hud.abilities.map((ability) => {
+                  const meterFill = getAbilityMeterFill(ability);
+
+                  return (
+                    <article
+                      key={ability.id}
+                      className={`ability-card ability-card--compact ability-card--${ability.mode}`}
+                      style={
+                        {
+                          "--ability-accent": ability.accent,
+                          "--ability-meter-fill": `${meterFill}`,
+                        } as CSSProperties
+                      }
+                    >
+                      <div className="ability-card__header">
+                        <span className="ability-card__key">
+                          {ability.keyLabel}
+                        </span>
+                        <span className="ability-card__title">
+                          {ability.label}
                         </span>
                       </div>
                       <div className="ability-card__meter" aria-hidden="true">

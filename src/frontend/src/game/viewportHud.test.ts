@@ -38,18 +38,25 @@ describe("createInitialHudState", () => {
       rttMs: 0,
       state: "local",
     });
+    expect(first.minimap).toEqual({
+      arenaRadius: 0,
+      entities: [],
+      extentRadius: 0,
+    });
 
     expect(first.blackHoleSettings).not.toBe(second.blackHoleSettings);
     expect(first.foresightSettings).not.toBe(second.foresightSettings);
     expect(first.shieldSettings).not.toBe(second.shieldSettings);
     expect(first.boostSettings).not.toBe(second.boostSettings);
     expect(first.connection).not.toBe(second.connection);
+    expect(first.minimap).not.toBe(second.minimap);
 
     first.blackHoleSettings.spawnSec = 1;
     first.foresightSettings.durationSec = 99;
     first.shieldSettings.cooldownSec = 99;
     first.boostSettings.magnitude = 99;
     first.connection.label = "Mutated";
+    first.minimap.arenaRadius = 10;
 
     expect(second.blackHoleSettings.spawnSec).toBe(BLACK_HOLE_SPEC.spawnSec);
     expect(second.foresightSettings.durationSec).toBe(
@@ -62,5 +69,6 @@ describe("createInitialHudState", () => {
       DEFAULT_BOOST_SETTINGS.magnitude,
     );
     expect(second.connection.label).toBe("Local");
+    expect(second.minimap.arenaRadius).toBe(0);
   });
 });

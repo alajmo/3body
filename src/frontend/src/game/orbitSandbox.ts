@@ -19,8 +19,9 @@ import {
   type OrbitPreset,
   type OrbitRiskProfile,
 } from "./orbitPresets";
+import { resolveRuntimeOrbitPreset } from "./runtimeOrbitPreset";
 
-export const PLANET_SOFT_BOUNDARY_RADIUS = ARENA_RADIUS + 36;
+export const getPlanetSoftBoundaryRadius = (): number => ARENA_RADIUS + 36;
 
 const PLANET_BOUNDARY_INSET = 28;
 const PLANET_BOUNDARY_PUSH_BASE = 16;
@@ -71,20 +72,24 @@ const clonePlanetSeed = (planetSeed: OrbitPlanetSeed): SandboxPlanet => ({
 
 export const createSandboxState = (
   preset: OrbitPreset = DEFAULT_ORBIT_PRESET,
-): SandboxState => ({
-  tick: 0,
-  elapsedSec: 0,
-  preset,
-  suns: preset.suns.map((sunSeed) => ({
-    id: sunSeed.id,
-    kind: "sun",
-    mass: sunSeed.mass,
-    radius: sunSeed.radius,
-    pos: { x: sunSeed.pos.x, y: sunSeed.pos.y },
-    vel: { x: sunSeed.vel.x, y: sunSeed.vel.y },
-  })),
-  planets: preset.planets.map(clonePlanetSeed),
-});
+): SandboxState => {
+  const resolvedPreset = resolveRuntimeOrbitPreset(preset);
+
+  return {
+    tick: 0,
+    elapsedSec: 0,
+    preset: resolvedPreset,
+    suns: resolvedPreset.suns.map((sunSeed) => ({
+      id: sunSeed.id,
+      kind: "sun",
+      mass: sunSeed.mass,
+      radius: sunSeed.radius,
+      pos: { x: sunSeed.pos.x, y: sunSeed.pos.y },
+      vel: { x: sunSeed.vel.x, y: sunSeed.vel.y },
+    })),
+    planets: resolvedPreset.planets.map(clonePlanetSeed),
+  };
+};
 
 export const findMinSunSunGap = (suns: readonly Sun[]): number => {
   let minGap = Number.POSITIVE_INFINITY;
@@ -133,19 +138,20 @@ const didAnySunsCollide = (suns: readonly Sun[]): boolean =>
 
 const keepPlanetInsideArena = (planet: SandboxPlanet): SandboxPlanet => {
   const distanceFromCenter = len(planet.pos);
-  if (distanceFromCenter <= PLANET_SOFT_BOUNDARY_RADIUS) {
+  const softBoundaryRadius = getPlanetSoftBoundaryRadius();
+  if (distanceFromCenter <= softBoundaryRadius) {
     return planet;
   }
 
   const outward = normalize(planet.pos);
-  const overflow = distanceFromCenter - PLANET_SOFT_BOUNDARY_RADIUS;
+  const overflow = distanceFromCenter - softBoundaryRadius;
   const inwardPush = Math.min(
     PLANET_BOUNDARY_PUSH_BASE + overflow * PLANET_BOUNDARY_PUSH_SCALE,
     PLANET_BOUNDARY_MAX_PUSH,
   );
   const correctedRadius = Math.max(
     ARENA_RADIUS - PLANET_BOUNDARY_INSET,
-    PLANET_SOFT_BOUNDARY_RADIUS - inwardPush,
+    softBoundaryRadius - inwardPush,
   );
   const radialSpeed = dot(planet.vel, outward);
   const tangentialVelocity = sub(planet.vel, scale(outward, radialSpeed));

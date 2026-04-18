@@ -1,8 +1,8 @@
 import type { OrbitPreset } from "./orbitPresets";
 import { describe, expect, it } from "vitest";
 import {
-  PLANET_SOFT_BOUNDARY_RADIUS,
   createSandboxState,
+  getPlanetSoftBoundaryRadius,
   getSandboxDebugSnapshot,
   getSandboxResetReason,
   interpolateSandboxState,
@@ -80,10 +80,11 @@ describe("orbitSandbox", () => {
 
   it("pushes planets back inside the soft arena boundary", () => {
     const state = createSandboxState(createTestPreset());
+    const softBoundaryRadius = getPlanetSoftBoundaryRadius();
     state.suns = [];
     state.planets[0] = {
       ...state.planets[0]!,
-      pos: { x: PLANET_SOFT_BOUNDARY_RADIUS + 120, y: 0 },
+      pos: { x: softBoundaryRadius + 120, y: 0 },
       vel: { x: 80, y: 0 },
     };
 
@@ -91,7 +92,7 @@ describe("orbitSandbox", () => {
     const corrected = next.planets[0]!;
 
     expect(Math.hypot(corrected.pos.x, corrected.pos.y)).toBeLessThanOrEqual(
-      PLANET_SOFT_BOUNDARY_RADIUS,
+      softBoundaryRadius,
     );
     expect(corrected.vel.x).toBeLessThan(0);
   });

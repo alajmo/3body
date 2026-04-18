@@ -2,9 +2,13 @@ import {
   ARCHETYPES,
   ARCHETYPE_IDS,
   clamp,
+  getSunVisualProfile,
+  lerp,
+  type GameTuningDocument,
   predictPath,
   type PlanetArchetypeVisualSpec,
   type RocketKind,
+  type SunVisualProfile,
 } from "@3body/shared";
 import type { Sun, Vec2 } from "@3body/shared";
 import {
@@ -14,6 +18,7 @@ import {
   length,
   renderOutput,
   smoothstep,
+  uniform,
   vec2,
 } from "three/tsl";
 import { bloom } from "three/addons/tsl/display/BloomNode.js";
@@ -22,7 +27,6 @@ import {
   AdditiveBlending,
   BufferGeometry,
   BoxGeometry,
-  CanvasTexture,
   CircleGeometry,
   ConeGeometry,
   CylinderGeometry,
@@ -37,14 +41,12 @@ import {
   PointsNodeMaterial,
   RenderPipeline,
   RingGeometry,
-  SRGBColorSpace,
   Scene,
   SphereGeometry,
   Sprite,
-  SpriteMaterial,
   WebGPURenderer,
 } from "three/webgpu";
-import { DEFAULT_ORBIT_PRESET } from "./orbitPresets";
+import { DEFAULT_ORBIT_PRESET, getDefaultOrbitSunLabel } from "./orbitPresets";
 import { ROCKET_MESH_SILHOUETTES } from "./rocketMeshSilhouette";
 import { getCannonWorldLayout } from "./rocketVisibility";
 import {
@@ -61,12 +63,15 @@ import {
   createSceneBackgroundColor,
   createSunCoreMaterial,
   createSunGlowMaterial,
+  type CacheIconKey,
+  syncBackdropFrame,
   tintColor,
   createWarpMaterial,
   wrapCentered,
 } from "./showcaseVisuals";
 import { getRuntimeTuningDocument } from "./runtimeTuning";
 import { createViewportAnimationLoopController } from "./viewport/animationLoopController";
+import { getCacheArenaBadgeSize } from "./viewport/cacheVisuals";
 import {
   createBlackHoleCoreMaterial,
   createBlackHoleLensMaterial,
@@ -74,6 +79,7 @@ import {
   createBoostWakeMaterial,
   createForesightVisual,
 } from "./viewport/localViewportVisualFactories";
+import { CLOAK_PLANET_TARGET_OPACITY } from "./viewport/cloakVisual";
 import { createCompatibleScenePass } from "./viewport/postProcessingCompat";
 import {
   clipForesightPathAtDistance,
@@ -81,6 +87,7 @@ import {
   FORESIGHT_WINDOW_SEC,
   getForesightPointOpacity,
 } from "./viewport/foresightShared";
+import { createShieldVisual } from "./shieldVisuals";
 import {
   disposeViewportRendererSession,
   initializeViewportRendererSession,
@@ -104,33 +111,56 @@ const PLANET_CARD_RADIUS = 11;
 const PLANET_STAGE_RADIUS = 72;
 const PLANETS_STAGE_RADIUS = 34;
 const CANNON_STAGE_PLANET_RADIUS = 38;
-const ABILITY_STAGE_PLANET_RADIUS = 34;
 const SUN_CARD_RADIUS = 10;
 const SUN_STAGE_RADIUS = 74;
 const SUNS_STAGE_RADIUS = 52;
-const SHIELD_INNER_SCALE = 1.22;
-const SHIELD_OUTER_SCALE = 1.7;
-const SHIELD_GLOW_OUTER_SCALE = 2.06;
 const CANNON_BAND_POSITION = 0.32;
 const PLANETS_STAGE_GRID_COLUMNS = 4;
 const PLANETS_STAGE_HORIZONTAL_SPACING = 104;
 const PLANETS_STAGE_VERTICAL_SPACING = 96;
-const PLANETS_STAGE_MIN_RADIUS = 18;
-const PLANETS_STAGE_MAX_RADIUS = 24;
-const PLANETS_STAGE_RADIUS_SCALE = 0.36;
+const PLANETS_STAGE_LAYOUT_PADDING = 26;
+const PLANETS_STAGE_GLOW_GUTTER = 18;
+const SUNS_STAGE_HORIZONTAL_SPACING = 154;
+const SUNS_STAGE_VERTICAL_SPACING = 132;
+const SUNS_STAGE_LAYOUT_PADDING = 30;
+const SUNS_STAGE_GLOW_GUTTER = 22;
+const CACHE_STAGE_HORIZONTAL_SPACING = 172;
+const CACHE_STAGE_VERTICAL_SPACING = 164;
+const CACHE_STAGE_LAYOUT_PADDING = 30;
+const CACHE_STAGE_BADGE_GUTTER = 48;
+const CACHE_STAGE_BADGE_GUTTER_RATIO = 0.5;
 const PLANETS_CARD_HORIZONTAL_SPACING = 12;
 const PLANETS_CARD_VERTICAL_SPACING = 11;
 const PLANETS_CARD_MIN_RADIUS = 5.5;
 const PLANETS_CARD_MAX_RADIUS = 7.2;
 const PLANETS_CARD_RADIUS_SCALE = 0.28;
-const PLANET_LABEL_TEXTURE_HEIGHT = 96;
-const PLANET_LABEL_FONT_SIZE = 34;
-const PLANET_LABEL_HORIZONTAL_PADDING = 28;
-const PLANET_LABEL_WORLD_HEIGHT = 13;
-const PLANET_LABEL_WORLD_GAP = 8;
+const SUNS_CARD_HORIZONTAL_SPACING = 15;
+const SUNS_CARD_VERTICAL_SPACING = 13;
+const SUNS_CARD_MIN_RADIUS = 4.8;
+const SUNS_CARD_MAX_RADIUS = 8.6;
+const SUNS_CARD_RADIUS_SCALE = 0.34;
+const PLANET_LABEL_SCREEN_MIN_FONT_PX = 11;
+const PLANET_LABEL_SCREEN_MAX_FONT_PX = 24;
+const PLANET_LABEL_SCREEN_FONT_SCALE = 0.021;
+const PLANET_LABEL_SCREEN_MIN_PADDING_Y_PX = 2;
+const PLANET_LABEL_SCREEN_MAX_PADDING_Y_PX = 5;
+const PLANET_LABEL_SCREEN_PADDING_Y_SCALE = 0.1;
+const PLANET_LABEL_SCREEN_MIN_PADDING_X_PX = 6;
+const PLANET_LABEL_SCREEN_MAX_PADDING_X_PX = 10;
+const PLANET_LABEL_SCREEN_PADDING_X_SCALE = 0.23;
+const PLANET_LABEL_SCREEN_MIN_BORDER_PX = 1;
+const PLANET_LABEL_SCREEN_MAX_BORDER_PX = 2;
+const PLANET_LABEL_SCREEN_BORDER_SCALE = 0.03;
+const PLANET_LABEL_MIN_WORLD_GAP = 4;
+const PLANET_LABEL_MAX_WORLD_GAP = 7;
+const PLANET_LABEL_WORLD_GAP_RATIO = 0.22;
 const CANNON_STAGE_WORLD_UNITS_PER_PIXEL = 1.02;
 const FORESIGHT_CARD_SPAN = 40;
-const FORESIGHT_STAGE_SPAN = 180;
+const BOOST_PREVIEW_ACTIVE_SEC = 0.48;
+const BOOST_PREVIEW_IDLE_SEC = 0.9;
+const BOOST_PREVIEW_CYCLE_SEC =
+  BOOST_PREVIEW_ACTIVE_SEC + BOOST_PREVIEW_IDLE_SEC;
+const GRAVITY_PULSE_PREVIEW_CYCLE_SEC = 1.6;
 const ROCKET_CARD_SCALE = 0.34;
 const ROCKET_STAGE_SCALE = 1.3;
 export type EditorPreviewViewportItemId =
@@ -147,11 +177,46 @@ export type EditorPreviewViewportItemId =
   | "foresight"
   | "shield"
   | "boost"
+  | "gravityPulse"
+  | "cloak"
   | "cache";
 
 export interface EditorItemPreviewViewportOptions {
   itemId: EditorPreviewViewportItemId;
   presentation?: "card" | "stage";
+}
+
+interface PlanetStagePreviewEntry {
+  archetype: (typeof ARCHETYPE_IDS)[number];
+  labelWorldGap: number;
+  position: Vec2;
+  radius: number;
+  visuals: PlanetArchetypeVisualSpec;
+}
+
+interface SunStagePreviewEntry {
+  effectiveRadius: number;
+  labelWorldGap: number;
+  position: Vec2;
+  profile: SunVisualProfile;
+  radius: number;
+}
+
+interface CacheStagePreviewEntry {
+  iconKey: CacheIconKey;
+  position: Vec2;
+  size: number;
+}
+
+interface StagePreviewLabelEntry {
+  anchor: Vec2;
+  color: string;
+  label: string;
+}
+
+interface StagePreviewLabelOverlay {
+  dispose: () => void;
+  update: (camera: OrthographicCamera) => void;
 }
 
 const registerDisposables = (
@@ -175,6 +240,15 @@ const getRocketKindFromItemId = (
       return null;
   }
 };
+
+const isAbilityPreviewItem = (
+  itemId: EditorPreviewViewportItemId,
+): itemId is "foresight" | "shield" | "boost" | "gravityPulse" | "cloak" =>
+  itemId === "foresight" ||
+  itemId === "shield" ||
+  itemId === "boost" ||
+  itemId === "gravityPulse" ||
+  itemId === "cloak";
 
 const getPresentationScale = (presentation: "card" | "stage") =>
   presentation === "card" ? 1 : 1.7;
@@ -208,6 +282,8 @@ const getCameraHalfHeight = ({
     case "foresight":
     case "shield":
     case "boost":
+    case "gravityPulse":
+    case "cloak":
       return 170;
     case "hud":
       return 160;
@@ -219,6 +295,7 @@ const getCameraHalfHeight = ({
 const getPreviewPlanetRadius = (
   itemId: EditorPreviewViewportItemId,
   presentation: "card" | "stage",
+  tuning: GameTuningDocument,
 ) => {
   const targetRadius =
     presentation === "card"
@@ -227,8 +304,9 @@ const getPreviewPlanetRadius = (
         ? PLANETS_STAGE_RADIUS
         : itemId === "cannon"
           ? CANNON_STAGE_PLANET_RADIUS
-          : itemId === "foresight" || itemId === "shield" || itemId === "boost"
-            ? ABILITY_STAGE_PLANET_RADIUS
+          : isAbilityPreviewItem(itemId)
+            ? (tuning.gameplay.orbits.planets[0]?.radius ??
+              DEFAULT_ORBIT_PRESET.planets[0]!.radius)
             : PLANET_STAGE_RADIUS;
   return targetRadius * (itemId === "cannon" ? 1.04 : 1);
 };
@@ -246,6 +324,19 @@ const getPreviewSunRadius = (
         : SUN_STAGE_RADIUS;
   return sourceRadius * (targetRadius / Math.max(sourceRadius, 1));
 };
+
+const getPreviewCacheBadgeSize = (
+  tuning: GameTuningDocument,
+  presentation: "card" | "stage",
+) =>
+  presentation === "card"
+    ? tuning.visuals.caches.badgeBaseSize *
+      tuning.visuals.caches.badgeScale *
+      0.22
+    : getCacheArenaBadgeSize(
+        tuning.visuals.caches.badgeBaseSize,
+        tuning.visuals.caches.badgeScale,
+      );
 
 const getPlanetGridPosition = (
   index: number,
@@ -266,135 +357,319 @@ const getPlanetGridPosition = (
   };
 };
 
-const traceRoundedRect = (
-  context: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  radius: number,
-) => {
-  const clampedRadius = Math.min(radius, width / 2, height / 2);
-  context.beginPath();
-  context.moveTo(x + clampedRadius, y);
-  context.lineTo(x + width - clampedRadius, y);
-  context.quadraticCurveTo(x + width, y, x + width, y + clampedRadius);
-  context.lineTo(x + width, y + height - clampedRadius);
-  context.quadraticCurveTo(
-    x + width,
-    y + height,
-    x + width - clampedRadius,
-    y + height,
-  );
-  context.lineTo(x + clampedRadius, y + height);
-  context.quadraticCurveTo(x, y + height, x, y + height - clampedRadius);
-  context.lineTo(x, y + clampedRadius);
-  context.quadraticCurveTo(x, y, x + clampedRadius, y);
-  context.closePath();
-};
+const getPlanetPreviewSeedRadius = (index: number): number =>
+  DEFAULT_ORBIT_PRESET.planets[index]?.radius ??
+  DEFAULT_ORBIT_PRESET.planets[0]!.radius;
 
-const createPlanetNameLabelTexture = (
-  document: Document,
-  label: string,
-  accent: string,
+const getStageLabelWorldGap = (radius: number): number =>
+  clamp(
+    radius * PLANET_LABEL_WORLD_GAP_RATIO,
+    PLANET_LABEL_MIN_WORLD_GAP,
+    PLANET_LABEL_MAX_WORLD_GAP,
+  );
+
+const createPlanetStagePreviewLayout = (
+  tuning: GameTuningDocument,
 ): {
-  aspect: number;
-  texture: CanvasTexture;
+  entries: PlanetStagePreviewEntry[];
+  requiredHalfHeight: number;
+  requiredHalfWidth: number;
 } => {
-  const canvas = document.createElement("canvas");
-  const context = canvas.getContext("2d");
-  if (context === null) {
-    throw new Error("2D canvas context unavailable.");
+  const stageEntries = ARCHETYPE_IDS.map((archetype, index) => {
+    const visuals = tuning.visuals.planets.archetypes[archetype];
+    const radius = getPlanetPreviewSeedRadius(index) * visuals.bodyScale;
+    const labelWorldGap = getStageLabelWorldGap(radius);
+
+    return {
+      archetype,
+      auraRadius: radius * visuals.auraScale,
+      labelWorldGap,
+      radius,
+      visuals,
+    };
+  });
+  const maxAuraRadius = stageEntries.reduce(
+    (largest, entry) => Math.max(largest, entry.auraRadius),
+    0,
+  );
+  const maxLabelWorldGap = stageEntries.reduce(
+    (largest, entry) => Math.max(largest, entry.labelWorldGap),
+    0,
+  );
+  const horizontalSpacing = Math.max(
+    PLANETS_STAGE_HORIZONTAL_SPACING,
+    maxAuraRadius * 2 + PLANETS_STAGE_GLOW_GUTTER,
+  );
+  const verticalSpacing = Math.max(
+    PLANETS_STAGE_VERTICAL_SPACING,
+    maxAuraRadius * 2 + maxLabelWorldGap + 10,
+  );
+  const entries = stageEntries.map((entry, index) => ({
+    archetype: entry.archetype,
+    labelWorldGap: entry.labelWorldGap,
+    position: getPlanetGridPosition(
+      index,
+      stageEntries.length,
+      horizontalSpacing,
+      verticalSpacing,
+    ),
+    radius: entry.radius,
+    visuals: entry.visuals,
+  }));
+  let requiredHalfWidth = 0;
+  let requiredHalfHeight = 0;
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index]!;
+    const auraRadius = entry.radius * entry.visuals.auraScale;
+    requiredHalfWidth = Math.max(
+      requiredHalfWidth,
+      Math.abs(entry.position.x) + auraRadius,
+    );
+    requiredHalfHeight = Math.max(
+      requiredHalfHeight,
+      Math.abs(entry.position.y) + auraRadius,
+      entry.position.y + entry.radius + entry.labelWorldGap,
+    );
   }
 
-  context.font = `700 ${PLANET_LABEL_FONT_SIZE}px "IBM Plex Sans", sans-serif`;
-  const measuredWidth = Math.ceil(context.measureText(label).width);
-  canvas.width = Math.max(
-    192,
-    Math.ceil(measuredWidth + PLANET_LABEL_HORIZONTAL_PADDING * 2),
-  );
-  canvas.height = PLANET_LABEL_TEXTURE_HEIGHT;
-  context.clearRect(0, 0, canvas.width, canvas.height);
-  context.font = `700 ${PLANET_LABEL_FONT_SIZE}px "IBM Plex Sans", sans-serif`;
-  context.textAlign = "center";
-  context.textBaseline = "middle";
-
-  traceRoundedRect(context, 4, 6, canvas.width - 8, canvas.height - 12, 26);
-  context.fillStyle = "rgba(5, 10, 18, 0.84)";
-  context.shadowColor = accent;
-  context.shadowBlur = 18;
-  context.fill();
-  context.shadowBlur = 0;
-
-  traceRoundedRect(context, 4, 6, canvas.width - 8, canvas.height - 12, 26);
-  context.lineWidth = 3;
-  context.strokeStyle = accent;
-  context.globalAlpha = 0.72;
-  context.stroke();
-  context.globalAlpha = 1;
-
-  context.fillStyle = "#f8fbff";
-  context.fillText(label, canvas.width / 2, canvas.height / 2 + 1);
-
-  const texture = new CanvasTexture(canvas);
-  texture.colorSpace = SRGBColorSpace;
-  texture.generateMipmaps = false;
-  texture.needsUpdate = true;
   return {
-    aspect: canvas.width / canvas.height,
-    texture,
+    entries,
+    requiredHalfHeight: requiredHalfHeight + PLANETS_STAGE_LAYOUT_PADDING,
+    requiredHalfWidth: requiredHalfWidth + PLANETS_STAGE_LAYOUT_PADDING,
   };
 };
 
-const createPreviewPlanetLabel = ({
-  accent,
-  document,
-  hostScene,
-  label,
-  position,
-  radius,
-}: {
-  accent: string;
-  document: Document;
-  hostScene: Scene;
-  label: string;
-  position: Vec2;
-  radius: number;
-}) => {
-  const { aspect, texture: map } = createPlanetNameLabelTexture(
-    document,
-    label,
-    accent,
-  );
-  const material = new SpriteMaterial({
-    alphaTest: 0.02,
-    color: "#ffffff",
-    depthWrite: false,
-    map,
-    transparent: true,
+const createSunStagePreviewLayout = (
+  tuning: GameTuningDocument,
+  baseRadius: number,
+): {
+  entries: SunStagePreviewEntry[];
+  requiredHalfHeight: number;
+  requiredHalfWidth: number;
+} => {
+  const stageEntries = tuning.visuals.suns.profiles.map((profile, index) => {
+    const defaultSun =
+      DEFAULT_ORBIT_PRESET.suns[index % DEFAULT_ORBIT_PRESET.suns.length]!;
+    const radius =
+      baseRadius *
+      (tuning.gameplay.orbits.suns[index]!.radius /
+        Math.max(defaultSun.radius, 1));
+    const effectiveRadius =
+      radius * Math.max(1, profile.glowScale, profile.warpScale);
+    const labelWorldGap = getStageLabelWorldGap(effectiveRadius);
+
+    return {
+      effectiveRadius,
+      labelWorldGap,
+      profile,
+      radius,
+    };
   });
-  const sprite = new Sprite(material);
-  sprite.center.set(0.5, 0);
-  sprite.position.set(
-    position.x,
-    position.y + radius + PLANET_LABEL_WORLD_GAP,
-    3.2,
+  const maxEffectiveRadius = stageEntries.reduce(
+    (largest, entry) => Math.max(largest, entry.effectiveRadius),
+    0,
   );
-  sprite.renderOrder = 14;
-  sprite.scale.set(
-    PLANET_LABEL_WORLD_HEIGHT * aspect,
-    PLANET_LABEL_WORLD_HEIGHT,
-    1,
+  const maxLabelWorldGap = stageEntries.reduce(
+    (largest, entry) => Math.max(largest, entry.labelWorldGap),
+    0,
   );
-  hostScene.add(sprite);
+  const horizontalSpacing = Math.max(
+    SUNS_STAGE_HORIZONTAL_SPACING,
+    maxEffectiveRadius * 2 + SUNS_STAGE_GLOW_GUTTER,
+  );
+  const verticalSpacing = Math.max(
+    SUNS_STAGE_VERTICAL_SPACING,
+    maxEffectiveRadius * 2 + maxLabelWorldGap + 10,
+  );
+  const entries = stageEntries.map((entry, index) => ({
+    effectiveRadius: entry.effectiveRadius,
+    labelWorldGap: entry.labelWorldGap,
+    position: getPlanetGridPosition(
+      index,
+      stageEntries.length,
+      horizontalSpacing,
+      verticalSpacing,
+    ),
+    profile: entry.profile,
+    radius: entry.radius,
+  }));
+  let requiredHalfWidth = 0;
+  let requiredHalfHeight = 0;
+  for (const entry of entries) {
+    requiredHalfWidth = Math.max(
+      requiredHalfWidth,
+      Math.abs(entry.position.x) + entry.effectiveRadius,
+    );
+    requiredHalfHeight = Math.max(
+      requiredHalfHeight,
+      Math.abs(entry.position.y) + entry.effectiveRadius,
+      entry.position.y + entry.effectiveRadius + entry.labelWorldGap,
+    );
+  }
+
+  return {
+    entries,
+    requiredHalfHeight: requiredHalfHeight + SUNS_STAGE_LAYOUT_PADDING,
+    requiredHalfWidth: requiredHalfWidth + SUNS_STAGE_LAYOUT_PADDING,
+  };
+};
+
+const createCacheStagePreviewLayout = (
+  tuning: GameTuningDocument,
+): {
+  entries: CacheStagePreviewEntry[];
+  requiredHalfHeight: number;
+  requiredHalfWidth: number;
+} => {
+  const badgeSize = getPreviewCacheBadgeSize(tuning, "stage");
+  const badgeGutter = Math.max(
+    CACHE_STAGE_BADGE_GUTTER,
+    badgeSize * CACHE_STAGE_BADGE_GUTTER_RATIO,
+  );
+  const horizontalSpacing = Math.max(
+    CACHE_STAGE_HORIZONTAL_SPACING,
+    badgeSize + badgeGutter,
+  );
+  const verticalSpacing = Math.max(
+    CACHE_STAGE_VERTICAL_SPACING,
+    badgeSize + badgeGutter,
+  );
+  const entries = CACHE_ICON_KEYS.map((iconKey, index) => ({
+    iconKey,
+    position: getPlanetGridPosition(
+      index,
+      CACHE_ICON_KEYS.length,
+      horizontalSpacing,
+      verticalSpacing,
+    ),
+    size: badgeSize,
+  }));
+  let requiredHalfWidth = 0;
+  let requiredHalfHeight = 0;
+  for (const entry of entries) {
+    const halfSize = entry.size * 0.5;
+    requiredHalfWidth = Math.max(
+      requiredHalfWidth,
+      Math.abs(entry.position.x) + halfSize,
+    );
+    requiredHalfHeight = Math.max(
+      requiredHalfHeight,
+      Math.abs(entry.position.y) + halfSize,
+    );
+  }
+
+  return {
+    entries,
+    requiredHalfHeight: requiredHalfHeight + CACHE_STAGE_LAYOUT_PADDING,
+    requiredHalfWidth: requiredHalfWidth + CACHE_STAGE_LAYOUT_PADDING,
+  };
+};
+
+const createStagePreviewLabelOverlay = ({
+  hostElement,
+  entries,
+}: {
+  hostElement: HTMLDivElement;
+  entries: readonly StagePreviewLabelEntry[];
+}): StagePreviewLabelOverlay => {
+  const overlay = hostElement.ownerDocument.createElement("div");
+  overlay.className = "editor-preview-planet-labels";
+  const labels = entries.map((entry) => {
+    const element = hostElement.ownerDocument.createElement("div");
+    element.className = "editor-preview-planet-label";
+    element.textContent = entry.label;
+    element.style.borderColor = entry.color;
+    element.style.boxShadow = `0 18px 44px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 0 1px ${entry.color}33`;
+    overlay.append(element);
+    return { element, entry };
+  });
+  hostElement.append(overlay);
 
   return {
     dispose: () => {
-      map.dispose();
-      material.dispose();
+      overlay.remove();
+    },
+    update: (camera) => {
+      const viewportWidth = Math.max(1, hostElement.clientWidth);
+      const viewportHeight = Math.max(1, hostElement.clientHeight);
+      const minViewportSize = Math.min(viewportWidth, viewportHeight);
+      const fontSizePx = clamp(
+        minViewportSize * PLANET_LABEL_SCREEN_FONT_SCALE,
+        PLANET_LABEL_SCREEN_MIN_FONT_PX,
+        PLANET_LABEL_SCREEN_MAX_FONT_PX,
+      );
+      const paddingYPx = clamp(
+        fontSizePx * PLANET_LABEL_SCREEN_PADDING_Y_SCALE,
+        PLANET_LABEL_SCREEN_MIN_PADDING_Y_PX,
+        PLANET_LABEL_SCREEN_MAX_PADDING_Y_PX,
+      );
+      const paddingXPx = clamp(
+        fontSizePx * PLANET_LABEL_SCREEN_PADDING_X_SCALE,
+        PLANET_LABEL_SCREEN_MIN_PADDING_X_PX,
+        PLANET_LABEL_SCREEN_MAX_PADDING_X_PX,
+      );
+      const borderWidthPx = clamp(
+        fontSizePx * PLANET_LABEL_SCREEN_BORDER_SCALE,
+        PLANET_LABEL_SCREEN_MIN_BORDER_PX,
+        PLANET_LABEL_SCREEN_MAX_BORDER_PX,
+      );
+      const spanX = Math.max(0.001, camera.right - camera.left);
+      const spanY = Math.max(0.001, camera.top - camera.bottom);
+
+      for (const { element, entry } of labels) {
+        const screenX =
+          ((entry.anchor.x - camera.left) / spanX) * viewportWidth;
+        const screenY =
+          ((camera.top - entry.anchor.y) / spanY) * viewportHeight;
+        element.style.left = `${screenX}px`;
+        element.style.top = `${screenY}px`;
+        element.style.fontSize = `${Math.round(fontSizePx)}px`;
+        element.style.padding = `${Math.round(paddingYPx)}px ${Math.round(
+          paddingXPx,
+        )}px`;
+        element.style.borderWidth = `${Math.round(borderWidthPx)}px`;
+      }
     },
   };
 };
+
+const createPlanetStagePreviewLabelOverlay = ({
+  hostElement,
+  entries,
+}: {
+  hostElement: HTMLDivElement;
+  entries: readonly PlanetStagePreviewEntry[];
+}): StagePreviewLabelOverlay =>
+  createStagePreviewLabelOverlay({
+    hostElement,
+    entries: entries.map((entry) => ({
+      anchor: {
+        x: entry.position.x,
+        y: entry.position.y + entry.radius + entry.labelWorldGap,
+      },
+      color: entry.visuals.color,
+      label: ARCHETYPES[entry.archetype].name,
+    })),
+  });
+
+const createSunStagePreviewLabelOverlay = ({
+  hostElement,
+  entries,
+}: {
+  hostElement: HTMLDivElement;
+  entries: readonly SunStagePreviewEntry[];
+}): StagePreviewLabelOverlay =>
+  createStagePreviewLabelOverlay({
+    hostElement,
+    entries: entries.map((entry, index) => ({
+      anchor: {
+        x: entry.position.x,
+        y: entry.position.y + entry.effectiveRadius + entry.labelWorldGap,
+      },
+      color: entry.profile.color,
+      label: getDefaultOrbitSunLabel(index),
+    })),
+  });
 
 const createPreviewPlanet = ({
   hostScene,
@@ -435,6 +710,10 @@ const createPreviewPlanet = ({
       material.dispose();
       glow.material.dispose();
     },
+    setOpacity(opacity: number) {
+      material.opacityUniform.value = opacity;
+      glow.opacityUniform.value = opacity;
+    },
     update(nowSec: number) {
       mesh.rotation.y = nowSec * 0.22 + seed * 0.7;
       mesh.rotation.x = Math.sin(nowSec * 0.17 + seed) * 0.08;
@@ -444,6 +723,7 @@ const createPreviewPlanet = ({
 
 const createPreviewSun = ({
   color,
+  coreBrightness,
   glowColor,
   glowScale,
   glowStrength,
@@ -455,6 +735,7 @@ const createPreviewSun = ({
   warpScale,
 }: {
   color: string;
+  coreBrightness: number;
   glowColor: string;
   glowScale: number;
   glowStrength: number;
@@ -465,7 +746,12 @@ const createPreviewSun = ({
   warpGeometry: RingGeometry;
   warpScale: number;
 }) => {
-  const coreMaterial = createSunCoreMaterial(color, glowColor, seed, 1);
+  const coreMaterial = createSunCoreMaterial(
+    color,
+    glowColor,
+    seed,
+    coreBrightness,
+  );
   const glowMaterial = createSunGlowMaterial(glowColor, seed, glowStrength);
   const warpMaterial = createWarpMaterial(glowColor, seed);
   const coreMesh = new Mesh(sunGeometry, coreMaterial);
@@ -688,14 +974,15 @@ const createPreviewRocket = ({
 const createPreviewCache = ({
   hostElement,
   hostScene,
+  iconKey = "foresightExt",
   presentation,
 }: {
   hostElement: HTMLDivElement;
   hostScene: Scene;
+  iconKey?: CacheIconKey;
   presentation: "card" | "stage";
 }) => {
   const tuning = getRuntimeTuningDocument();
-  const iconKey = CACHE_ICON_KEYS[5]!;
   const { map, material } = createCacheBadgeSpriteMaterial(
     hostElement.ownerDocument,
     iconKey,
@@ -703,10 +990,7 @@ const createPreviewCache = ({
   const sprite = new Sprite(material);
   sprite.renderOrder = 7;
   hostScene.add(sprite);
-  const baseScale =
-    tuning.visuals.caches.badgeBaseSize *
-    tuning.visuals.caches.badgeScale *
-    (presentation === "card" ? 0.22 : 0.95);
+  const baseScale = getPreviewCacheBadgeSize(tuning, presentation);
 
   return {
     dispose: () => {
@@ -733,19 +1017,29 @@ const createHudPanelMaterial = (colorHex: string, opacity: number) =>
   });
 
 const createBoostBurstMaterial = (colorHex: string) => {
+  const opacityUniform = uniform(1);
   const material = new PointsNodeMaterial({
     transparent: true,
     depthWrite: false,
     blending: AdditiveBlending,
   });
   material.colorNode = color(colorHex);
-  material.opacityNode = attribute("previewOpacity", "float");
+  material.opacityNode = attribute<"float">("previewOpacity", "float").mul(
+    opacityUniform,
+  );
   material.size = 10;
   material.alphaTest = 0.01;
-  return material;
+  return {
+    material,
+    opacityUniform,
+  };
 };
 
-const createPreviewForesightPath = (targetSpan: number): readonly Vec2[] => {
+const createPreviewForesightPath = ({
+  targetSpan,
+}: {
+  targetSpan?: number;
+} = {}): { path: readonly Vec2[]; scale: number } => {
   const sourcePlanet = DEFAULT_ORBIT_PRESET.planets[0]!;
   const sourceSuns: Sun[] = DEFAULT_ORBIT_PRESET.suns.map((sun) => ({
     ...sun,
@@ -760,6 +1054,18 @@ const createPreviewForesightPath = (targetSpan: number): readonly Vec2[] => {
     FORESIGHT_STEP_SEC,
   );
   const start = worldPath[0]!;
+  const relativePath = worldPath.map((point) => ({
+    x: point.x - start.x,
+    y: point.y - start.y,
+  }));
+
+  if (targetSpan === undefined) {
+    return {
+      path: relativePath,
+      scale: 1,
+    };
+  }
+
   const minX = Math.min(...worldPath.map((point) => point.x));
   const maxX = Math.max(...worldPath.map((point) => point.x));
   const minY = Math.min(...worldPath.map((point) => point.y));
@@ -767,10 +1073,13 @@ const createPreviewForesightPath = (targetSpan: number): readonly Vec2[] => {
   const span = Math.max(maxX - minX, maxY - minY, 1);
   const scale = targetSpan / span;
 
-  return worldPath.map((point) => ({
-    x: (point.x - start.x) * scale,
-    y: (point.y - start.y) * scale,
-  }));
+  return {
+    path: relativePath.map((point) => ({
+      x: point.x * scale,
+      y: point.y * scale,
+    })),
+    scale,
+  };
 };
 
 const updatePreviewForesightVisual = (
@@ -845,7 +1154,10 @@ export function createEditorItemPreviewViewport(
   > | null = null;
   let camera: OrthographicCamera | null = null;
   let backdropMesh: Mesh | null = null;
+  let stageLabelOverlay: StagePreviewLabelOverlay | null = null;
   let postProcessing: RenderPipeline | null = null;
+  let requiredCameraHalfHeight = 0;
+  let requiredCameraHalfWidth = 0;
   const disposables: Array<{ dispose: () => void }> = [];
   let cleanupComplete = false;
   let rendererSessionToken = 0;
@@ -871,10 +1183,14 @@ export function createEditorItemPreviewViewport(
     const aspect =
       Math.max(1, hostElement.clientWidth) /
       Math.max(1, hostElement.clientHeight);
-    const halfHeight = getCameraHalfHeight({
-      itemId: options.itemId,
-      presentation,
-    });
+    const halfHeight = Math.max(
+      getCameraHalfHeight({
+        itemId: options.itemId,
+        presentation,
+      }),
+      requiredCameraHalfHeight,
+      requiredCameraHalfWidth / Math.max(aspect, 0.001),
+    );
     const halfWidth = halfHeight * aspect;
     camera.left = -halfWidth;
     camera.right = halfWidth;
@@ -883,15 +1199,15 @@ export function createEditorItemPreviewViewport(
     camera.position.set(0, 0, CAMERA_DISTANCE);
     camera.lookAt(0, 0, 0);
     camera.updateProjectionMatrix();
+    stageLabelOverlay?.update(camera);
 
-    if (backdropMesh !== null) {
-      backdropMesh.position.set(0, 0, -40);
-      backdropMesh.scale.set(
-        halfWidth * 2 * BACKDROP_OVERDRAW,
-        halfHeight * 2 * BACKDROP_OVERDRAW,
-        1,
-      );
-    }
+    syncBackdropFrame({
+      backdropMesh,
+      centerX: 0,
+      centerY: 0,
+      height: halfHeight * 2 * BACKDROP_OVERDRAW,
+      width: halfWidth * 2 * BACKDROP_OVERDRAW,
+    });
   };
 
   const disposeViewportSession = () => {
@@ -919,6 +1235,7 @@ export function createEditorItemPreviewViewport(
     renderer = null;
     camera = null;
     backdropMesh = null;
+    stageLabelOverlay = null;
     postProcessing = null;
   };
 
@@ -1060,11 +1377,26 @@ export function createEditorItemPreviewViewport(
       registerDisposables(disposables, scenePass, bloomNode);
 
       const updates: Array<(nowSec: number) => void> = [];
-      const planetRadius = getPreviewPlanetRadius(options.itemId, presentation);
+      const planetRadius = getPreviewPlanetRadius(
+        options.itemId,
+        presentation,
+        tuning,
+      );
       const sunRadius = getPreviewSunRadius(options.itemId, presentation);
       const focusScale = getPresentationScale(presentation);
       const terraVisuals = tuning.visuals.planets.archetypes.terra;
       const terraPlanetRadius = planetRadius * terraVisuals.bodyScale;
+      const overviewSunProfile = getSunVisualProfile(tuning.visuals.suns, 0);
+
+      if (
+        presentation === "stage" &&
+        (isAbilityPreviewItem(options.itemId) || options.itemId === "cache")
+      ) {
+        requiredCameraHalfHeight = Math.max(
+          requiredCameraHalfHeight,
+          tuning.gameplay.camera.viewportWorldHeight / 2,
+        );
+      }
 
       if (options.itemId === "overview") {
         const planet = createPreviewPlanet({
@@ -1077,16 +1409,17 @@ export function createEditorItemPreviewViewport(
           visuals: terraVisuals,
         });
         const sun = createPreviewSun({
-          color: DEFAULT_ORBIT_PRESET.suns[0]!.color,
-          glowColor: DEFAULT_ORBIT_PRESET.suns[0]!.glowColor,
-          glowScale: tuning.visuals.suns.glowScale,
-          glowStrength: tuning.visuals.suns.glowBrightness,
+          color: overviewSunProfile.color,
+          coreBrightness: overviewSunProfile.coreBrightness,
+          glowColor: overviewSunProfile.glowColor,
+          glowScale: overviewSunProfile.glowScale,
+          glowStrength: overviewSunProfile.glowBrightness,
           hostScene: scene,
           radius: sunRadius * 0.86,
           seed: DEFAULT_ORBIT_PRESET.suns[0]!.id,
           sunGeometry: sphereGeometry,
           warpGeometry,
-          warpScale: tuning.visuals.suns.warpScale,
+          warpScale: overviewSunProfile.warpScale,
         });
         const rocket = createPreviewRocket({
           hostScene: scene,
@@ -1115,38 +1448,37 @@ export function createEditorItemPreviewViewport(
       }
 
       if (options.itemId === "planets") {
+        const stageLayout =
+          presentation === "stage"
+            ? createPlanetStagePreviewLayout(tuning)
+            : null;
+        if (stageLayout !== null) {
+          requiredCameraHalfHeight = stageLayout.requiredHalfHeight;
+          requiredCameraHalfWidth = stageLayout.requiredHalfWidth;
+          stageLabelOverlay = createPlanetStagePreviewLabelOverlay({
+            hostElement,
+            entries: stageLayout.entries,
+          });
+          registerDisposables(disposables, stageLabelOverlay);
+        }
         const planetEntries = ARCHETYPE_IDS.map((archetype, index) => {
           const visuals = tuning.visuals.planets.archetypes[archetype];
+          const stageEntry = stageLayout?.entries[index] ?? null;
           const position =
-            presentation === "card"
-              ? getPlanetGridPosition(
-                  index,
-                  ARCHETYPE_IDS.length,
-                  PLANETS_CARD_HORIZONTAL_SPACING * focusScale,
-                  PLANETS_CARD_VERTICAL_SPACING * focusScale,
-                )
-              : getPlanetGridPosition(
-                  index,
-                  ARCHETYPE_IDS.length,
-                  PLANETS_STAGE_HORIZONTAL_SPACING,
-                  PLANETS_STAGE_VERTICAL_SPACING,
-                );
+            stageEntry?.position ??
+            getPlanetGridPosition(
+              index,
+              ARCHETYPE_IDS.length,
+              PLANETS_CARD_HORIZONTAL_SPACING * focusScale,
+              PLANETS_CARD_VERTICAL_SPACING * focusScale,
+            );
           const radius =
-            presentation === "card"
-              ? clamp(
-                  planetRadius *
-                    visuals.bodyScale *
-                    PLANETS_CARD_RADIUS_SCALE,
-                  PLANETS_CARD_MIN_RADIUS,
-                  PLANETS_CARD_MAX_RADIUS,
-                )
-              : clamp(
-                  planetRadius *
-                    visuals.bodyScale *
-                    PLANETS_STAGE_RADIUS_SCALE,
-                  PLANETS_STAGE_MIN_RADIUS,
-                  PLANETS_STAGE_MAX_RADIUS,
-                );
+            stageEntry?.radius ??
+            clamp(
+              planetRadius * visuals.bodyScale * PLANETS_CARD_RADIUS_SCALE,
+              PLANETS_CARD_MIN_RADIUS,
+              PLANETS_CARD_MAX_RADIUS,
+            );
           const planet = createPreviewPlanet({
             hostScene: scene,
             planetGeometry: sphereGeometry,
@@ -1156,21 +1488,7 @@ export function createEditorItemPreviewViewport(
             seed: index + 1,
             visuals,
           });
-          const label =
-            presentation === "stage"
-              ? createPreviewPlanetLabel({
-                  accent: visuals.color,
-                  document: hostElement.ownerDocument,
-                  hostScene: scene,
-                  label: ARCHETYPES[archetype].name,
-                  position,
-                  radius,
-                })
-              : null;
           registerDisposables(disposables, planet);
-          if (label !== null) {
-            registerDisposables(disposables, label);
-          }
           return { planet, phase: index * 0.5 };
         });
         updates.push((nowSec) => {
@@ -1181,30 +1499,122 @@ export function createEditorItemPreviewViewport(
       }
 
       if (options.itemId === "suns") {
-        const sun = createPreviewSun({
-          color: DEFAULT_ORBIT_PRESET.suns[0]!.color,
-          glowColor: DEFAULT_ORBIT_PRESET.suns[0]!.glowColor,
-          glowScale: tuning.visuals.suns.glowScale,
-          glowStrength: tuning.visuals.suns.glowBrightness,
-          hostScene: scene,
-          radius: sunRadius,
-          seed: DEFAULT_ORBIT_PRESET.suns[0]!.id,
-          sunGeometry: sphereGeometry,
-          warpGeometry,
-          warpScale: tuning.visuals.suns.warpScale,
+        const stageLayout =
+          presentation === "stage"
+            ? createSunStagePreviewLayout(tuning, sunRadius)
+            : null;
+        if (stageLayout !== null) {
+          requiredCameraHalfHeight = stageLayout.requiredHalfHeight;
+          requiredCameraHalfWidth = stageLayout.requiredHalfWidth;
+          stageLabelOverlay = createSunStagePreviewLabelOverlay({
+            hostElement,
+            entries: stageLayout.entries,
+          });
+          registerDisposables(disposables, stageLabelOverlay);
+        }
+        const sunEntries = tuning.visuals.suns.profiles.map(
+          (profile, index) => {
+            const stageEntry = stageLayout?.entries[index] ?? null;
+            const position =
+              stageEntry?.position ??
+              getPlanetGridPosition(
+                index,
+                tuning.visuals.suns.profiles.length,
+                SUNS_CARD_HORIZONTAL_SPACING * focusScale,
+                SUNS_CARD_VERTICAL_SPACING * focusScale,
+              );
+            const defaultSun =
+              DEFAULT_ORBIT_PRESET.suns[
+                index % DEFAULT_ORBIT_PRESET.suns.length
+              ]!;
+            const radius =
+              stageEntry?.radius ??
+              clamp(
+                sunRadius *
+                  (tuning.gameplay.orbits.suns[index]!.radius /
+                    Math.max(defaultSun.radius, 1)) *
+                  SUNS_CARD_RADIUS_SCALE,
+                SUNS_CARD_MIN_RADIUS,
+                SUNS_CARD_MAX_RADIUS,
+              );
+            const sunSeed =
+              DEFAULT_ORBIT_PRESET.suns[
+                index % DEFAULT_ORBIT_PRESET.suns.length
+              ]!;
+            const sun = createPreviewSun({
+              color: profile.color,
+              coreBrightness: profile.coreBrightness,
+              glowColor: profile.glowColor,
+              glowScale: profile.glowScale,
+              glowStrength: profile.glowBrightness,
+              hostScene: scene,
+              radius,
+              seed: sunSeed.id,
+              sunGeometry: sphereGeometry,
+              warpGeometry,
+              warpScale: profile.warpScale,
+            });
+            registerDisposables(disposables, sun);
+            return {
+              phase: index * 0.43,
+              position,
+              sun,
+            };
+          },
+        );
+        updates.push((nowSec) => {
+          for (const entry of sunEntries) {
+            entry.sun.update(nowSec + entry.phase, entry.position);
+          }
         });
-        registerDisposables(disposables, sun);
-        updates.push((nowSec) => sun.update(nowSec, { x: 0, y: 0 }));
       }
 
       if (options.itemId === "cache") {
-        const cache = createPreviewCache({
-          hostElement,
-          hostScene: scene,
-          presentation,
+        const stageLayout =
+          presentation === "stage" ? createCacheStagePreviewLayout(tuning) : null;
+        if (stageLayout !== null) {
+          requiredCameraHalfHeight = Math.max(
+            requiredCameraHalfHeight,
+            stageLayout.requiredHalfHeight,
+          );
+          requiredCameraHalfWidth = Math.max(
+            requiredCameraHalfWidth,
+            stageLayout.requiredHalfWidth,
+          );
+        }
+        const cacheEntries =
+          stageLayout?.entries.map((entry, index) => {
+            const cache = createPreviewCache({
+              hostElement,
+              hostScene: scene,
+              iconKey: entry.iconKey,
+              presentation,
+            });
+            registerDisposables(disposables, cache);
+            return {
+              cache,
+              phase: index * 0.37,
+              position: entry.position,
+            };
+          }) ?? [
+            {
+              cache: createPreviewCache({
+                hostElement,
+                hostScene: scene,
+                presentation,
+              }),
+              phase: 0,
+              position: { x: 0, y: 0 } satisfies Vec2,
+            },
+          ];
+        if (stageLayout === null) {
+          registerDisposables(disposables, cacheEntries[0]!.cache);
+        }
+        updates.push((nowSec) => {
+          for (const entry of cacheEntries) {
+            entry.cache.update(nowSec + entry.phase, entry.position);
+          }
         });
-        registerDisposables(disposables, cache);
-        updates.push((nowSec) => cache.update(nowSec, { x: 0, y: 0 }));
       }
 
       const rocketKind = getRocketKindFromItemId(options.itemId);
@@ -1464,19 +1874,11 @@ export function createEditorItemPreviewViewport(
           foresightVisual.pointGeometry,
           foresightVisual.points.material as { dispose: () => void },
         );
-        const targetSpan =
-          presentation === "card" ? FORESIGHT_CARD_SPAN : FORESIGHT_STAGE_SPAN;
-        const pathScale =
-          targetSpan /
-          Math.max(
-            1,
-            Math.max(
-              ...createPreviewForesightPath(targetSpan).map((point) =>
-                Math.max(Math.abs(point.x), Math.abs(point.y)),
-              ),
-            ) * 2,
-          );
-        const basePath = createPreviewForesightPath(targetSpan);
+        const { path: basePath, scale: pathScale } = createPreviewForesightPath(
+          presentation === "card"
+            ? { targetSpan: FORESIGHT_CARD_SPAN }
+            : undefined,
+        );
         const visiblePath = clipForesightPathAtDistance(
           basePath,
           terraPlanetRadius +
@@ -1499,56 +1901,35 @@ export function createEditorItemPreviewViewport(
           visuals: terraVisuals,
         });
         registerDisposables(disposables, planet);
-        const shieldArcRadians =
-          (tuning.gameplay.abilities.shield.arcDeg * Math.PI) / 180;
-        const shieldGlowMaterial = new MeshBasicMaterial({
-          color: tuning.visuals.abilities.shieldColor,
-          depthWrite: false,
-          opacity: 0.22,
-          transparent: true,
-          blending: AdditiveBlending,
-        });
-        const shieldGlowMesh = new Mesh(
-          new RingGeometry(
-            SHIELD_OUTER_SCALE * 0.84,
-            SHIELD_GLOW_OUTER_SCALE,
-            72,
-            1,
-            -shieldArcRadians / 2,
-            shieldArcRadians,
-          ),
-          shieldGlowMaterial,
-        );
-        const shieldArcMaterial = new MeshBasicMaterial({
-          color: tuning.visuals.abilities.shieldColor,
-          depthWrite: false,
-          opacity: 0.58,
-          transparent: true,
-        });
-        const shieldArcMesh = new Mesh(
-          new RingGeometry(
-            SHIELD_INNER_SCALE,
-            SHIELD_OUTER_SCALE,
-            72,
-            1,
-            -shieldArcRadians / 2,
-            shieldArcRadians,
-          ),
+        const {
           shieldArcMaterial,
-        );
-        shieldGlowMesh.renderOrder = 11;
-        shieldArcMesh.renderOrder = 12;
-        shieldGlowMesh.position.z = 2.6;
-        shieldArcMesh.position.z = 2.8;
-        const shieldGroup = new Group();
-        shieldGroup.add(shieldGlowMesh, shieldArcMesh);
+          shieldArcMesh,
+          shieldArcOpacityUniform,
+          shieldPanelMaterial,
+          shieldPanelMesh,
+          shieldPanelOpacityUniform,
+          shieldCrestMaterial,
+          shieldCrestMesh,
+          shieldCrestOpacityUniform,
+          shieldGlowMaterial,
+          shieldGlowMesh,
+          shieldGlowOpacityUniform,
+          shieldGroup,
+        } = createShieldVisual({
+          arcDeg: tuning.gameplay.abilities.shield.arcDeg,
+          shieldColor: tuning.visuals.abilities.shieldColor,
+        });
         scene.add(shieldGroup);
         registerDisposables(
           disposables,
           shieldGlowMesh.geometry,
           shieldArcMesh.geometry,
+          shieldPanelMesh.geometry,
+          shieldCrestMesh.geometry,
           shieldGlowMaterial,
           shieldArcMaterial,
+          shieldPanelMaterial,
+          shieldCrestMaterial,
         );
         updates.push((nowSec) => {
           planet.update(nowSec);
@@ -1559,8 +1940,14 @@ export function createEditorItemPreviewViewport(
             1,
           );
           shieldGroup.rotation.z = Math.sin(nowSec * 0.7) * 0.22;
-          shieldGlowMaterial.opacity = 0.2 + Math.sin(nowSec * 9.4) * 0.04;
-          shieldArcMaterial.opacity = 0.54 + Math.sin(nowSec * 7.6) * 0.05;
+          shieldGlowOpacityUniform.value =
+            0.14 + Math.sin(nowSec * 9.4) * 0.03;
+          shieldArcOpacityUniform.value =
+            0.4 + Math.sin(nowSec * 7.6) * 0.05;
+          shieldPanelOpacityUniform.value =
+            0.5 + Math.sin(nowSec * 9.8) * 0.06;
+          shieldCrestOpacityUniform.value =
+            0.46 + Math.sin(nowSec * 10.6) * 0.06;
         });
       }
 
@@ -1579,6 +1966,7 @@ export function createEditorItemPreviewViewport(
         const wakeGeometry = new PlaneGeometry(1, 1);
         wakeGeometry.translate(0.5, 0, 0);
         const wakeMesh = new Mesh(wakeGeometry, wake.material);
+        wakeMesh.frustumCulled = false;
         wakeMesh.renderOrder = 12;
         wakeMesh.position.z = 2.2;
         scene.add(wakeMesh);
@@ -1606,7 +1994,8 @@ export function createEditorItemPreviewViewport(
         const burstMaterial = createBoostBurstMaterial(
           tuning.visuals.abilities.boostColor,
         );
-        const burstPoints = new Points(burstGeometry, burstMaterial);
+        const burstPoints = new Points(burstGeometry, burstMaterial.material);
+        burstPoints.frustumCulled = false;
         burstPoints.renderOrder = 13;
         burstPoints.position.z = 2.3;
         scene.add(burstPoints);
@@ -1616,28 +2005,243 @@ export function createEditorItemPreviewViewport(
           wake.material,
           ...(wake.texture === null ? [] : [wake.texture]),
           burstGeometry,
-          burstMaterial,
+          burstMaterial.material,
         );
-        const magnitudeScale =
-          0.8 +
-          clamp(tuning.gameplay.abilities.boost.magnitude / 4000, 0, 1) * 0.9;
         updates.push((nowSec) => {
           planet.update(nowSec);
-          const pulse = 0.78 + Math.sin(nowSec * 4.2) * 0.18;
-          wake.material.opacity = 0.58 + Math.sin(nowSec * 5.3) * 0.1;
-          wakeMesh.position.set(-terraPlanetRadius * 0.18, 0, 2.2);
+          const cycleTimeSec = nowSec % BOOST_PREVIEW_CYCLE_SEC;
+          const burstActive = cycleTimeSec < BOOST_PREVIEW_ACTIVE_SEC;
+          const burstProgress = burstActive
+            ? clamp(cycleTimeSec / BOOST_PREVIEW_ACTIVE_SEC, 0, 1)
+            : 1;
+          const burstAlpha = burstActive ? 1 - burstProgress : 0;
+          const wakeLength = terraPlanetRadius * lerp(2.3, 4.9, burstProgress);
+          const wakeWidth = terraPlanetRadius * lerp(1.5, 0.82, burstProgress);
+          const wakeOffset = terraPlanetRadius * lerp(0.46, 0.72, burstProgress);
+          const particleScale =
+            terraPlanetRadius * lerp(0.9, 1.45, burstProgress);
+          wakeMesh.visible = burstActive;
+          burstPoints.visible = burstActive;
+          burstMaterial.opacityUniform.value = burstAlpha;
+          wake.material.opacity = burstAlpha * lerp(1, 0.44, burstProgress);
+          wakeMesh.position.set(-wakeOffset, 0, 2.2);
           wakeMesh.scale.set(
-            terraPlanetRadius * magnitudeScale * 1.7,
-            terraPlanetRadius * 1.22,
+            wakeLength,
+            wakeWidth,
             1,
           );
           wakeMesh.rotation.z = Math.PI;
-          burstPoints.position.set(-terraPlanetRadius * 0.44, 0, 2.3);
+          burstPoints.position.set(-terraPlanetRadius * 0.38, 0, 2.3);
           burstPoints.scale.set(
-            terraPlanetRadius * magnitudeScale * (0.72 + pulse * 0.1),
-            terraPlanetRadius * magnitudeScale * (0.72 + pulse * 0.1),
+            particleScale,
+            particleScale,
             1,
           );
+        });
+      }
+
+      if (options.itemId === "gravityPulse") {
+        const planet = createPreviewPlanet({
+          hostScene: scene,
+          planetGeometry: sphereGeometry,
+          position: { x: 0, y: 0 },
+          radius: terraPlanetRadius,
+          ringGeometry,
+          seed: 1,
+          visuals: terraVisuals,
+        });
+        registerDisposables(disposables, planet);
+        const wildcardColor = tuning.visuals.abilities.wildcardColor;
+        const gravityPulseRadius = tuning.gameplay.abilities.gravityPulse.radius;
+        const pulseCoreGeometry = new CircleGeometry(1, 64);
+        const pulseCoreMaterial = new MeshBasicMaterial({
+          blending: AdditiveBlending,
+          color: tintColor(wildcardColor, 0.08, 0.18, 0.04),
+          depthWrite: false,
+          opacity: 0.2,
+          transparent: true,
+        });
+        const pulseCoreMesh = new Mesh(pulseCoreGeometry, pulseCoreMaterial);
+        pulseCoreMesh.position.z = 1.95;
+        scene.add(pulseCoreMesh);
+        const pulseRingGeometry = new RingGeometry(0.9, 1, 96);
+        const pulseRingMaterial = new MeshBasicMaterial({
+          blending: AdditiveBlending,
+          color: wildcardColor,
+          depthWrite: false,
+          opacity: 0,
+          transparent: true,
+        });
+        const pulseRingMesh = new Mesh(pulseRingGeometry, pulseRingMaterial);
+        pulseRingMesh.position.z = 2.08;
+        scene.add(pulseRingMesh);
+        const pulseEchoMaterial = new MeshBasicMaterial({
+          blending: AdditiveBlending,
+          color: tintColor(wildcardColor, -0.04, 0.08, 0.08),
+          depthWrite: false,
+          opacity: 0,
+          transparent: true,
+        });
+        const pulseEchoMesh = new Mesh(pulseRingGeometry, pulseEchoMaterial);
+        pulseEchoMesh.position.z = 2.04;
+        scene.add(pulseEchoMesh);
+        const helperRingGeometry =
+          presentation === "stage" ? new RingGeometry(0.992, 1, 160) : null;
+        const helperRingMaterial =
+          helperRingGeometry === null
+            ? null
+            : new MeshBasicMaterial({
+                color: tintColor(wildcardColor, -0.03, 0.02, 0.18),
+                depthWrite: false,
+                opacity: 0.18,
+                transparent: true,
+              });
+        const helperRingMesh =
+          helperRingGeometry === null || helperRingMaterial === null
+            ? null
+            : new Mesh(helperRingGeometry, helperRingMaterial);
+        if (helperRingMesh !== null) {
+          helperRingMesh.position.z = 1.72;
+          scene.add(helperRingMesh);
+          requiredCameraHalfHeight = Math.max(
+            requiredCameraHalfHeight,
+            gravityPulseRadius * 1.12,
+          );
+          requiredCameraHalfWidth = Math.max(
+            requiredCameraHalfWidth,
+            gravityPulseRadius * 1.12,
+          );
+        }
+        registerDisposables(
+          disposables,
+          pulseCoreGeometry,
+          pulseCoreMaterial,
+          pulseRingGeometry,
+          pulseRingMaterial,
+          pulseEchoMaterial,
+          ...(helperRingGeometry === null || helperRingMaterial === null
+            ? []
+            : [helperRingGeometry, helperRingMaterial]),
+        );
+        updates.push((nowSec) => {
+          planet.update(nowSec);
+          const cycleSec = nowSec % GRAVITY_PULSE_PREVIEW_CYCLE_SEC;
+          const primaryProgress = clamp(
+            cycleSec / GRAVITY_PULSE_PREVIEW_CYCLE_SEC,
+            0,
+            1,
+          );
+          const echoProgress = clamp(
+            ((cycleSec + GRAVITY_PULSE_PREVIEW_CYCLE_SEC * 0.38) %
+              GRAVITY_PULSE_PREVIEW_CYCLE_SEC) /
+              GRAVITY_PULSE_PREVIEW_CYCLE_SEC,
+            0,
+            1,
+          );
+          const corePulse = 0.5 + Math.sin(nowSec * 7.4) * 0.5;
+          const primaryScale =
+            presentation === "stage"
+              ? lerp(terraPlanetRadius * 1.1, gravityPulseRadius, primaryProgress)
+              : terraPlanetRadius * lerp(1.1, 4.9, primaryProgress);
+          const echoScale =
+            presentation === "stage"
+              ? lerp(terraPlanetRadius * 1.3, gravityPulseRadius * 0.84, echoProgress)
+              : terraPlanetRadius * lerp(1.3, 4.2, echoProgress);
+          pulseCoreMesh.scale.set(
+            terraPlanetRadius * lerp(1.04, 1.34, corePulse),
+            terraPlanetRadius * lerp(1.04, 1.34, corePulse),
+            1,
+          );
+          pulseCoreMaterial.opacity = 0.12 + corePulse * 0.12;
+          pulseRingMesh.scale.set(primaryScale, primaryScale, 1);
+          pulseRingMaterial.opacity = (1 - primaryProgress) ** 1.6 * 0.72;
+          pulseEchoMesh.scale.set(echoScale, echoScale, 1);
+          pulseEchoMaterial.opacity = (1 - echoProgress) ** 1.8 * 0.4;
+          if (helperRingMesh !== null) {
+            helperRingMesh.scale.set(gravityPulseRadius, gravityPulseRadius, 1);
+          }
+        });
+      }
+
+      if (options.itemId === "cloak") {
+        const planet = createPreviewPlanet({
+          hostScene: scene,
+          planetGeometry: sphereGeometry,
+          position: { x: 0, y: 0 },
+          radius: terraPlanetRadius,
+          ringGeometry,
+          seed: 1,
+          visuals: terraVisuals,
+        });
+        registerDisposables(disposables, planet);
+        const wildcardColor = tuning.visuals.abilities.wildcardColor;
+        const cloakVeilGeometry = new CircleGeometry(1, 64);
+        const cloakVeilMaterial = new MeshBasicMaterial({
+          blending: AdditiveBlending,
+          color: tintColor(wildcardColor, -0.18, 0.04, 0.1),
+          depthWrite: false,
+          opacity: 0.18,
+          transparent: true,
+        });
+        const cloakVeilMesh = new Mesh(cloakVeilGeometry, cloakVeilMaterial);
+        cloakVeilMesh.position.z = 1.92;
+        scene.add(cloakVeilMesh);
+        const cloakRingGeometry = new RingGeometry(0.84, 1, 80);
+        const cloakRingMaterial = new MeshBasicMaterial({
+          blending: AdditiveBlending,
+          color: tintColor(wildcardColor, 0.02, 0.14, 0.06),
+          depthWrite: false,
+          opacity: 0.28,
+          transparent: true,
+        });
+        const cloakRingMesh = new Mesh(cloakRingGeometry, cloakRingMaterial);
+        cloakRingMesh.position.z = 2.04;
+        scene.add(cloakRingMesh);
+        const cloakSheenMaterial = new MeshBasicMaterial({
+          blending: AdditiveBlending,
+          color: tintColor(wildcardColor, 0.12, 0.22, -0.02),
+          depthWrite: false,
+          opacity: 0.18,
+          transparent: true,
+        });
+        const cloakSheenMesh = new Mesh(cloakVeilGeometry, cloakSheenMaterial);
+        cloakSheenMesh.position.z = 2.14;
+        scene.add(cloakSheenMesh);
+        registerDisposables(
+          disposables,
+          cloakVeilGeometry,
+          cloakVeilMaterial,
+          cloakRingGeometry,
+          cloakRingMaterial,
+          cloakSheenMaterial,
+        );
+        updates.push((nowSec) => {
+          planet.update(nowSec);
+          planet.setOpacity(CLOAK_PLANET_TARGET_OPACITY);
+          const shimmer = 0.5 + Math.sin(nowSec * 2.6) * 0.5;
+          const driftX = Math.sin(nowSec * 1.3) * terraPlanetRadius * 0.08;
+          const driftY = Math.cos(nowSec * 1.7) * terraPlanetRadius * 0.05;
+          cloakVeilMesh.scale.set(
+            terraPlanetRadius * lerp(1.18, 1.28, shimmer),
+            terraPlanetRadius * lerp(1.18, 1.28, shimmer),
+            1,
+          );
+          cloakVeilMaterial.opacity = 0.12 + shimmer * 0.1;
+          cloakRingMesh.scale.set(
+            terraPlanetRadius * lerp(1.2, 1.34, shimmer),
+            terraPlanetRadius * lerp(1.2, 1.34, shimmer),
+            1,
+          );
+          cloakRingMesh.rotation.z = nowSec * 0.42;
+          cloakRingMaterial.opacity = 0.2 + Math.sin(nowSec * 4.8) * 0.06;
+          cloakSheenMesh.position.set(driftX, driftY, 2.14);
+          cloakSheenMesh.scale.set(
+            terraPlanetRadius * 1.02,
+            terraPlanetRadius * lerp(1.18, 1.36, shimmer),
+            1,
+          );
+          cloakSheenMesh.rotation.z = nowSec * -0.54;
+          cloakSheenMaterial.opacity = 0.08 + shimmer * 0.1;
         });
       }
 

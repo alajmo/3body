@@ -51,17 +51,17 @@ interface PublishedPeriodicSeed {
 
 const SUN_VISUALS = [
   {
-    label: "amber",
+    label: "Auric",
     color: "#ffd36a",
     glowColor: "#ffefb5",
   },
   {
-    label: "coral",
+    label: "Ember",
     color: "#ffb347",
     glowColor: "#ffd6ae",
   },
   {
-    label: "ivory",
+    label: "Halo",
     color: "#fff1a1",
     glowColor: "#fff8d0",
   },
@@ -142,6 +142,36 @@ const PLANET_PACK: OrbitPlanetSeed[] = [
 
 const PERIODIC_SUN_MASS = 120_000;
 const PERIODIC_SUN_RADIUS = 32;
+const IA1_PERIODIC_SANDBOX_WORLD_SCALE = 1_600;
+const IA1_PERIODIC_SANDBOX_MASS = 140_000;
+// Keep the sandbox opener forgiving while the combat spawn is still being tuned.
+const IA1_PERIODIC_SANDBOX_PLANET_POSITION_SCALE = 1.27;
+const IA1_PERIODIC_SANDBOX_NORMALIZED_SUNS = [
+  {
+    label: "Auric",
+    color: "#ffd36a",
+    glowColor: "#ffefb5",
+    radius: 88,
+    pos: { x: -1, y: 0 },
+    vel: { x: 0.345763425340569, y: 0.5303825022600904 },
+  },
+  {
+    label: "Ember",
+    color: "#ffb347",
+    glowColor: "#ffd6ae",
+    radius: 124,
+    pos: { x: 1, y: 0 },
+    vel: { x: 0.345763425340569, y: 0.5303825022600904 },
+  },
+  {
+    label: "Halo",
+    color: "#fff1a1",
+    glowColor: "#fff8d0",
+    radius: 160,
+    pos: { x: 0, y: 0 },
+    vel: { x: -0.691526850681138, y: -1.0607650045201807 },
+  },
+] as const;
 
 const DEFAULT_RESET_POLICY: OrbitResetPolicy = {
   earlyWindowSec: 18,
@@ -165,6 +195,25 @@ const scaleVelocity = (
   return {
     x: normalizedVelocity.x * velocityScale,
     y: normalizedVelocity.y * velocityScale,
+  };
+};
+
+const scalePlanetSeedRadially = (
+  planet: OrbitPlanetSeed,
+  positionScale: number,
+): OrbitPlanetSeed => {
+  const velocityScale = 1 / Math.sqrt(positionScale);
+
+  return {
+    ...planet,
+    pos: {
+      x: planet.pos.x * positionScale,
+      y: planet.pos.y * positionScale,
+    },
+    vel: {
+      x: planet.vel.x * velocityScale,
+      y: planet.vel.y * velocityScale,
+    },
   };
 };
 
@@ -218,39 +267,26 @@ const IA1_PERIODIC_SANDBOX_PRESET: OrbitPreset = {
   id: "ia1-periodic-sandbox",
   label: "IA1 Periodic Sandbox",
   resetPolicy: DEFAULT_RESET_POLICY,
-  suns: [
-    {
-      id: 1,
-      label: "small",
-      color: "#ffd36a",
-      glowColor: "#ffefb5",
-      mass: 140_000,
-      radius: 88,
-      pos: { x: -560, y: 0 },
-      vel: { x: 122.24583137230245, y: 187.51853198539965 },
+  suns: IA1_PERIODIC_SANDBOX_NORMALIZED_SUNS.map((sun, index) => ({
+    id: index + 1,
+    label: sun.label,
+    color: sun.color,
+    glowColor: sun.glowColor,
+    mass: IA1_PERIODIC_SANDBOX_MASS,
+    radius: sun.radius,
+    pos: {
+      x: sun.pos.x * IA1_PERIODIC_SANDBOX_WORLD_SCALE,
+      y: sun.pos.y * IA1_PERIODIC_SANDBOX_WORLD_SCALE,
     },
-    {
-      id: 2,
-      label: "medium",
-      color: "#ffb347",
-      glowColor: "#ffd6ae",
-      mass: 140_000,
-      radius: 124,
-      pos: { x: 560, y: 0 },
-      vel: { x: 122.24583137230245, y: 187.51853198539965 },
-    },
-    {
-      id: 3,
-      label: "large",
-      color: "#fff1a1",
-      glowColor: "#fff8d0",
-      mass: 140_000,
-      radius: 160,
-      pos: { x: 0, y: 0 },
-      vel: { x: -244.4916627446049, y: -375.0370639707993 },
-    },
-  ],
-  planets: PLANET_PACK,
+    vel: scaleVelocity(
+      sun.vel,
+      IA1_PERIODIC_SANDBOX_MASS,
+      IA1_PERIODIC_SANDBOX_WORLD_SCALE,
+    ),
+  })),
+  planets: PLANET_PACK.map((planet) =>
+    scalePlanetSeedRadially(planet, IA1_PERIODIC_SANDBOX_PLANET_POSITION_SCALE),
+  ),
 };
 
 // These seeds follow the equal-mass, zero-angular-momentum periodic solutions linked from Wikipedia.
@@ -407,3 +443,6 @@ export const ORBIT_PRESET_BY_ID = new Map(
 );
 
 export const DEFAULT_ORBIT_PRESET = ORBIT_PRESETS[0]!;
+
+export const getDefaultOrbitSunLabel = (index: number): string =>
+  DEFAULT_ORBIT_PRESET.suns[index]?.label ?? `Sun ${index + 1}`;

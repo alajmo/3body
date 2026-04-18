@@ -25,4 +25,4 @@ export const getRenderedPlanetRadius = <T extends {
   radius: number;
 }>(
   planet: T,
-): number => planet.radius * getPlanetBodyScaleForArchetype(planet.archetype);
+): number => planet.radius;

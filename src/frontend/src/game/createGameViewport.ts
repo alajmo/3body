@@ -159,6 +159,7 @@ const CANNON_MUZZLE_LENGTH_PX = 4;
 const CANNON_MUZZLE_RADIUS_PX = 5.6;
 const CANNON_FLASH_RADIUS_PX = 16;
 const CANNON_FLASH_DURATION_SEC = 0.14;
+const PLAYER_NAME_STORAGE_KEY = "3body.playerName";
 const WEAPON_KINDS = [
   "light",
   "heavy",
@@ -187,6 +188,16 @@ const getWeaponColors = (): Record<RocketKind, { accent: string }> => ({
   },
 });
 const getRocketRenderProfiles = () => getRuntimeVisuals().rockets;
+const readStoredLocalPlayerName = (): string | undefined => {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+
+  const storedName = window.localStorage
+    .getItem(PLAYER_NAME_STORAGE_KEY)
+    ?.trim();
+  return storedName ? storedName : undefined;
+};
 
 interface TrailSample {
   pos: Vec2;
@@ -419,6 +430,7 @@ export function createGameViewport(
 
       const initialState = createSandboxState(sandboxSettings.activePreset, {
         botsEnabled: sandboxSettings.botsEnabled,
+        playerName: readStoredLocalPlayerName(),
       });
       const {
         blackHoleGroup,
@@ -436,8 +448,11 @@ export function createGameViewport(
         cannonGroup,
         cannonMuzzleMesh,
         cannonStemMesh,
+        boundaryDebrisVisual,
+        cloakVisuals,
         debrisVisual,
         droneVisual,
+        gravityPulseVisual,
         hiddenTrailUntilByPlanetId,
         impactBurstVisuals,
         inactivePlanetExplosionVisuals,
@@ -451,8 +466,10 @@ export function createGameViewport(
         reticleRingMesh,
         rocketLaunchBurstPools,
         rocketPools,
-        shieldArcMaterial,
-        shieldGlowMaterial,
+        shieldArcOpacityUniform,
+        shieldPanelOpacityUniform,
+        shieldCrestOpacityUniform,
+        shieldGlowOpacityUniform,
         shieldGroup,
         sunVisuals,
         trailVisuals,
@@ -502,6 +519,7 @@ export function createGameViewport(
         shieldOuterScale: SHIELD_OUTER_SCALE,
         sunGeometrySegments: SUN_GEOMETRY_SEGMENTS,
         warpGeometrySegments: WARP_GEOMETRY_SEGMENTS,
+        wildcardColor: getWildcardColor(),
         weaponColors: getWeaponColors(),
       });
 
@@ -595,8 +613,6 @@ export function createGameViewport(
           camera,
           cameraState,
           frame: getLocalViewportCameraFrame({
-            fullViewEnabled: inputRuntime.fullViewEnabled,
-            hostElement,
             readModeHeld: inputRuntime.readModeHeld,
             state,
           }),
@@ -621,6 +637,7 @@ export function createGameViewport(
       resetSandbox = () => {
         const nextState = createSandboxState(sandboxSettings.activePreset, {
           botsEnabled: sandboxSettings.botsEnabled,
+          playerName: readStoredLocalPlayerName(),
         });
         resetLocalSandboxSimulationState({
           inputController,
@@ -633,14 +650,18 @@ export function createGameViewport(
         cameraState.shakeOffsetY = 0;
         syncForesightVisualsToState(simulationState.currentState);
         resetLocalViewportSceneState({
+          activeGravityPulse: simulationState.activeGravityPulse,
           activeBoostBursts: simulationState.activeBoostBursts,
           boostBurstVisual,
+          boundaryDebrisVisual,
           cacheVisuals,
+          cloakVisuals,
           currentState: simulationState.currentState,
           debrisVisual,
           disposeCacheVisual,
           droneVisual,
           foresightVisuals,
+          gravityPulseVisual,
           hiddenRocketMatrix,
           hiddenRocketPosition,
           hiddenRocketRotation,
@@ -755,8 +776,6 @@ export function createGameViewport(
             cameraShake: simulationState.cameraShake,
             cameraState,
             frame: getLocalViewportCameraFrame({
-              fullViewEnabled: inputRuntime.fullViewEnabled,
-              hostElement,
               readModeHeld: inputRuntime.readModeHeld,
               state: simulationState.renderState,
             }),
@@ -773,6 +792,7 @@ export function createGameViewport(
             ? performance.now()
             : 0;
           updateLocalViewportScene({
+            activeGravityPulse: simulationState.activeGravityPulse,
             activeBoostBursts: simulationState.activeBoostBursts,
             activeCacheIds,
             activeDrone: simulationFrame.activeDrone,
@@ -782,6 +802,7 @@ export function createGameViewport(
             blackHoleRing,
             boostBurstParticlesPerBurst,
             boostBurstVisual,
+            boundaryDebrisVisual,
             cacheBadgeScale,
             cacheSpriteAssets,
             cacheVisuals,
@@ -796,6 +817,7 @@ export function createGameViewport(
             cannonGroup,
             cannonMuzzleMesh,
             cannonStemMesh,
+            cloakVisuals,
             chromaticAberrationNode,
             controlsEnabled: sandboxControlsEnabled(),
             createCacheVisual,
@@ -806,6 +828,7 @@ export function createGameViewport(
             foresightPathsByEntityId: simulationState.foresightPathsByEntityId,
             foresightVisuals,
             getCacheIconKey: getSharedCacheIconKey,
+            gravityPulseVisual,
             hiddenRocketMatrix,
             hiddenRocketPosition,
             hiddenRocketRotation,
@@ -838,8 +861,10 @@ export function createGameViewport(
             rocketScale,
             rocketTrailStates,
             scene,
-            shieldArcMaterial,
-            shieldGlowMaterial,
+            shieldArcOpacityUniform,
+            shieldPanelOpacityUniform,
+            shieldCrestOpacityUniform,
+            shieldGlowOpacityUniform,
             shieldGroup,
             backgroundLayers,
             sunVisuals,
@@ -965,7 +990,8 @@ export function createGameViewport(
                   playerPlanetVisuals?.bodyScale ?? lastHudState.planetBodyScale,
                 playerDamageFlash: simulationState.playerDamageFlash,
                 playerHpPulse: simulationState.playerHpPulse,
-                playerLabel: playerPlanet?.label ?? "Player",
+                playerLabel:
+                  playerPlanet?.displayName ?? playerPlanet?.label ?? "Player",
                 profilingEnabled,
                 profilerSnapshot,
                 readModeHeld,

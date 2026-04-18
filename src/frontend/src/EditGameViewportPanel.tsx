@@ -41,6 +41,7 @@ const createViewportRefreshSignature = (
     },
     background: documentValue.visuals.background,
     blackHole: documentValue.visuals.blackHole,
+    camera: documentValue.gameplay.camera,
     planets: {
       archetypes: documentValue.visuals.planets.archetypes,
     },
@@ -173,6 +174,15 @@ export function EditGameViewportPanel({
   }, [documentValue, viewportController]);
 
   useEffect(() => {
+    return () => {
+      if (refreshTimeoutRef.current !== null) {
+        window.clearTimeout(refreshTimeoutRef.current);
+        refreshTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     const nextSignature = createViewportRefreshSignature(documentValue);
     if (lastRefreshSignatureRef.current === nextSignature) {
       return;
@@ -186,13 +196,6 @@ export function EditGameViewportPanel({
       refreshTimeoutRef.current = null;
       restartViewport();
     }, VIEWPORT_REFRESH_DEBOUNCE_MS);
-
-    return () => {
-      if (refreshTimeoutRef.current !== null) {
-        window.clearTimeout(refreshTimeoutRef.current);
-        refreshTimeoutRef.current = null;
-      }
-    };
   }, [documentValue]);
 
   return (

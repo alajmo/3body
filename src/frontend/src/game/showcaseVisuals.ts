@@ -39,11 +39,13 @@ import {
   Color,
   Float32BufferAttribute,
   Group,
+  Mesh,
   MeshBasicNodeMaterial,
   Points,
   PointsNodeMaterial,
   SRGBColorSpace,
   SpriteMaterial,
+  Vector2,
   Vector3,
 } from "three/webgpu";
 import { getRuntimeTuningDocument } from "./runtimeTuning";
@@ -58,7 +60,7 @@ export interface BackgroundParallaxLayerVisual {
   tileSize: number;
 }
 
-export type BackgroundParallaxLayerKind = "dust" | "movingObjects" | "stars";
+export type BackgroundParallaxLayerKind = "dust" | "stars";
 
 export interface BackgroundParallaxLayerConfig {
   alphaScale: number;
@@ -79,12 +81,13 @@ export type CacheIconKey =
   | "heavyAmmo"
   | "seekerPack"
   | "repair"
-  | "boostCharge"
   | "shieldExt"
   | "foresightExt"
-  | "wildcard";
+  | "wildcardGravityPulse"
+  | "wildcardCloak";
 
 type CacheBadgeShape =
+  | "cache"
   | "hex"
   | "diamond"
   | "octagon"
@@ -97,13 +100,25 @@ export interface PlanetGlowMaterialNodes {
   contactStartNode: ReturnType<typeof uniform>;
   fadeStartNode: ReturnType<typeof uniform>;
   material: MeshBasicNodeMaterial;
+  opacityUniform: ReturnType<typeof uniform>;
   riseEndNode: ReturnType<typeof uniform>;
   riseStartNode: ReturnType<typeof uniform>;
+}
+
+export interface PlanetSurfaceMaterial extends MeshBasicNodeMaterial {
+  opacityUniform: ReturnType<typeof uniform>;
+}
+
+export interface BackdropMaterial extends MeshBasicNodeMaterial {
+  parallaxOffsetUniform: ReturnType<typeof uniform>;
 }
 
 export const SUN_GLOW_SCALE = 1.7;
 export const SUN_WARP_SCALE = 3.2;
 export const CACHE_BADGE_BASE_SIZE = 80;
+const DISTANT_BODIES_CAMERA_FOLLOW = 0.08;
+const NEBULA_CAMERA_FOLLOW = 0.12;
+const MIN_BACKDROP_WORLD_SPAN = 0.001;
 const BASE_STARFIELD_LAYERS = [
   {
     count: 320,
@@ -152,27 +167,6 @@ const BASE_DUST_LAYERS = [
     parallax: 0.1,
     size: 8,
     z: -32,
-  },
-] as const;
-
-const BASE_MOVING_OBJECT_LAYERS = [
-  {
-    count: 7,
-    alphaScale: 0.28,
-    driftX: -28,
-    driftY: 11,
-    parallax: 0.18,
-    size: 14,
-    z: -24,
-  },
-  {
-    count: 5,
-    alphaScale: 0.22,
-    driftX: 22,
-    driftY: -9,
-    parallax: 0.26,
-    size: 10,
-    z: -20,
   },
 ] as const;
 
@@ -256,32 +250,6 @@ export const createBackgroundLayerConfigs = (
     );
   }
 
-  if (background.movingObjectsEnabled) {
-    const coolColor = toHexString(
-      tintColor(background.glowColor, 0.04, 0.06, 0.28),
-    );
-    const warmColor = "#fff8e1";
-
-    configs.push(
-      ...BASE_MOVING_OBJECT_LAYERS.map((layer) => ({
-        ...layer,
-        alphaScale: layer.alphaScale * background.movingObjectsBrightness,
-        colorVariance: 0.42,
-        coolColor,
-        count: Math.max(
-          0,
-          Math.round(layer.count * background.movingObjectsDensity),
-        ),
-        driftX: layer.driftX * background.movingObjectsSpeed,
-        driftY: layer.driftY * background.movingObjectsSpeed,
-        kind: "movingObjects" as const,
-        size: layer.size * background.movingObjectsSize,
-        twinkleAmount: 0.18,
-        warmColor,
-      })),
-    );
-  }
-
   return configs;
 };
 
@@ -317,14 +285,14 @@ export const CACHE_ICON_KEYS = [
   "heavyAmmo",
   "seekerPack",
   "repair",
-  "boostCharge",
   "shieldExt",
   "foresightExt",
-  "wildcard",
+  "wildcardGravityPulse",
+  "wildcardCloak",
 ] as const satisfies readonly CacheIconKey[];
 
-const STARFIELD_RADIUS = ARENA_RADIUS * 2.35;
-const STARFIELD_TILE_SIZE = STARFIELD_RADIUS * 2;
+const getStarfieldRadius = (): number => ARENA_RADIUS * 2.35;
+const getStarfieldTileSize = (): number => getStarfieldRadius() * 2;
 const CACHE_BADGE_CELL_SIZE = 160;
 
 const CACHE_ICON_PRESENTATION: Record<
@@ -338,39 +306,45 @@ const CACHE_ICON_PRESENTATION: Record<
   heavyAmmo: {
     accent: "#ff8b49",
     label: "HEAVY",
-    shape: "hex",
+    shape: "cache",
   },
   seekerPack: {
     accent: "#ff61eb",
     label: "SEEKER",
-    shape: "diamond",
+    shape: "cache",
   },
   repair: {
     accent: "#88f1b6",
     label: "REPAIR",
-    shape: "octagon",
-  },
-  boostCharge: {
-    accent: "#82c8ff",
-    label: "BOOST",
-    shape: "bolt",
+    shape: "cache",
   },
   shieldExt: {
     accent: "#86ecff",
     label: "SHIELD",
-    shape: "shield",
+    shape: "cache",
   },
   foresightExt: {
     accent: "#ffe28b",
-    label: "SIGHT",
-    shape: "chevron",
+    label: "SIGHT+",
+    shape: "cache",
   },
-  wildcard: {
-    accent: "#ffd37a",
-    label: "WILD",
-    shape: "star",
+  wildcardGravityPulse: {
+    accent: "#ffbf7d",
+    label: "PULSE",
+    shape: "cache",
+  },
+  wildcardCloak: {
+    accent: "#92f0ff",
+    label: "CLOAK",
+    shape: "cache",
   },
 };
+
+export const getCacheIconAccent = (key: CacheIconKey): string =>
+  CACHE_ICON_PRESENTATION[key].accent;
+
+export const getCacheIconLabel = (key: CacheIconKey): string =>
+  CACHE_ICON_PRESENTATION[key].label;
 
 export const wrapCentered = (value: number, span: number): number => {
   if (!(span > 0)) {
@@ -471,11 +445,41 @@ const PLANET_SPIN_TILT_MIN_Y = -0.72;
 const PLANET_SPIN_TILT_MAX_Y = 0.72;
 
 const clampUnit = (value: number): number => Math.min(1, Math.max(0, value));
+const getBackdropParallaxOffset = (cameraFollow: number): number =>
+  1 - cameraFollow;
+
+export const syncBackdropFrame = ({
+  backdropMesh,
+  centerX,
+  centerY,
+  height,
+  width,
+}: {
+  backdropMesh: Mesh | null;
+  centerX: number;
+  centerY: number;
+  height: number;
+  width: number;
+}) => {
+  if (backdropMesh === null) {
+    return;
+  }
+
+  backdropMesh.position.set(centerX, centerY, -40);
+  backdropMesh.scale.set(width, height, 1);
+
+  const material = backdropMesh.material as Partial<BackdropMaterial>;
+  material.parallaxOffsetUniform?.value.set(
+    centerX / Math.max(width, MIN_BACKDROP_WORLD_SPAN),
+    centerY / Math.max(height, MIN_BACKDROP_WORLD_SPAN),
+  );
+};
 
 export const createBackdropMaterial = (
   background: BackgroundVisualTuning,
-): MeshBasicNodeMaterial => {
-  const material = new MeshBasicNodeMaterial();
+): BackdropMaterial => {
+  const material = new MeshBasicNodeMaterial() as BackdropMaterial;
+  material.parallaxOffsetUniform = uniform(new Vector2(0, 0));
   const surfaceUv = uv();
   const backdropTime = time.mul(0.02);
   const glowNoise = mx_fractal_noise_float(
@@ -495,9 +499,14 @@ export const createBackdropMaterial = (
 
   if (background.nebulaEnabled && background.nebulaStrength > 0) {
     const nebulaTime = time.mul(0.012 + background.nebulaDrift * 0.01);
+    const nebulaUv = surfaceUv.add(
+      material.parallaxOffsetUniform.mul(
+        getBackdropParallaxOffset(NEBULA_CAMERA_FOLLOW),
+      ),
+    );
     const nebulaNoise = mx_fractal_noise_float(
       vec3(
-        surfaceUv
+        nebulaUv
           .mul(vec2(2.1, 1.3).mul(background.nebulaScale))
           .add(vec2(nebulaTime.mul(0.5), nebulaTime.mul(-0.22))),
         nebulaTime.mul(0.42),
@@ -510,7 +519,7 @@ export const createBackdropMaterial = (
       .mul(0.5)
       .add(0.5);
     const nebulaMask = smoothstep(0.5, 0.88, nebulaNoise).mul(
-      float(1).sub(smoothstep(0.18, 1.08, abs(surfaceUv.y.sub(0.36)).mul(2.1))),
+      float(1).sub(smoothstep(0.18, 1.08, abs(nebulaUv.y.sub(0.36)).mul(2.1))),
     );
 
     backdropColor = mix(
@@ -525,8 +534,13 @@ export const createBackdropMaterial = (
   }
 
   if (background.distantBodiesEnabled && background.distantBodiesOpacity > 0) {
+    const distantBodiesUv = surfaceUv.add(
+      material.parallaxOffsetUniform.mul(
+        getBackdropParallaxOffset(DISTANT_BODIES_CAMERA_FOLLOW),
+      ),
+    );
     const bodyCenterA = vec2(1.08, 0.16);
-    const bodyDistanceA = length(surfaceUv.sub(bodyCenterA));
+    const bodyDistanceA = length(distantBodiesUv.sub(bodyCenterA));
     const bodyFillA = float(1).sub(
       smoothstep(
         0.46 * background.distantBodiesScale,
@@ -548,7 +562,7 @@ export const createBackdropMaterial = (
       ),
     );
     const bodyCenterB = vec2(-0.18, 0.9);
-    const bodyDistanceB = length(surfaceUv.sub(bodyCenterB));
+    const bodyDistanceB = length(distantBodiesUv.sub(bodyCenterB));
     const bodyFillB = float(1).sub(
       smoothstep(
         0.18 * background.distantBodiesScale,
@@ -568,54 +582,6 @@ export const createBackdropMaterial = (
     )
       .add(rimColor.mul(bodyRimA).mul(background.distantBodiesOpacity * 0.16))
       .add(rimColor.mul(bodyFillB).mul(background.distantBodiesOpacity * 0.12));
-  }
-
-  if (
-    background.movingObjectsEnabled &&
-    background.movingObjectsBrightness > 0
-  ) {
-    const moverTime = time.mul(0.09 + background.movingObjectsSpeed * 0.08);
-    const moverThreshold = Math.max(
-      0.82,
-      0.94 - background.movingObjectsDensity * 0.04,
-    );
-    const moverFieldA = mx_cell_noise_float(
-      vec3(
-        vec2(
-          surfaceUv.x
-            .mul(6 + background.movingObjectsDensity * 4)
-            .add(surfaceUv.y.mul(24))
-            .sub(moverTime.mul(8.2)),
-          surfaceUv.y.mul(40).add(surfaceUv.x.mul(5.4)).add(moverTime.mul(3.4)),
-        ),
-        2.8,
-      ),
-    )
-      .mul(0.5)
-      .add(0.5);
-    const moverFieldB = mx_cell_noise_float(
-      vec3(
-        vec2(
-          surfaceUv.x.mul(5.2).sub(surfaceUv.y.mul(18)).add(moverTime.mul(6.4)),
-          surfaceUv.y
-            .mul(34 + background.movingObjectsDensity * 5)
-            .add(surfaceUv.x.mul(9.8))
-            .sub(moverTime.mul(2.6)),
-        ),
-        7.6,
-      ),
-    )
-      .mul(0.5)
-      .add(0.5);
-    const moverMask = smoothstep(moverThreshold, 0.995, moverFieldA).add(
-      smoothstep(moverThreshold + 0.015, 0.998, moverFieldB).mul(0.75),
-    );
-
-    backdropColor = backdropColor.add(
-      mix(color(background.glowColor), color("#fff8e3"), glowNoise)
-        .mul(moverMask)
-        .mul(background.movingObjectsBrightness * 0.18),
-    );
   }
 
   if (background.eventsEnabled && background.eventsIntensity > 0) {
@@ -676,7 +642,8 @@ export const getPlanetForestProfile = (
   archetype: string,
   planetId: number,
 ): { color: string; coverage: number } => {
-  const archetypeProfiles = getRuntimeTuningDocument().visuals.planets.archetypes;
+  const archetypeProfiles =
+    getRuntimeTuningDocument().visuals.planets.archetypes;
   const profile =
     archetypeProfiles[archetype as keyof typeof archetypeProfiles];
   if (profile === undefined) {
@@ -821,8 +788,13 @@ export const createPlanetMaterial = (
     color: string;
     coverage: number;
   },
-): MeshBasicNodeMaterial => {
-  const material = new MeshBasicNodeMaterial();
+): PlanetSurfaceMaterial => {
+  const opacityUniform = uniform(1);
+  const material = new MeshBasicNodeMaterial() as PlanetSurfaceMaterial;
+  material.transparent = true;
+  material.opacityNode = opacityUniform;
+  material.opacityUniform = opacityUniform;
+  material.alphaTest = 0.01;
   const forestCoverage =
     forestProfile?.coverage ?? planetVisuals.forestCoverage;
   const forestColorHex = forestProfile?.color ?? planetVisuals.forestColor;
@@ -859,9 +831,9 @@ export const createPlanetMaterial = (
     seedNode.mul(5.3),
   );
   const continents = mx_fractal_noise_float(
-    dir.mul(PLANET_CONTINENTS_SCALE * planetVisuals.continentsScale).add(
-      seedOffset,
-    ),
+    dir
+      .mul(PLANET_CONTINENTS_SCALE * planetVisuals.continentsScale)
+      .add(seedOffset),
     PLANET_CONTINENTS_OCTAVES,
     PLANET_CONTINENTS_LACUNARITY,
     PLANET_CONTINENTS_GAIN,
@@ -887,12 +859,18 @@ export const createPlanetMaterial = (
   )
     .mul(0.5)
     .add(0.5);
-  const landMask = smoothstep(PLANET_LAND_MASK_START, PLANET_LAND_MASK_END, continents);
+  const landMask = smoothstep(
+    PLANET_LAND_MASK_START,
+    PLANET_LAND_MASK_END,
+    continents,
+  );
   const height = mix(
     continents.mul(PLANET_HEIGHT_OCEAN_SCALE),
     continents
       .mul(PLANET_HEIGHT_LAND_SCALE)
-      .add(mountains.mul(PLANET_MOUNTAIN_HEIGHT * planetVisuals.mountainHeight)),
+      .add(
+        mountains.mul(PLANET_MOUNTAIN_HEIGHT * planetVisuals.mountainHeight),
+      ),
     landMask,
   );
   const aboveSea = max(height.sub(planetVisuals.seaLevel), float(0));
@@ -906,7 +884,11 @@ export const createPlanetMaterial = (
     PLANET_LAND_ELEVATION_END,
     height,
   );
-  const oceanDepthMask = smoothstep(PLANET_OCEAN_DEPTH_START, PLANET_OCEAN_DEPTH_END, height);
+  const oceanDepthMask = smoothstep(
+    PLANET_OCEAN_DEPTH_START,
+    PLANET_OCEAN_DEPTH_END,
+    height,
+  );
   const oceanCol = mix(color(oceanShallow), color(oceanDeep), oceanDepthMask);
   const forestTint = mix(color(lowland), color(base), detail);
   const lowToHigh = mix(
@@ -966,8 +948,16 @@ export const createPlanetMaterial = (
   const worldNormal = normalize(normalWorld);
   const nDotL = max(dot(worldNormal, lightDir), float(0));
   const lambert = smoothstep(float(0), float(1), nDotL);
-  const shading = mix(float(PLANET_LAMBERT_MIN), float(PLANET_LAMBERT_MAX), lambert);
-  const heightAO = mix(float(PLANET_AO_MIN), float(PLANET_AO_MAX), landElevation);
+  const shading = mix(
+    float(PLANET_LAMBERT_MIN),
+    float(PLANET_LAMBERT_MAX),
+    lambert,
+  );
+  const heightAO = mix(
+    float(PLANET_AO_MIN),
+    float(PLANET_AO_MAX),
+    landElevation,
+  );
   const viewFacing = max(dot(worldNormal, vec3(0, 0, 1)), float(0));
   const rim = pow(float(1).sub(viewFacing), PLANET_RIM_POWER).mul(
     PLANET_RIM_STRENGTH,
@@ -1020,7 +1010,10 @@ const getPlanetAuraRingStops = (
   );
   const contactStart = Math.min(
     riseStart - 0.001,
-    Math.max(0.001, innerEdge - innerFeather * PLANET_AURA_CONTACT_FEATHER_SCALE),
+    Math.max(
+      0.001,
+      innerEdge - innerFeather * PLANET_AURA_CONTACT_FEATHER_SCALE,
+    ),
   );
   const remaining = Math.max(PLANET_AURA_MIN_REMAINING, 1 - innerEdge);
   const riseEnd = innerEdge;
@@ -1046,6 +1039,7 @@ export const createPlanetGlowMaterial = (
   auraScale: number,
   auraGap: number,
 ): PlanetGlowMaterialNodes => {
+  const opacityUniform = uniform(1);
   const material = new MeshBasicNodeMaterial({
     transparent: true,
     depthWrite: false,
@@ -1093,14 +1087,17 @@ export const createPlanetGlowMaterial = (
     mix(color(innerGlow), color(outerGlow), haloBlend)
       .mul(haloMask)
       .mul(pulse)
+      .mul(opacityUniform)
       .mul(PLANET_AURA_BRIGHTNESS),
-    haloMask.mul(PLANET_AURA_ALPHA).mul(pulse),
+    haloMask.mul(PLANET_AURA_ALPHA).mul(pulse).mul(opacityUniform),
   );
+  material.alphaTest = 0.01;
 
   return {
     contactStartNode,
     fadeStartNode,
     material,
+    opacityUniform,
     riseEndNode,
     riseStartNode,
   };
@@ -1256,6 +1253,7 @@ export const createBackgroundLayer = (
 ): BackgroundParallaxLayerVisual => {
   const { alphaScale, colorVariance, coolColor, count, driftX, driftY, kind } =
     config;
+  const starfieldTileSize = getStarfieldTileSize();
   const geometry = new BufferGeometry();
   const positions = new Float32Array(count * 3);
   const alpha = new Float32Array(count);
@@ -1265,8 +1263,8 @@ export const createBackgroundLayer = (
 
   for (let index = 0; index < count; index += 1) {
     const offset = index * 3;
-    positions[offset] = (Math.random() - 0.5) * STARFIELD_TILE_SIZE;
-    positions[offset + 1] = (Math.random() - 0.5) * STARFIELD_TILE_SIZE;
+    positions[offset] = (Math.random() - 0.5) * starfieldTileSize;
+    positions[offset + 1] = (Math.random() - 0.5) * starfieldTileSize;
     positions[offset + 2] = 0;
     alpha[index] = alphaScale * (0.42 + Math.random() * 0.58);
     tint[index] = Math.random();
@@ -1300,14 +1298,7 @@ export const createBackgroundLayer = (
     .mul(0.26 * config.twinkleAmount)
     .add(1 - 0.18 * config.twinkleAmount);
 
-  if (kind === "movingObjects") {
-    material.colorNode = mix(
-      color(coolColor),
-      color(config.warmColor),
-      particleTint,
-    ).mul(1.2);
-    material.opacityNode = particleAlpha.mul(twinkle);
-  } else if (kind === "dust") {
+  if (kind === "dust") {
     material.colorNode = mix(
       color(coolColor),
       color(config.warmColor),
@@ -1331,13 +1322,12 @@ export const createBackgroundLayer = (
     for (let tileX = -1; tileX <= 1; tileX += 1) {
       const points = new Points(geometry, material);
       points.position.set(
-        tileX * STARFIELD_TILE_SIZE,
-        tileY * STARFIELD_TILE_SIZE,
+        tileX * starfieldTileSize,
+        tileY * starfieldTileSize,
         config.z,
       );
       points.frustumCulled = false;
-      points.renderOrder =
-        kind === "dust" ? -28 : kind === "movingObjects" ? -24 : -25;
+      points.renderOrder = kind === "dust" ? -28 : -25;
       group.add(points);
     }
   }
@@ -1349,7 +1339,7 @@ export const createBackgroundLayer = (
     group,
     material,
     parallax: config.parallax,
-    tileSize: STARFIELD_TILE_SIZE,
+    tileSize: starfieldTileSize,
   };
 };
 
@@ -1436,6 +1426,16 @@ const traceCacheBadgeShape = (
   const height = size * 0.64;
 
   switch (shape) {
+    case "cache":
+      fillRoundedRect(
+        context,
+        -size * 0.34,
+        -size * 0.34,
+        size * 0.68,
+        size * 0.68,
+        size * 0.11,
+      );
+      return;
     case "hex":
       tracePolygon(context, [
         { x: 0, y: -height },
@@ -1558,17 +1558,6 @@ const drawCacheIconGlyph = (
       context.fillRect(-1.2 * unit, -4 * unit, 2.4 * unit, 8 * unit);
       context.fillRect(-4 * unit, -1.2 * unit, 8 * unit, 2.4 * unit);
       break;
-    case "boostCharge":
-      context.beginPath();
-      context.moveTo(-1.2 * unit, -6.2 * unit);
-      context.lineTo(3.6 * unit, -1.3 * unit);
-      context.lineTo(0.6 * unit, -1.3 * unit);
-      context.lineTo(2.1 * unit, 6.1 * unit);
-      context.lineTo(-3.8 * unit, 0.9 * unit);
-      context.lineTo(-0.7 * unit, 0.9 * unit);
-      context.closePath();
-      context.fill();
-      break;
     case "shieldExt":
       context.beginPath();
       context.moveTo(0, -6.2 * unit);
@@ -1595,7 +1584,7 @@ const drawCacheIconGlyph = (
       context.arc(0, 0, 0.9 * unit, 0, Math.PI * 2);
       context.fill();
       break;
-    case "wildcard":
+    case "wildcardGravityPulse":
       traceStar(context, 5.8 * unit, 2.4 * unit, 5);
       context.stroke();
       context.fillStyle = "#fff3d8";
@@ -1603,6 +1592,15 @@ const drawCacheIconGlyph = (
       context.textAlign = "center";
       context.textBaseline = "middle";
       context.fillText("?", 0, 0.6 * unit);
+      break;
+    case "wildcardCloak":
+      context.beginPath();
+      context.arc(0, 0, 5.8 * unit, 0, Math.PI * 2);
+      context.stroke();
+      context.beginPath();
+      context.moveTo(-4.8 * unit, 4.8 * unit);
+      context.lineTo(4.8 * unit, -4.8 * unit);
+      context.stroke();
       break;
   }
 
@@ -1644,6 +1642,50 @@ const drawCacheBadgeTile = (
   context.strokeStyle = accent;
   traceCacheBadgeShape(context, shape, size);
   context.stroke();
+
+  if (shape === "cache") {
+    context.save();
+    context.fillStyle = "rgba(255, 255, 255, 0.05)";
+    fillRoundedRect(
+      context,
+      -size * 0.26,
+      -size * 0.22,
+      size * 0.52,
+      size * 0.38,
+      size * 0.06,
+    );
+    context.fill();
+    context.fillStyle = `${accent}22`;
+    fillRoundedRect(
+      context,
+      -size * 0.21,
+      -size * 0.27,
+      size * 0.42,
+      size * 0.07,
+      size * 0.03,
+    );
+    context.fill();
+    context.fillStyle = accent;
+    fillRoundedRect(
+      context,
+      -size * 0.26,
+      size * 0.2,
+      size * 0.08,
+      size * 0.04,
+      size * 0.015,
+    );
+    context.fill();
+    fillRoundedRect(
+      context,
+      size * 0.18,
+      size * 0.2,
+      size * 0.08,
+      size * 0.04,
+      size * 0.015,
+    );
+    context.fill();
+    context.restore();
+  }
 
   context.save();
   context.globalAlpha = 0.12;
@@ -1718,4 +1760,8 @@ export const createCacheBadgeSpriteMaterial = (
 };
 
 export const getCacheIconKey = (contents: CacheContents): CacheIconKey =>
-  contents.kind === "wildcard" ? "wildcard" : contents.kind;
+  contents.kind === "wildcard"
+    ? contents.wildcard.kind === "gravityPulse"
+      ? "wildcardGravityPulse"
+      : "wildcardCloak"
+    : contents.kind;

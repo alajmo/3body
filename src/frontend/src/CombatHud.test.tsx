@@ -59,6 +59,33 @@ describe("CombatHud", () => {
           text: "Player tagged Bot II",
         },
       ],
+      minimap: {
+        arenaRadius: 2500,
+        entities: [
+          {
+            highlighted: false,
+            id: 11,
+            kind: "sun",
+            pos: { x: 0, y: 0 },
+            radius: 180,
+          },
+          {
+            highlighted: true,
+            id: 12,
+            kind: "planet",
+            pos: { x: 460, y: 220 },
+            radius: 72,
+          },
+          {
+            highlighted: false,
+            id: 13,
+            kind: "cache",
+            pos: { x: -620, y: 180 },
+            radius: 36,
+          },
+        ],
+        extentRadius: 2500,
+      },
       abilities: [
         {
           id: "shield" as const,
@@ -108,7 +135,7 @@ describe("CombatHud", () => {
       ],
     };
 
-    render(
+    const { container } = render(
       <CombatHud
         controller={createControllerMock()}
         hud={hud}
@@ -133,17 +160,26 @@ describe("CombatHud", () => {
     expect(
       screen.getByRole("img", { name: "Compass heading NE · 45°" }),
     ).toBeInTheDocument();
+    expect(
+      container.querySelector(".combat-hud__movement-hud .movement-hud"),
+    ).not.toBeNull();
     const summaryCards = Array.from(
       document.querySelectorAll(".cockpit-summary-grid .cockpit-summary"),
     ) as HTMLElement[];
     expect(summaryCards).toHaveLength(1);
     expect(within(summaryCards[0]!).getByText("Health")).toBeInTheDocument();
     expect(screen.getByText("Player tagged Bot II")).toBeInTheDocument();
+    expect(
+      container.querySelector(".combat-hud__kill-feed .kill-feed"),
+    ).not.toBeNull();
     expect(screen.getByText("Phase Shield")).toBeInTheDocument();
     expect(screen.getByText("Seeker")).toBeInTheDocument();
     const shortcutsDock = document.querySelector(
       ".shortcuts-dock",
     ) as HTMLElement;
+    const shortcutSections = Array.from(
+      shortcutsDock.querySelectorAll(".shortcuts-dock__section"),
+    ) as HTMLElement[];
     const lightCard = screen
       .getByText("Light")
       .closest(".weapon-card") as HTMLElement;
@@ -156,6 +192,12 @@ describe("CombatHud", () => {
     expect(within(lightCard).getByText("∞")).toBeInTheDocument();
     expect(within(heavyCard).getByText("4")).toBeInTheDocument();
     expect(within(seekerCard).getByText("7")).toBeInTheDocument();
+    expect(shortcutSections).toHaveLength(3);
+    expect(within(shortcutSections[0]!).getByText("Health")).toBeInTheDocument();
+    expect(within(shortcutSections[1]!).getByText("Seeker")).toBeInTheDocument();
+    expect(
+      within(shortcutSections[2]!).getByText("Phase Shield"),
+    ).toBeInTheDocument();
     expect(
       within(shortcutsDock).queryByText("Abilities"),
     ).not.toBeInTheDocument();
@@ -166,7 +208,50 @@ describe("CombatHud", () => {
     expect(
       screen.getByText("now 8.10 · avg 7.92 · max 11.44"),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Pause" })).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("img", { name: /Delayed world minimap/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Pause" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the minimap empty until the first scan pass reaches entities", () => {
+    const { container } = render(
+      <CombatHud
+        controller={createControllerMock()}
+        hud={{
+          ...createInitialHudState(),
+          minimap: {
+            arenaRadius: 2500,
+            entities: [
+              {
+                highlighted: false,
+                id: 11,
+                kind: "sun",
+                pos: { x: 0, y: 0 },
+                radius: 180,
+              },
+              {
+                highlighted: true,
+                id: 12,
+                kind: "planet",
+                pos: { x: 460, y: 220 },
+                radius: 72,
+              },
+            ],
+            extentRadius: 2500,
+          },
+        }}
+        hudTuning={HUD_TUNING}
+        showPerformanceTools
+      />,
+    );
+
+    expect(
+      screen.getByRole("img", { name: /Delayed world minimap/i }),
+    ).toBeInTheDocument();
+    expect(container.querySelectorAll(".minimap__entity")).toHaveLength(0);
   });
 
   it("wires local playback and profiler controls to the viewport controller", () => {

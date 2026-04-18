@@ -13,10 +13,12 @@ import {
   type PlanetPublic,
   type RocketKind,
   type SnapshotEvent,
+  type WildcardKind,
   type World,
 } from "@3body/shared";
 import type { AuthoritativeEventRecord } from "../authoritativeMatchRuntime";
 import {
+  createHudMinimapState,
   createInitialHudState,
   getPlayerMotionHud,
   type GameViewportConnectionState,
@@ -35,6 +37,15 @@ const WEAPON_LABELS: Record<RocketKind, string> = {
   heavy: "Heavy",
   light: "Light",
   seeker: "Seeker",
+};
+
+const describeWildcard = (wildcard: WildcardKind): string => {
+  switch (wildcard) {
+    case "gravityPulse":
+      return "Gravity Pulse";
+    case "cloak":
+      return "Cloak";
+  }
 };
 
 const getShieldDisplayCapacity = (planet: PlanetPublic): number => {
@@ -163,10 +174,8 @@ const describeCacheContents = (
   }
 
   switch (contents.kind) {
-    case "boostCharge":
-      return "Boost Charge";
     case "foresightExt":
-      return "Foresight Ext";
+      return "Foresight Max";
     case "heavyAmmo":
       return "Heavy Ammo";
     case "repair":
@@ -176,7 +185,7 @@ const describeCacheContents = (
     case "shieldExt":
       return "Shield Ext";
     case "wildcard":
-      return `Wildcard: ${contents.wildcard.kind}`;
+      return `Wildcard: ${describeWildcard(contents.wildcard.kind)}`;
   }
 };
 
@@ -219,7 +228,7 @@ const describeEvent = (
     }
     case "wildcardUse": {
       const player = rosterNameByPlayerId.get(event.playerId) ?? "Unknown";
-      return `${player} used ${event.wildcard}`;
+      return `${player} used ${describeWildcard(event.wildcard)}`;
     }
     default:
       return null;
@@ -305,9 +314,14 @@ const buildContextualShortcuts = (
           label: "Boost",
         },
         {
-          id: "wildcard",
-          keyLabel: "R",
-          label: "Wildcard",
+          id: "gravityPulse",
+          keyLabel: "G",
+          label: "Gravity Pulse",
+        },
+        {
+          id: "cloak",
+          keyLabel: "C",
+          label: "Cloak",
         },
       ]
     : [];
@@ -469,15 +483,28 @@ export const buildAuthoritativeHudState = ({
       }),
     );
 
-    if (self.wildcardSlot !== undefined) {
+    if (self.gravityPulseHeld) {
       abilities.push(
         buildAbility({
           accent: tuning.visuals.abilities.wildcardColor,
-          id: "wildcard",
-          keyLabel: "R",
-          label: "Wildcard",
+          id: "gravityPulse",
+          keyLabel: "G",
+          label: "Gravity Pulse",
           mode: "ready",
-          statusText: self.wildcardSlot,
+          statusText: "Gravity Pulse",
+        }),
+      );
+    }
+
+    if (self.cloakHeld) {
+      abilities.push(
+        buildAbility({
+          accent: tuning.visuals.abilities.wildcardColor,
+          id: "cloak",
+          keyLabel: "C",
+          label: "Cloak",
+          mode: "ready",
+          statusText: "Cloak",
         }),
       );
     }
@@ -527,6 +554,18 @@ export const buildAuthoritativeHudState = ({
             selected: kind === selectedWeapon,
           })),
         ];
+  const highlightedMinimapEntity =
+    activeDrone !== null
+      ? {
+          id: activeDrone.id,
+          kind: "drone" as const,
+        }
+      : playerPlanet !== null
+        ? {
+            id: playerPlanet.id,
+            kind: "planet" as const,
+          }
+        : null;
 
   return {
     ...initialHudState,
@@ -557,6 +596,18 @@ export const buildAuthoritativeHudState = ({
     foresightSettings: { ...foresightSettings },
     hudOpacity: 1,
     killFeed,
+    minimap:
+      world === null
+        ? initialHudState.minimap
+        : createHudMinimapState({
+            arenaRadius: world.arenaRadius,
+            blackHole: world.blackHole,
+            caches: world.caches,
+            drones: world.drones,
+            highlightedEntity: highlightedMinimapEntity,
+            planets: world.planets,
+            suns: world.suns,
+          }),
     planetAuraGap:
       playerPlanetVisuals?.auraGap ?? initialHudState.planetAuraGap,
     planetAuraScale:

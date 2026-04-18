@@ -3,6 +3,8 @@ import {
   FIXED_STEP_SEC,
   add,
   clamp,
+  getOrbitSystemDriftVelocity,
+  getSunVisualProfile,
   len,
   lerp,
   mulberry32,
@@ -40,7 +42,6 @@ import type {
 import { getSandboxDebugSnapshot } from "../combatSandbox";
 import {
   getPlanetArchetypeVisuals,
-  getPlanetBodyScaleForArchetype,
   getRenderedPlanetRadius,
 } from "../planetVisualTuning";
 import {
@@ -62,6 +63,12 @@ import type {
   CacheSpriteMaterialMap,
   CacheVisual,
 } from "./cacheVisuals";
+import { getCacheArenaBadgeSize } from "./cacheVisuals";
+import {
+  type AmbientBoundaryDebrisVisual,
+  getAmbientBoundaryDebrisRadii,
+  updateAmbientBoundaryDebrisVisual,
+} from "./ambientBoundaryDebris";
 import {
   clipForesightPathAtDistance,
   getForesightPointOpacity,
@@ -69,12 +76,21 @@ import {
 import { getRenderedShieldOuterRadius } from "../shieldPresentation";
 import type { LocalViewportCameraState } from "./localViewportCamera";
 import { getLocalViewportControlledBody } from "./localViewportCamera";
-import { getLocalSandboxLockProgress } from "./localSandboxSimulation";
+import {
+  CLOAK_FADE_TAIL_SEC,
+  getCloakPlanetOpacity,
+  getCloakRemainingSec,
+} from "./cloakVisual";
+import {
+  getLocalSandboxLockProgress,
+  type LocalSandboxGravityPulseState,
+} from "./localSandboxSimulation";
 import type { ViewportRenderQualityProfile } from "./renderQuality";
 
 const ROCKET_TRAIL_DURATION_SEC = 0.18;
 const ROCKET_TRAIL_SAMPLE_DISTANCE = 18;
 const BOOST_BURST_DURATION_SEC = 0.48;
+const GRAVITY_PULSE_VISUAL_DURATION_SEC = 0.95;
 const PLANET_EXPLOSION_DURATION_SEC = 1.55;
 const PLANET_EXPLOSION_FLASH_DURATION_SEC = 0.34;
 const PLANET_EXPLOSION_RING_DURATION_SEC = 0.78;
@@ -114,10 +130,12 @@ interface PlanetVisual {
   glowContactStartNode: { value: unknown };
   glowFadeStartNode: { value: unknown };
   glowMesh: Mesh;
+  glowOpacityUniform: { value: unknown };
   glowRiseEndNode: { value: unknown };
   glowRiseStartNode: { value: unknown };
   mesh: Mesh;
   rotationSpeed: number;
+  surfaceOpacityUniform: { value: unknown };
   spinAxis: Vector3;
   spinPhase: number;
 }
@@ -177,6 +195,8 @@ interface DebrisVisual {
   positionAttribute: Float32BufferAttribute;
 }
 
+interface BoundaryDebrisVisual extends AmbientBoundaryDebrisVisual {}
+
 interface ForesightVisual {
   line: Line;
   lineGeometry: {
@@ -220,10 +240,26 @@ interface BoostBurstVisual {
   wakeMesh: Mesh;
 }
 
+interface GravityPulseVisual {
+  coreMaterial: MeshBasicMaterial;
+  coreMesh: Mesh;
+  echoMaterial: MeshBasicMaterial;
+  echoMesh: Mesh;
+  ringMaterial: MeshBasicMaterial;
+  ringMesh: Mesh;
+}
+
 interface ImpactBurstVisual {
   coreMesh: Mesh;
   glowMesh: Mesh;
   ringMesh: Mesh;
+}
+
+interface CloakVisual {
+  ringMaterial: MeshBasicMaterial;
+  ringMesh: Mesh;
+  veilMaterial: MeshBasicMaterial;
+  veilMesh: Mesh;
 }
 
 interface PlanetExplosionChunkVisual {
@@ -278,8 +314,6 @@ interface CannonFireState {
 }
 
 const getRuntimeVisuals = () => getRuntimeTuningDocument().visuals;
-const getSunGlowScale = () => getRuntimeVisuals().suns.glowScale;
-const getSunWarpScale = () => getRuntimeVisuals().suns.warpScale;
 const getForesightPathTuning = () => getRuntimeVisuals().abilities.foresight;
 const getCacheBadgeBaseSize = () => getRuntimeVisuals().caches.badgeBaseSize;
 const getDroneColor = () => getRuntimeVisuals().drone.activeColor;
@@ -459,7 +493,7 @@ const getBoostBurstAnchor = (
 
   return {
     origin: burst.origin,
-    radius: burst.radius * getPlanetBodyScaleForArchetype(burst.planetArchetype),
+    radius: burst.radius,
   };
 };
 
@@ -648,6 +682,125 @@ const updateBoostBurstVisual = (
   }
 };
 
+const hideGravityPulseVisual = (visual: GravityPulseVisual) => {
+  visual.coreMesh.visible = false;
+  visual.ringMesh.visible = false;
+  visual.echoMesh.visible = false;
+  visual.coreMaterial.opacity = 0;
+  visual.ringMaterial.opacity = 0;
+  visual.echoMaterial.opacity = 0;
+};
+
+const updateGravityPulseVisual = (
+  visual: GravityPulseVisual,
+  pulse: LocalSandboxGravityPulseState | null,
+  nowSec: number,
+  visibleWorldHeight = FOLLOW_VIEW_WORLD_HEIGHT,
+) => {
+  if (pulse === null) {
+    hideGravityPulseVisual(visual);
+    return;
+  }
+
+  const ageSec = nowSec - pulse.startedAtSec;
+  if (ageSec < 0 || ageSec > GRAVITY_PULSE_VISUAL_DURATION_SEC) {
+    hideGravityPulseVisual(visual);
+    return;
+  }
+
+  const progress = clamp(ageSec / GRAVITY_PULSE_VISUAL_DURATION_SEC, 0, 1);
+  const fade = (1 - progress) ** 1.6;
+  const visiblePulseRadius = Math.min(
+    pulse.effectRadius,
+    Math.max(pulse.planetRadius * 6, visibleWorldHeight * 0.42),
+  );
+  const primaryRadius = lerp(
+    pulse.planetRadius * 1.25,
+    visiblePulseRadius,
+    progress,
+  );
+  const echoRadius = lerp(
+    pulse.planetRadius * 1.55,
+    visiblePulseRadius * 0.88,
+    progress,
+  );
+  const coreRadius = lerp(
+    pulse.planetRadius * 1.2,
+    pulse.planetRadius * 3.6,
+    Math.min(1, progress * 1.6),
+  );
+
+  visual.coreMesh.visible = true;
+  visual.ringMesh.visible = true;
+  visual.echoMesh.visible = true;
+  visual.coreMesh.position.set(pulse.origin.x, pulse.origin.y, 2.2);
+  visual.ringMesh.position.set(pulse.origin.x, pulse.origin.y, 2.35);
+  visual.echoMesh.position.set(pulse.origin.x, pulse.origin.y, 2.3);
+  visual.coreMesh.scale.set(coreRadius, coreRadius, 1);
+  visual.ringMesh.scale.set(primaryRadius, primaryRadius, 1);
+  visual.echoMesh.scale.set(echoRadius, echoRadius, 1);
+  visual.ringMesh.rotation.z = progress * 0.42;
+  visual.echoMesh.rotation.z = -progress * 0.28;
+  visual.coreMaterial.opacity = fade * (0.28 + (1 - progress) * 0.3);
+  visual.ringMaterial.opacity = fade * 0.96;
+  visual.echoMaterial.opacity = fade * 0.56;
+};
+
+const updateCloakVisuals = (
+  visuals: readonly CloakVisual[],
+  planets: readonly CombatSandboxPlanet[],
+  currentTick: number,
+  nowSec: number,
+) => {
+  for (let index = 0; index < visuals.length; index += 1) {
+    const visual = visuals[index]!;
+    const planet = planets[index];
+    if (planet === undefined || !planet.alive) {
+      visual.veilMesh.visible = false;
+      visual.ringMesh.visible = false;
+      visual.veilMaterial.opacity = 0;
+      visual.ringMaterial.opacity = 0;
+      continue;
+    }
+
+    const remainingSec = getCloakRemainingSec(
+      planet.hideTrailUntilTick,
+      currentTick,
+    );
+    if (planet.hideTrailUntilTick <= 0 || remainingSec <= 0) {
+      visual.veilMesh.visible = false;
+      visual.ringMesh.visible = false;
+      visual.veilMaterial.opacity = 0;
+      visual.ringMaterial.opacity = 0;
+      continue;
+    }
+
+    const fadeTail = clamp(remainingSec / CLOAK_FADE_TAIL_SEC, 0, 1);
+    const pulse = 0.5 + Math.sin(nowSec * 4.4 + planet.id * 0.71) * 0.5;
+    const renderRadius = getRenderedPlanetRadius(planet);
+    const veilOpacity = (0.12 + pulse * 0.08) * fadeTail;
+    const ringOpacity = (0.18 + pulse * 0.12) * fadeTail;
+
+    visual.veilMesh.visible = veilOpacity > 0.01;
+    visual.ringMesh.visible = ringOpacity > 0.01;
+    visual.veilMesh.position.set(planet.pos.x, planet.pos.y, 0.28);
+    visual.ringMesh.position.set(planet.pos.x, planet.pos.y, 0.34);
+    visual.veilMesh.scale.set(
+      renderRadius * (1.26 + pulse * 0.08),
+      renderRadius * (1.26 + pulse * 0.08),
+      1,
+    );
+    visual.ringMesh.scale.set(
+      renderRadius * (1.58 + pulse * 0.12),
+      renderRadius * (1.58 + pulse * 0.12),
+      1,
+    );
+    visual.ringMesh.rotation.z = nowSec * 0.55 + planet.id * 0.17;
+    visual.veilMaterial.opacity = veilOpacity;
+    visual.ringMaterial.opacity = ringOpacity;
+  }
+};
+
 const hideImpactBurstVisual = (visual: ImpactBurstVisual) => {
   visual.coreMesh.visible = false;
   visual.glowMesh.visible = false;
@@ -701,10 +854,7 @@ const updateImpactBurstVisuals = (
     const ringAlpha = fade * (burst.absorbedByShield ? 0.56 : 0.44);
     const renderRadius = getRenderedPlanetRadius(planet);
     const impactSurfaceRadius = burst.absorbedByShield
-      ? getRenderedShieldOuterRadius(
-          planet.radius,
-          getPlanetBodyScaleForArchetype(planet.archetype),
-        )
+      ? getRenderedShieldOuterRadius(planet.radius)
       : renderRadius;
     const normal = len(burst.normal) > 0.001 ? burst.normal : { x: 1, y: 0 };
     const radialDrift =
@@ -1350,13 +1500,17 @@ export const queueLocalViewportPlanetExplosion = ({
 };
 
 export const resetLocalViewportSceneState = ({
+  activeGravityPulse,
   activeBoostBursts,
   boostBurstVisual,
+  boundaryDebrisVisual,
   cacheVisuals,
+  cloakVisuals,
   debrisVisual,
   disposeCacheVisual,
   droneVisual,
   foresightVisuals,
+  gravityPulseVisual,
   hiddenRocketMatrix,
   hiddenRocketPosition,
   hiddenRocketRotation,
@@ -1374,14 +1528,18 @@ export const resetLocalViewportSceneState = ({
   weaponKinds,
   currentState,
 }: {
+  activeGravityPulse: LocalSandboxGravityPulseState | null;
   activeBoostBursts: BoostBurstState[];
   boostBurstVisual: BoostBurstVisual;
+  boundaryDebrisVisual: BoundaryDebrisVisual;
   cacheVisuals: Map<number, CacheVisual>;
+  cloakVisuals: readonly CloakVisual[];
   currentState: CombatSandboxState;
   debrisVisual: DebrisVisual;
   disposeCacheVisual: (visual: CacheVisual) => void;
   droneVisual: DroneVisual;
   foresightVisuals: ReadonlyMap<number, ForesightVisual>;
+  gravityPulseVisual: GravityPulseVisual;
   hiddenRocketMatrix: Matrix4;
   hiddenRocketPosition: Vector3;
   hiddenRocketRotation: Quaternion;
@@ -1501,6 +1659,8 @@ export const resetLocalViewportSceneState = ({
 
   updateDebrisGeometry(debrisVisual, [], 0);
   debrisVisual.points.visible = false;
+  boundaryDebrisVisual.bandGroup.visible = false;
+  boundaryDebrisVisual.points.visible = false;
   const foresightPathTuning = getForesightPathTuning();
   for (const visual of foresightVisuals.values()) {
     updateForesightVisual(visual, [], foresightPathTuning);
@@ -1513,12 +1673,24 @@ export const resetLocalViewportSceneState = ({
     0,
     currentState.elapsedSec,
   );
+  updateGravityPulseVisual(
+    gravityPulseVisual,
+    activeGravityPulse,
+    currentState.elapsedSec,
+    FOLLOW_VIEW_WORLD_HEIGHT,
+  );
   updateImpactBurstVisuals(
     impactBurstVisuals,
     [],
     renderPlanetsById,
     currentState.elapsedSec,
     0,
+  );
+  updateCloakVisuals(
+    cloakVisuals,
+    currentState.planets,
+    currentState.tick,
+    currentState.elapsedSec,
   );
   shieldGroup.visible = false;
   droneVisual.group.visible = false;
@@ -1530,6 +1702,7 @@ export const resetLocalViewportSceneState = ({
 };
 
 interface UpdateLocalViewportSceneParams {
+  activeGravityPulse: LocalSandboxGravityPulseState | null;
   activeBoostBursts: BoostBurstState[];
   activeCacheIds: Set<number>;
   activeDrone: CombatSandboxDrone | null;
@@ -1539,6 +1712,7 @@ interface UpdateLocalViewportSceneParams {
   blackHoleRing: Mesh;
   boostBurstParticlesPerBurst: number;
   boostBurstVisual: BoostBurstVisual;
+  boundaryDebrisVisual: BoundaryDebrisVisual;
   cacheBadgeScale: number;
   cacheSpriteAssets: CacheSpriteAssets;
   cacheVisuals: Map<number, CacheVisual>;
@@ -1553,6 +1727,7 @@ interface UpdateLocalViewportSceneParams {
   cannonGroup: Group;
   cannonMuzzleMesh: Mesh;
   cannonStemMesh: Mesh;
+  cloakVisuals: readonly CloakVisual[];
   chromaticAberrationNode: {
     amount: { value: unknown };
     angle: { value: unknown };
@@ -1569,6 +1744,7 @@ interface UpdateLocalViewportSceneParams {
   foresightPathsByEntityId: ReadonlyMap<number, readonly Vec2[]>;
   foresightVisuals: ReadonlyMap<number, ForesightVisual>;
   getCacheIconKey: (contents: CombatSandboxCache["contents"]) => CacheIconKey;
+  gravityPulseVisual: GravityPulseVisual;
   hiddenRocketMatrix: Matrix4;
   hiddenRocketPosition: Vector3;
   hiddenRocketRotation: Quaternion;
@@ -1606,8 +1782,18 @@ interface UpdateLocalViewportSceneParams {
   scene:
     | Group
     | { add: (object: Group) => void; remove: (object: Group) => void };
-  shieldArcMaterial: MeshBasicMaterial;
-  shieldGlowMaterial: MeshBasicMaterial;
+  shieldArcOpacityUniform: {
+    value: unknown;
+  };
+  shieldPanelOpacityUniform: {
+    value: unknown;
+  };
+  shieldCrestOpacityUniform: {
+    value: unknown;
+  };
+  shieldGlowOpacityUniform: {
+    value: unknown;
+  };
   shieldGroup: Group;
   backgroundLayers: readonly StarfieldLayerVisual[];
   sunVisuals: readonly SunVisual[];
@@ -1622,6 +1808,7 @@ interface UpdateLocalViewportSceneParams {
 }
 
 export const updateLocalViewportScene = ({
+  activeGravityPulse,
   activeBoostBursts,
   activeCacheIds,
   activeDrone,
@@ -1631,6 +1818,7 @@ export const updateLocalViewportScene = ({
   blackHoleRing,
   boostBurstParticlesPerBurst,
   boostBurstVisual,
+  boundaryDebrisVisual,
   cacheBadgeScale,
   cacheSpriteAssets,
   cacheVisuals,
@@ -1645,6 +1833,7 @@ export const updateLocalViewportScene = ({
   cannonGroup,
   cannonMuzzleMesh,
   cannonStemMesh,
+  cloakVisuals,
   chromaticAberrationNode,
   controlsEnabled,
   createCacheVisual,
@@ -1655,6 +1844,7 @@ export const updateLocalViewportScene = ({
   foresightPathsByEntityId,
   foresightVisuals,
   getCacheIconKey,
+  gravityPulseVisual,
   hiddenRocketMatrix,
   hiddenRocketPosition,
   hiddenRocketRotation,
@@ -1687,8 +1877,10 @@ export const updateLocalViewportScene = ({
   rocketScale,
   rocketTrailStates,
   scene,
-  shieldArcMaterial,
-  shieldGlowMaterial,
+  shieldArcOpacityUniform,
+  shieldPanelOpacityUniform,
+  shieldCrestOpacityUniform,
+  shieldGlowOpacityUniform,
   shieldGroup,
   backgroundLayers,
   sunVisuals,
@@ -1697,13 +1889,32 @@ export const updateLocalViewportScene = ({
   updateCacheVisualBadge,
   weaponKinds,
 }: UpdateLocalViewportSceneParams) => {
+  const orbitSystemDrift = getOrbitSystemDriftVelocity(
+    getRuntimeTuningDocument().gameplay.orbits,
+  );
+  const orbitSystemDriftMagnitude = Math.hypot(
+    orbitSystemDrift.x,
+    orbitSystemDrift.y,
+  );
+
   for (const layer of backgroundLayers) {
+    const layerDriftMagnitude = Math.hypot(layer.driftX, layer.driftY);
+    const layerDriftX =
+      orbitSystemDriftMagnitude > Number.EPSILON &&
+      layerDriftMagnitude > Number.EPSILON
+        ? (orbitSystemDrift.x / orbitSystemDriftMagnitude) * layerDriftMagnitude
+        : layer.driftX;
+    const layerDriftY =
+      orbitSystemDriftMagnitude > Number.EPSILON &&
+      layerDriftMagnitude > Number.EPSILON
+        ? (orbitSystemDrift.y / orbitSystemDriftMagnitude) * layerDriftMagnitude
+        : layer.driftY;
     layer.group.position.x = wrapCentered(
-      cameraState.renderCenterX * layer.parallax + nowSec * layer.driftX,
+      cameraState.renderCenterX * layer.parallax + nowSec * layerDriftX,
       layer.tileSize,
     );
     layer.group.position.y = wrapCentered(
-      cameraState.renderCenterY * layer.parallax + nowSec * layer.driftY,
+      cameraState.renderCenterY * layer.parallax + nowSec * layerDriftY,
       layer.tileSize,
     );
   }
@@ -1711,6 +1922,7 @@ export const updateLocalViewportScene = ({
   for (let index = 0; index < sunVisuals.length; index += 1) {
     const visual = sunVisuals[index]!;
     const sun = renderState.suns[index]!;
+    const profile = getSunVisualProfile(getRuntimeVisuals().suns, index);
     const swallowFade =
       sun.swallowedAtSec === null
         ? 1
@@ -1734,19 +1946,16 @@ export const updateLocalViewportScene = ({
     visual.coreMesh.position.set(sun.pos.x, sun.pos.y, 0);
     visual.glowMesh.position.set(sun.pos.x, sun.pos.y, -2);
     visual.warpMesh.position.set(sun.pos.x, sun.pos.y, -4);
-    visual.coreMesh.scale.set(
-      sun.radius * swallowScale,
-      sun.radius * swallowScale,
-      sun.radius * swallowScale,
-    );
+    const renderedRadius = sun.radius * swallowScale;
+    visual.coreMesh.scale.set(renderedRadius, renderedRadius, renderedRadius);
     visual.glowMesh.scale.set(
-      sun.radius * getSunGlowScale() * swallowScale,
-      sun.radius * getSunGlowScale() * swallowScale,
-      sun.radius * getSunGlowScale() * swallowScale,
+      renderedRadius * profile.glowScale,
+      renderedRadius * profile.glowScale,
+      renderedRadius * profile.glowScale,
     );
     visual.warpMesh.scale.set(
-      sun.radius * getSunWarpScale() * swallowScale,
-      sun.radius * getSunWarpScale() * swallowScale,
+      renderedRadius * profile.warpScale,
+      renderedRadius * profile.warpScale,
       1,
     );
     visual.coreMesh.rotation.x = 0.38;
@@ -1759,6 +1968,10 @@ export const updateLocalViewportScene = ({
     const trail = trailVisuals[index]!;
     const planet = renderState.planets[index]!;
     const planetVisualTuning = getPlanetArchetypeVisuals(planet.archetype);
+    const planetOpacity = getCloakPlanetOpacity(
+      planet.hideTrailUntilTick,
+      renderState.tick,
+    );
     const auraRingStops = getPlanetAuraRingStops(
       planetVisualTuning.auraScale,
       planetVisualTuning.auraGap,
@@ -1766,6 +1979,8 @@ export const updateLocalViewportScene = ({
 
     visual.mesh.visible = planet.alive;
     visual.glowMesh.visible = planet.alive;
+    visual.surfaceOpacityUniform.value = planetOpacity;
+    visual.glowOpacityUniform.value = planetOpacity;
     trail.points.visible = false;
 
     if (planet.alive) {
@@ -1811,7 +2026,8 @@ export const updateLocalViewportScene = ({
       Math.sin(nowSec * visual.wobbleRate + visual.bobPhase) * 0.08;
     const pulse =
       1 + Math.sin(nowSec * visual.pulseRate + visual.bobPhase) * 0.04;
-    const badgeSize = getCacheBadgeBaseSize() * cacheBadgeScale * pulse;
+    const badgeSize =
+      getCacheArenaBadgeSize(getCacheBadgeBaseSize(), cacheBadgeScale) * pulse;
     visual.badgeSprite.scale.set(badgeSize, badgeSize, 1);
   }
 
@@ -1903,50 +2119,12 @@ export const updateLocalViewportScene = ({
       const angle = Math.atan2(rocket.vel.y, rocket.vel.x);
       const dirX = Math.cos(angle);
       const dirY = Math.sin(angle);
-      const ownerIsLocalPlayer = rocket.ownerId === renderState.player.playerId;
       const seekerPulse =
         rocketKind === "seeker"
           ? 1 + Math.sin(nowSec * 10 + count * 0.7) * 0.18
           : 1;
       const flicker = 0.82 + Math.sin(nowSec * 38 + count * 1.37) * 0.16;
-      const rocketMuzzleDistance = getCannonMuzzleDistanceFromLayout(
-        rocket.launchPlanetRadius *
-          getPlanetBodyScaleForArchetype(rocket.launchPlanetArchetype),
-        cannonLayout,
-      );
-      const rocketVisibleDistance = getRocketVisibleDistanceThreshold(
-        rocketMuzzleDistance,
-        renderBodyScale.x,
-      );
-      const rocketTravelDistance = Math.hypot(
-        rocket.pos.x - rocket.launchPlanetPos.x,
-        rocket.pos.y - rocket.launchPlanetPos.y,
-      );
-      if (ownerIsLocalPlayer && rocketTravelDistance < rocketVisibleDistance) {
-        const rocketSpawnDistance =
-          rocket.launchPlanetRadius + rocket.radius + 10;
-        const hiddenTravelProgress = clamp(
-          (rocketTravelDistance - rocketSpawnDistance) /
-            Math.max(rocketVisibleDistance - rocketSpawnDistance, 0.001),
-          0,
-          1,
-        );
-        const muzzleOrigin = getCannonMuzzleOrigin(
-          rocket.launchPlanetPos,
-          { x: dirX, y: dirY },
-          rocketMuzzleDistance,
-        );
-        const visibleTravel =
-          hiddenTravelProgress *
-          Math.max(0, rocketVisibleDistance - rocketMuzzleDistance);
-        rocketPosition.set(
-          muzzleOrigin.x + dirX * visibleTravel,
-          muzzleOrigin.y + dirY * visibleTravel,
-          0,
-        );
-      } else {
-        rocketPosition.set(rocket.pos.x, rocket.pos.y, 0);
-      }
+      rocketPosition.set(rocket.pos.x, rocket.pos.y, 0);
       const renderRocketX = rocketPosition.x;
       const renderRocketY = rocketPosition.y;
 
@@ -2251,8 +2429,7 @@ export const updateLocalViewportScene = ({
       }
 
       const burstMuzzleDistance = getCannonMuzzleDistanceFromLayout(
-        burst.launchPlanetRadius *
-          getPlanetBodyScaleForArchetype(burst.launchPlanetArchetype),
+        burst.launchPlanetRadius,
         cannonLayout,
       );
       const burstVisibleDistance = getRocketVisibleDistanceThreshold(
@@ -2324,6 +2501,19 @@ export const updateLocalViewportScene = ({
   updateDebrisGeometry(debrisVisual, renderState.debris, maxDebrisSamples);
   debrisVisual.points.visible =
     maxDebrisSamples > 0 && renderState.debris.length > 0;
+  const arenaRadius = Math.max(
+    0,
+    getRuntimeTuningDocument().gameplay.arena.radius,
+  );
+  updateAmbientBoundaryDebrisVisual({
+    ...getAmbientBoundaryDebrisRadii(arenaRadius),
+    nowSec,
+    offset: scaleVec2(
+      getOrbitSystemDriftVelocity(getRuntimeTuningDocument().gameplay.orbits),
+      renderState.elapsedSec,
+    ),
+    visual: boundaryDebrisVisual,
+  });
   while (
     activeBoostBursts.length > 0 &&
     nowSec - activeBoostBursts[0]!.startedAtSec > BOOST_BURST_DURATION_SEC
@@ -2349,12 +2539,24 @@ export const updateLocalViewportScene = ({
     boostBurstParticlesPerBurst,
     nowSec,
   );
+  updateGravityPulseVisual(
+    gravityPulseVisual,
+    activeGravityPulse,
+    nowSec,
+    cameraState.visibleWorldHeight,
+  );
   updateImpactBurstVisuals(
     impactBurstVisuals,
     renderState.impactBursts,
     renderPlanetsById,
     renderState.elapsedSec,
     maxVisibleImpactBursts,
+  );
+  updateCloakVisuals(
+    cloakVisuals,
+    renderState.planets,
+    renderState.tick,
+    nowSec,
   );
   for (let index = activePlanetExplosions.length - 1; index >= 0; index -= 1) {
     const explosion = activePlanetExplosions[index]!;
@@ -2402,19 +2604,35 @@ export const updateLocalViewportScene = ({
       1,
     );
     shieldGroup.rotation.z = shieldAngle + shieldHitReact.rotation;
-    shieldGlowMaterial.opacity = clamp(
-      0.08 +
-        shieldLoadRatio * 0.16 +
-        Math.sin(nowSec * 9.4) * 0.04 +
+    shieldGlowOpacityUniform.value = clamp(
+      0.05 +
+        shieldLoadRatio * 0.11 +
+        Math.sin(nowSec * 9.4) * 0.03 +
         shieldHitReact.glowBoost,
       0,
       1,
     );
-    shieldArcMaterial.opacity = clamp(
-      0.18 +
-        shieldLoadRatio * 0.36 +
+    shieldArcOpacityUniform.value = clamp(
+      0.16 +
+        shieldLoadRatio * 0.3 +
         Math.sin(nowSec * 7.6) * 0.05 +
         shieldHitReact.arcBoost,
+      0,
+      1,
+    );
+    shieldPanelOpacityUniform.value = clamp(
+      0.18 +
+        shieldLoadRatio * 0.42 +
+        Math.sin(nowSec * 9.8) * 0.05 +
+        shieldHitReact.arcBoost * 0.84,
+      0,
+      1,
+    );
+    shieldCrestOpacityUniform.value = clamp(
+      0.16 +
+        shieldLoadRatio * 0.36 +
+        Math.sin(nowSec * 10.8) * 0.06 +
+        shieldHitReact.arcBoost * 0.88,
       0,
       1,
     );

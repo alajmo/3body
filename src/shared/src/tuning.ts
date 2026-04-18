@@ -6,11 +6,12 @@ import type {
   BoostSpec,
   CacheSpec,
   DroneSpec,
+  GravityPulseSpec,
   MatchTimerSpec,
   RocketSpec,
 } from "./constants";
 import type { ArchetypeId, RocketKind } from "./entities";
-import type { Vec2 } from "./vec2";
+import { fromAngle, scale, type Vec2 } from "./vec2";
 
 export interface ShieldSpec extends AbilitySpec {
   arcDeg: number;
@@ -145,11 +146,18 @@ export interface PlanetVisualTuning {
   aura: PlanetAuraTuning;
 }
 
-export interface SunVisualTuning {
+export interface SunVisualProfile {
+  bodyScale: number;
+  color: string;
   coreBrightness: number;
   glowBrightness: number;
+  glowColor: string;
   glowScale: number;
   warpScale: number;
+}
+
+export interface SunVisualTuning {
+  profiles: [SunVisualProfile, SunVisualProfile, SunVisualProfile];
 }
 
 export interface BlackHoleVisualTuning {
@@ -232,6 +240,21 @@ export interface CacheVisualTuning {
   badgeScale: number;
 }
 
+export interface OrbitBoundaryDebrisVisualTuning {
+  coolColor: string;
+  density: number;
+  dustSize: number;
+  largeRockScale: number;
+  smallRockScale: number;
+  speed: number;
+  thickness: number;
+  warmColor: string;
+}
+
+export interface OrbitVisualTuning {
+  boundaryDebris: OrbitBoundaryDebrisVisualTuning;
+}
+
 export interface CannonVisualTuning {
   barrelLength: number;
   barrelWidth: number;
@@ -274,20 +297,73 @@ export interface VisualTuning {
   cannon: CannonVisualTuning;
   drone: DroneVisualTuning;
   hud: HudVisualTuning;
+  orbits: OrbitVisualTuning;
   planets: PlanetVisualTuning;
   rockets: Record<RocketKind, RocketVisualTuning>;
   suns: SunVisualTuning;
+}
+
+export interface GameplayCameraTuning {
+  readModeWorldHeight: number;
+  viewportWorldHeight: number;
+}
+
+export interface ArenaGameplayTuning {
+  instantDeath: boolean;
+  radius: number;
+}
+
+export interface OrbitSunGameplayTuning {
+  mass: number;
+  pos: Vec2;
+  radius: number;
+  vel: Vec2;
+}
+
+export interface OrbitPlanetGameplayTuning {
+  pos: Vec2;
+  radius: number;
+  vel: Vec2;
+}
+
+export interface OrbitSystemDriftGameplayTuning {
+  directionDeg: number;
+  speed: number;
+}
+
+export interface OrbitGameplayTuning {
+  sunStartDistanceScale: number;
+  planetCircleRadius: number;
+  systemDrift: OrbitSystemDriftGameplayTuning;
+  suns: [
+    OrbitSunGameplayTuning,
+    OrbitSunGameplayTuning,
+    OrbitSunGameplayTuning,
+  ];
+  planets: [
+    OrbitPlanetGameplayTuning,
+    OrbitPlanetGameplayTuning,
+    OrbitPlanetGameplayTuning,
+    OrbitPlanetGameplayTuning,
+    OrbitPlanetGameplayTuning,
+    OrbitPlanetGameplayTuning,
+    OrbitPlanetGameplayTuning,
+  ];
 }
 
 export interface GameplayTuning {
   abilities: {
     boost: BoostSpec;
     foresight: AbilitySpec;
+    gravityPulse: GravityPulseSpec;
     shield: ShieldSpec;
   };
+  arena: ArenaGameplayTuning;
   blackHole: BlackHoleSpec;
   cache: CacheSpec;
+  camera: GameplayCameraTuning;
   drone: DroneSpec;
+  orbits: OrbitGameplayTuning;
   rockets: Record<RocketKind, RocketSpec>;
   timers: MatchTimerSpec;
 }
@@ -297,6 +373,52 @@ export interface GameTuningDocument {
   version: 1;
   visuals: VisualTuning;
 }
+
+export const SUN_VISUAL_PROFILE_COUNT = 3;
+export const ORBIT_GAMEPLAY_SUN_COUNT = 3;
+export const ORBIT_GAMEPLAY_PLANET_COUNT = ARCHETYPE_IDS.length;
+
+export const getSunVisualProfile = (
+  tuning: SunVisualTuning,
+  index: number,
+): SunVisualProfile => {
+  const normalizedIndex =
+    Number.isFinite(index) && index >= 0 ? Math.floor(index) : 0;
+  const profileCount = Math.max(1, tuning.profiles.length);
+  return tuning.profiles[normalizedIndex % profileCount] ?? tuning.profiles[0]!;
+};
+
+export const getOrbitGameplaySun = (
+  tuning: OrbitGameplayTuning,
+  index: number,
+): OrbitSunGameplayTuning => {
+  const normalizedIndex =
+    Number.isFinite(index) && index >= 0 ? Math.floor(index) : 0;
+  const sunCount = Math.max(1, tuning.suns.length);
+  return tuning.suns[normalizedIndex % sunCount] ?? tuning.suns[0]!;
+};
+
+export const getOrbitGameplayPlanet = (
+  tuning: OrbitGameplayTuning,
+  index: number,
+): OrbitPlanetGameplayTuning => {
+  const normalizedIndex =
+    Number.isFinite(index) && index >= 0 ? Math.floor(index) : 0;
+  const planetCount = Math.max(1, tuning.planets.length);
+  return tuning.planets[normalizedIndex % planetCount] ?? tuning.planets[0]!;
+};
+
+export const getOrbitPlanetCircleRadius = (
+  tuning: OrbitGameplayTuning,
+): number => tuning.planetCircleRadius;
+
+export const getOrbitSystemDriftVelocity = (
+  tuning: OrbitGameplayTuning,
+): Vec2 =>
+  scale(
+    fromAngle((tuning.systemDrift.directionDeg * Math.PI) / 180),
+    tuning.systemDrift.speed,
+  );
 
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
@@ -341,6 +463,203 @@ const sanitizeVec2 = (value: unknown, fallback: Vec2): Vec2 => {
   return {
     x: sanitizeNumber(source.x, fallback.x, 1, 256),
     y: sanitizeNumber(source.y, fallback.y, 1, 256),
+  };
+};
+
+const sanitizeSunVisualProfile = (
+  value: unknown,
+  fallback: SunVisualProfile,
+  sharedSource?: {
+    bodyScale?: unknown;
+    color?: unknown;
+    coreBrightness?: unknown;
+    glowBrightness?: unknown;
+    glowColor?: unknown;
+    glowScale?: unknown;
+    warpScale?: unknown;
+  },
+): SunVisualProfile => {
+  const candidate =
+    value !== null && typeof value === "object"
+      ? (value as Partial<Record<keyof SunVisualProfile, unknown>>)
+      : {};
+
+  return {
+    bodyScale: sanitizeNumber(
+      candidate.bodyScale ?? sharedSource?.bodyScale,
+      fallback.bodyScale,
+      0.25,
+      4,
+    ),
+    color: sanitizeHexColor(
+      candidate.color ?? sharedSource?.color,
+      fallback.color,
+    ),
+    coreBrightness: sanitizeNumber(
+      candidate.coreBrightness ?? sharedSource?.coreBrightness,
+      fallback.coreBrightness,
+      0,
+      4,
+    ),
+    glowBrightness: sanitizeNumber(
+      candidate.glowBrightness ?? sharedSource?.glowBrightness,
+      fallback.glowBrightness,
+      0,
+      4,
+    ),
+    glowColor: sanitizeHexColor(
+      candidate.glowColor ?? sharedSource?.glowColor,
+      fallback.glowColor,
+    ),
+    glowScale: sanitizeNumber(
+      candidate.glowScale ?? sharedSource?.glowScale,
+      fallback.glowScale,
+      0.5,
+      8,
+    ),
+    warpScale: sanitizeNumber(
+      candidate.warpScale ?? sharedSource?.warpScale,
+      fallback.warpScale,
+      0.5,
+      8,
+    ),
+  };
+};
+
+const sanitizeOrbitVec2 = (
+  value: unknown,
+  fallback: Vec2,
+  min: number,
+  max: number,
+): Vec2 => {
+  const source =
+    value !== null && typeof value === "object"
+      ? (value as Partial<Record<keyof Vec2, unknown>>)
+      : {};
+
+  return {
+    x: sanitizeNumber(source.x, fallback.x, min, max),
+    y: sanitizeNumber(source.y, fallback.y, min, max),
+  };
+};
+
+const sanitizeOrbitSunGameplayTuning = (
+  value: unknown,
+  fallback: OrbitSunGameplayTuning,
+): OrbitSunGameplayTuning => {
+  const source =
+    value !== null && typeof value === "object"
+      ? (value as Partial<Record<keyof OrbitSunGameplayTuning, unknown>>)
+      : {};
+
+  return {
+    mass: sanitizeNumber(source.mass, fallback.mass, 1_000, 5_000_000),
+    pos: sanitizeOrbitVec2(source.pos, fallback.pos, -10_000, 10_000),
+    radius: sanitizeNumber(source.radius, fallback.radius, 8, 500),
+    vel: sanitizeOrbitVec2(source.vel, fallback.vel, -2_000, 2_000),
+  };
+};
+
+const sanitizeOrbitPlanetGameplayTuning = (
+  value: unknown,
+  fallback: OrbitPlanetGameplayTuning,
+): OrbitPlanetGameplayTuning => {
+  const source =
+    value !== null && typeof value === "object"
+      ? (value as Partial<Record<keyof OrbitPlanetGameplayTuning, unknown>>)
+      : {};
+
+  return {
+    pos: sanitizeOrbitVec2(source.pos, fallback.pos, -10_000, 10_000),
+    radius: sanitizeNumber(source.radius, fallback.radius, 8, 500),
+    vel: sanitizeOrbitVec2(source.vel, fallback.vel, -2_000, 2_000),
+  };
+};
+
+const sanitizeOrbitSystemDriftGameplayTuning = (
+  value: unknown,
+  fallback: OrbitSystemDriftGameplayTuning,
+): OrbitSystemDriftGameplayTuning => {
+  const source =
+    value !== null && typeof value === "object"
+      ? (value as Partial<
+          Record<keyof OrbitSystemDriftGameplayTuning, unknown>
+        >)
+      : {};
+
+  return {
+    directionDeg: sanitizeNumber(
+      source.directionDeg,
+      fallback.directionDeg,
+      0,
+      360,
+    ),
+    speed: sanitizeNumber(source.speed, fallback.speed, 0, 2_000),
+  };
+};
+
+const sanitizeOrbitBoundaryDebrisVisualTuning = (
+  value: unknown,
+  fallback: OrbitBoundaryDebrisVisualTuning,
+): OrbitBoundaryDebrisVisualTuning => {
+  const source =
+    value !== null && typeof value === "object"
+      ? (value as Partial<
+          Record<
+            | keyof OrbitBoundaryDebrisVisualTuning
+            | "innerOffset"
+            | "outerOffset"
+            | "offset",
+            unknown
+          >
+        >)
+      : {};
+  const legacyThickness =
+    typeof source.outerOffset === "number" &&
+    Number.isFinite(source.outerOffset)
+      ? source.outerOffset -
+        sanitizeNumber(source.offset ?? source.innerOffset, 0, 0, 420)
+      : undefined;
+
+  return {
+    coolColor: sanitizeHexColor(source.coolColor, fallback.coolColor),
+    density: sanitizeNumber(
+      source.density,
+      fallback.density,
+      0.25,
+      Number.MAX_SAFE_INTEGER,
+    ),
+    dustSize: sanitizeNumber(
+      source.dustSize,
+      fallback.dustSize,
+      1,
+      Number.MAX_SAFE_INTEGER,
+    ),
+    largeRockScale: sanitizeNumber(
+      source.largeRockScale,
+      fallback.largeRockScale,
+      0.25,
+      Number.MAX_SAFE_INTEGER,
+    ),
+    smallRockScale: sanitizeNumber(
+      source.smallRockScale,
+      fallback.smallRockScale,
+      0.25,
+      Number.MAX_SAFE_INTEGER,
+    ),
+    speed: sanitizeNumber(
+      source.speed,
+      fallback.speed,
+      0.1,
+      Number.MAX_SAFE_INTEGER,
+    ),
+    thickness: sanitizeNumber(
+      source.thickness ?? legacyThickness,
+      fallback.thickness,
+      24,
+      Number.MAX_SAFE_INTEGER,
+    ),
+    warmColor: sanitizeHexColor(source.warmColor, fallback.warmColor),
   };
 };
 
@@ -852,7 +1171,7 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
         terra: {
           auraGap: 0,
           auraScale: 2.2,
-          bodyScale: 2,
+          bodyScale: 1,
           color: "#9fc66f",
           continentsScale: 1,
           forestAltitude: 0,
@@ -869,7 +1188,7 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
         ignis: {
           auraGap: 0,
           auraScale: 2.2,
-          bodyScale: 2,
+          bodyScale: 1,
           color: "#ff8550",
           continentsScale: 1,
           forestAltitude: 0,
@@ -886,7 +1205,7 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
         glacius: {
           auraGap: 0,
           auraScale: 2.2,
-          bodyScale: 2,
+          bodyScale: 1,
           color: "#8ed8ff",
           continentsScale: 1,
           forestAltitude: 0,
@@ -903,7 +1222,7 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
         volans: {
           auraGap: 0,
           auraScale: 2.2,
-          bodyScale: 2,
+          bodyScale: 1,
           color: "#5fe7da",
           continentsScale: 1,
           forestAltitude: 0,
@@ -920,7 +1239,7 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
         oculus: {
           auraGap: 0,
           auraScale: 2.2,
-          bodyScale: 2,
+          bodyScale: 1,
           color: "#ffd56b",
           continentsScale: 1,
           forestAltitude: 0,
@@ -937,7 +1256,7 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
         umbra: {
           auraGap: 0,
           auraScale: 2.2,
-          bodyScale: 2,
+          bodyScale: 1,
           color: "#8c7dff",
           continentsScale: 1,
           forestAltitude: 0,
@@ -954,7 +1273,7 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
         corvus: {
           auraGap: 0,
           auraScale: 2.2,
-          bodyScale: 2,
+          bodyScale: 1,
           color: "#d7e4ff",
           continentsScale: 1,
           forestAltitude: 0,
@@ -1060,10 +1379,35 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
       },
     },
     suns: {
-      coreBrightness: 1,
-      glowBrightness: 1,
-      glowScale: 1.7,
-      warpScale: 3.2,
+      profiles: [
+        {
+          bodyScale: 1,
+          color: "#ffd78a",
+          coreBrightness: 1,
+          glowBrightness: 1,
+          glowColor: "#ffefb5",
+          glowScale: 1.7,
+          warpScale: 3.2,
+        },
+        {
+          bodyScale: 1,
+          color: "#ffd78a",
+          coreBrightness: 1,
+          glowBrightness: 1,
+          glowColor: "#ffefb5",
+          glowScale: 1.7,
+          warpScale: 3.2,
+        },
+        {
+          bodyScale: 1,
+          color: "#ffd78a",
+          coreBrightness: 1,
+          glowBrightness: 1,
+          glowColor: "#ffefb5",
+          glowScale: 1.7,
+          warpScale: 3.2,
+        },
+      ],
     },
     blackHole: {
       coreRadius: 110,
@@ -1137,6 +1481,18 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
       badgeScale: 1,
       badgeBaseSize: 80,
     },
+    orbits: {
+      boundaryDebris: {
+        coolColor: "#8ca8c7",
+        density: 1,
+        dustSize: 3.6,
+        largeRockScale: 1,
+        smallRockScale: 1,
+        speed: 1,
+        thickness: 148,
+        warmColor: "#b7a18e",
+      },
+    },
     hud: {
       topInset: 20,
       sideInset: 20,
@@ -1156,11 +1512,84 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
     },
   },
   gameplay: {
+    arena: {
+      instantDeath: true,
+      radius: 2_000,
+    },
     blackHole: {
       spawnSec: 300,
       mass: 8_000_000,
       killRadius: 150,
       rampSec: 30,
+    },
+    camera: {
+      readModeWorldHeight: 7_600,
+      viewportWorldHeight: 4600,
+    },
+    orbits: {
+      sunStartDistanceScale: 1,
+      planetCircleRadius: 2_200,
+      systemDrift: {
+        directionDeg: 0,
+        speed: 0,
+      },
+      suns: [
+        {
+          mass: 140_000,
+          pos: { x: -1_600, y: 0 },
+          radius: 88,
+          vel: { x: 72.32160915498832, y: 110.93745960353417 },
+        },
+        {
+          mass: 140_000,
+          pos: { x: 1_600, y: 0 },
+          radius: 124,
+          vel: { x: 72.32160915498832, y: 110.93745960353417 },
+        },
+        {
+          mass: 140_000,
+          pos: { x: 0, y: 0 },
+          radius: 160,
+          vel: { x: -144.64321830997665, y: -221.87491920706827 },
+        },
+      ],
+      planets: [
+        {
+          pos: { x: 1051.733345716462, y: -486.2037513362361 },
+          radius: 22,
+          vel: { x: 207.27459254394333, y: 436.57125872427775 },
+        },
+        {
+          pos: { x: 1237.2001757998341, y: 495.31145926706535 },
+          radius: 22,
+          vel: { x: -163.37440434072008, y: 400.77881724748056 },
+        },
+        {
+          pos: { x: 460.1445835773605, y: 1556.3928974903736 },
+          radius: 22,
+          vel: { x: -372.65622642539535, y: 111.7201256085271 },
+        },
+        {
+          pos: { x: -1196.4670734311585, y: 1528.8907139662576 },
+          radius: 22,
+          vel: { x: -272.90915043475695, y: -216.89824635627662 },
+        },
+        {
+          pos: { x: -1985.7429230504715, y: 198.96788944608195 },
+          radius: 22,
+          vel: { x: -37.30840816112747, y: -348.6404574643785 },
+        },
+        {
+          pos: { x: -1491.5073043121004, y: -1768.4204616689865 },
+          radius: 24,
+          vel: { x: 241.48513032988333, y: -205.26122266372127 },
+        },
+        {
+          pos: { x: 510.8599255453144, y: -2319.9217869943445 },
+          radius: 24,
+          vel: { x: 304.54386524914696, y: 67.92373710106013 },
+        },
+      ],
     },
     rockets: {
       light: {
@@ -1208,6 +1637,10 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
         charges: 1,
         cooldownSec: 5,
         magnitude: 280,
+      },
+      gravityPulse: {
+        force: 1800,
+        radius: 2_000,
       },
     },
     drone: {
@@ -1322,6 +1755,21 @@ const sanitizeBoostSpec = (value: unknown, fallback: BoostSpec): BoostSpec => {
   };
 };
 
+const sanitizeGravityPulseSpec = (
+  value: unknown,
+  fallback: GravityPulseSpec,
+): GravityPulseSpec => {
+  const source =
+    value !== null && typeof value === "object"
+      ? (value as Partial<Record<keyof GravityPulseSpec, unknown>>)
+      : {};
+
+  return {
+    force: sanitizeNumber(source.force, fallback.force, 0, 20_000),
+    radius: sanitizeNumber(source.radius, fallback.radius, 50, 10_000),
+  };
+};
+
 const sanitizeDroneSpec = (value: unknown, fallback: DroneSpec): DroneSpec => {
   const source =
     value !== null && typeof value === "object"
@@ -1362,6 +1810,51 @@ const sanitizeCacheSpec = (value: unknown, fallback: CacheSpec): CacheSpec => {
       fallback.wildcardChance,
       0,
       1,
+    ),
+  };
+};
+
+const sanitizeGameplayCameraTuning = (
+  value: unknown,
+  fallback: GameplayCameraTuning,
+): GameplayCameraTuning => {
+  const source =
+    value !== null && typeof value === "object"
+      ? (value as Partial<Record<keyof GameplayCameraTuning, unknown>>)
+      : {};
+
+  return {
+    readModeWorldHeight: sanitizeNumber(
+      source.readModeWorldHeight,
+      fallback.readModeWorldHeight,
+      100,
+      10_000,
+    ),
+    viewportWorldHeight: sanitizeNumber(
+      source.viewportWorldHeight,
+      fallback.viewportWorldHeight,
+      100,
+      10_000,
+    ),
+  };
+};
+
+const sanitizeArenaGameplayTuning = (
+  value: unknown,
+  fallback: ArenaGameplayTuning,
+): ArenaGameplayTuning => {
+  const source =
+    value !== null && typeof value === "object"
+      ? (value as Partial<Record<keyof ArenaGameplayTuning, unknown>>)
+      : {};
+
+  return {
+    instantDeath: sanitizeBoolean(source.instantDeath, fallback.instantDeath),
+    radius: sanitizeNumber(
+      source.radius,
+      fallback.radius,
+      1_400,
+      Number.POSITIVE_INFINITY,
     ),
   };
 };
@@ -1597,6 +2090,23 @@ export const sanitizeGameTuning = (value: unknown): GameTuningDocument => {
       ),
     ]),
   ) as Record<ArchetypeId, PlanetArchetypeVisualSpec>;
+  const sunVisualsSource =
+    visuals.suns !== null && typeof visuals.suns === "object"
+      ? (visuals.suns as Partial<
+          SunVisualTuning & {
+            bodyScale?: unknown;
+            color?: unknown;
+            coreBrightness?: unknown;
+            glowBrightness?: unknown;
+            glowColor?: unknown;
+            glowScale?: unknown;
+            warpScale?: unknown;
+          }
+        >)
+      : {};
+  const sunProfileSources = Array.isArray(sunVisualsSource.profiles)
+    ? sunVisualsSource.profiles
+    : [];
 
   return {
     version: 1,
@@ -1783,30 +2293,17 @@ export const sanitizeGameTuning = (value: unknown): GameTuningDocument => {
         ),
       },
       suns: {
-        coreBrightness: sanitizeNumber(
-          visuals.suns?.coreBrightness,
-          fallback.visuals.suns.coreBrightness,
-          0,
-          4,
-        ),
-        glowBrightness: sanitizeNumber(
-          visuals.suns?.glowBrightness,
-          fallback.visuals.suns.glowBrightness,
-          0,
-          4,
-        ),
-        glowScale: sanitizeNumber(
-          visuals.suns?.glowScale,
-          fallback.visuals.suns.glowScale,
-          0.5,
-          8,
-        ),
-        warpScale: sanitizeNumber(
-          visuals.suns?.warpScale,
-          fallback.visuals.suns.warpScale,
-          0.5,
-          8,
-        ),
+        profiles: fallback.visuals.suns.profiles.map((profile, index) =>
+          sanitizeSunVisualProfile(sunProfileSources[index], profile, {
+            bodyScale: sunVisualsSource.bodyScale,
+            color: sunVisualsSource.color,
+            coreBrightness: sunVisualsSource.coreBrightness,
+            glowBrightness: sunVisualsSource.glowBrightness,
+            glowColor: sunVisualsSource.glowColor,
+            glowScale: sunVisualsSource.glowScale,
+            warpScale: sunVisualsSource.warpScale,
+          }),
+        ) as SunVisualTuning["profiles"],
       },
       blackHole: {
         coreRadius: sanitizeNumber(
@@ -1879,13 +2376,19 @@ export const sanitizeGameTuning = (value: unknown): GameTuningDocument => {
           visuals.caches?.badgeBaseSize,
           fallback.visuals.caches.badgeBaseSize,
           16,
-          240,
+          400,
         ),
         badgeScale: sanitizeNumber(
           visuals.caches?.badgeScale,
           fallback.visuals.caches.badgeScale,
           0.5,
           3,
+        ),
+      },
+      orbits: {
+        boundaryDebris: sanitizeOrbitBoundaryDebrisVisualTuning(
+          visuals.orbits?.boundaryDebris,
+          fallback.visuals.orbits.boundaryDebris,
         ),
       },
       hud: {
@@ -1982,10 +2485,45 @@ export const sanitizeGameTuning = (value: unknown): GameTuningDocument => {
       },
     },
     gameplay: {
+      arena: sanitizeArenaGameplayTuning(
+        gameplay.arena,
+        fallback.gameplay.arena,
+      ),
       blackHole: sanitizeBlackHoleSpec(
         gameplay.blackHole,
         fallback.gameplay.blackHole,
       ),
+      camera: sanitizeGameplayCameraTuning(
+        gameplay.camera,
+        fallback.gameplay.camera,
+      ),
+      orbits: {
+        sunStartDistanceScale: sanitizeNumber(
+          gameplay.orbits?.sunStartDistanceScale,
+          fallback.gameplay.orbits.sunStartDistanceScale,
+          0.5,
+          2.5,
+        ),
+        planetCircleRadius: sanitizeNumber(
+          gameplay.orbits?.planetCircleRadius,
+          fallback.gameplay.orbits.planetCircleRadius,
+          400,
+          6_000,
+        ),
+        systemDrift: sanitizeOrbitSystemDriftGameplayTuning(
+          gameplay.orbits?.systemDrift,
+          fallback.gameplay.orbits.systemDrift,
+        ),
+        suns: fallback.gameplay.orbits.suns.map((sun, index) =>
+          sanitizeOrbitSunGameplayTuning(gameplay.orbits?.suns?.[index], sun),
+        ) as OrbitGameplayTuning["suns"],
+        planets: fallback.gameplay.orbits.planets.map((planet, index) =>
+          sanitizeOrbitPlanetGameplayTuning(
+            gameplay.orbits?.planets?.[index],
+            planet,
+          ),
+        ) as OrbitGameplayTuning["planets"],
+      },
       rockets: {
         light: sanitizeRocketSpec(
           gameplay.rockets?.light,
@@ -2012,6 +2550,10 @@ export const sanitizeGameTuning = (value: unknown): GameTuningDocument => {
         boost: sanitizeBoostSpec(
           gameplay.abilities?.boost,
           fallback.gameplay.abilities.boost,
+        ),
+        gravityPulse: sanitizeGravityPulseSpec(
+          gameplay.abilities?.gravityPulse,
+          fallback.gameplay.abilities.gravityPulse,
         ),
       },
       drone: sanitizeDroneSpec(gameplay.drone, fallback.gameplay.drone),

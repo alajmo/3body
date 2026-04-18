@@ -143,6 +143,47 @@ describe("EditorPreviewStage", () => {
     );
   });
 
+  it("preserves a pending viewport restart across same-signature rerenders", () => {
+    const nextDocument = structuredClone(CURRENT_GAME_TUNING);
+    nextDocument.visuals.background.starsEnabled = false;
+
+    const { rerender } = render(
+      <EditorPreviewStage
+        documentValue={CURRENT_GAME_TUNING}
+        hudTuning={CURRENT_GAME_TUNING.visuals.hud}
+        itemId="background"
+        showHud={false}
+      />,
+    );
+
+    rerender(
+      <EditorPreviewStage
+        documentValue={nextDocument}
+        hudTuning={nextDocument.visuals.hud}
+        itemId="background"
+        showHud={false}
+      />,
+    );
+
+    rerender(
+      <EditorPreviewStage
+        documentValue={structuredClone(nextDocument)}
+        hudTuning={nextDocument.visuals.hud}
+        itemId="background"
+        showHud={false}
+      />,
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(140);
+    });
+
+    expect(screen.getByTestId("editor-item-viewport")).toHaveAttribute(
+      "data-revision",
+      "1",
+    );
+  });
+
   it("does not restart the viewport for HUD-only tuning changes", () => {
     const nextDocument = structuredClone(CURRENT_GAME_TUNING);
     nextDocument.visuals.hud.panelBlurPx += 4;

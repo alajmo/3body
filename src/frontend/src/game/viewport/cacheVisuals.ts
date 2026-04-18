@@ -9,17 +9,19 @@ import {
 } from "three/webgpu";
 
 export const CACHE_BADGE_BASE_SIZE = 80;
+export const CACHE_ARENA_BADGE_SIZE_FACTOR = 0.95;
 
 export type CacheIconKey =
   | "heavyAmmo"
   | "seekerPack"
   | "repair"
-  | "boostCharge"
   | "shieldExt"
   | "foresightExt"
-  | "wildcard";
+  | "wildcardGravityPulse"
+  | "wildcardCloak";
 
 type CacheBadgeShape =
+  | "cache"
   | "hex"
   | "diamond"
   | "octagon"
@@ -59,10 +61,10 @@ const CACHE_ICON_KEYS = [
   "heavyAmmo",
   "seekerPack",
   "repair",
-  "boostCharge",
   "shieldExt",
   "foresightExt",
-  "wildcard",
+  "wildcardGravityPulse",
+  "wildcardCloak",
 ] as const satisfies readonly CacheIconKey[];
 
 const CACHE_BADGE_LAYOUT = {
@@ -82,42 +84,46 @@ const CACHE_ICON_PRESENTATION: Record<
   heavyAmmo: {
     accent: "#ff8b49",
     label: "HEAVY",
-    shape: "hex",
+    shape: "cache",
   },
   seekerPack: {
     accent: "#ff61eb",
     label: "SEEKER",
-    shape: "diamond",
+    shape: "cache",
   },
   repair: {
     accent: "#88f1b6",
     label: "REPAIR",
-    shape: "octagon",
-  },
-  boostCharge: {
-    accent: "#82c8ff",
-    label: "BOOST",
-    shape: "bolt",
+    shape: "cache",
   },
   shieldExt: {
     accent: "#86ecff",
     label: "SHIELD",
-    shape: "shield",
+    shape: "cache",
   },
   foresightExt: {
     accent: "#ffe28b",
-    label: "SIGHT",
-    shape: "chevron",
+    label: "SIGHT+",
+    shape: "cache",
   },
-  wildcard: {
-    accent: "#ffd37a",
-    label: "WILD",
-    shape: "star",
+  wildcardGravityPulse: {
+    accent: "#ffbf7d",
+    label: "PULSE",
+    shape: "cache",
+  },
+  wildcardCloak: {
+    accent: "#92f0ff",
+    label: "CLOAK",
+    shape: "cache",
   },
 };
 
 export const getCacheIconKey = (contents: CacheContents): CacheIconKey =>
-  contents.kind === "wildcard" ? "wildcard" : contents.kind;
+  contents.kind === "wildcard"
+    ? contents.wildcard.kind === "gravityPulse"
+      ? "wildcardGravityPulse"
+      : "wildcardCloak"
+    : contents.kind;
 
 const fillRoundedRect = (
   context: CanvasRenderingContext2D,
@@ -186,6 +192,16 @@ const traceCacheBadgeShape = (
   size: number,
 ) => {
   switch (shape) {
+    case "cache":
+      fillRoundedRect(
+        context,
+        -size * 0.34,
+        -size * 0.34,
+        size * 0.68,
+        size * 0.68,
+        size * 0.11,
+      );
+      break;
     case "hex":
       tracePolygon(context, size * 0.34, 6);
       break;
@@ -257,10 +273,6 @@ const drawCacheIconGlyph = (
       context.fillRect(-size * 0.08, -size * 0.28, size * 0.16, size * 0.56);
       context.fillRect(-size * 0.28, -size * 0.08, size * 0.56, size * 0.16);
       break;
-    case "boostCharge":
-      traceCacheBadgeShape(context, "bolt", size);
-      context.fill();
-      break;
     case "shieldExt":
       traceCacheBadgeShape(context, "shield", size * 0.95);
       context.stroke();
@@ -273,9 +285,18 @@ const drawCacheIconGlyph = (
       context.arc(0, 0, size * 0.08, 0, Math.PI * 2);
       context.fill();
       break;
-    case "wildcard":
+    case "wildcardGravityPulse":
       traceStar(context, size * 0.3, size * 0.13, 5);
       context.fill();
+      break;
+    case "wildcardCloak":
+      context.beginPath();
+      context.arc(0, 0, size * 0.24, 0, Math.PI * 2);
+      context.stroke();
+      context.beginPath();
+      context.moveTo(-size * 0.22, size * 0.22);
+      context.lineTo(size * 0.22, -size * 0.22);
+      context.stroke();
       break;
   }
 
@@ -359,6 +380,50 @@ const drawCacheBadgeTile = (
   traceCacheBadgeShape(context, shape, size);
   context.stroke();
 
+  if (shape === "cache") {
+    context.save();
+    context.fillStyle = "rgba(255, 255, 255, 0.05)";
+    fillRoundedRect(
+      context,
+      -size * 0.26,
+      -size * 0.22,
+      size * 0.52,
+      size * 0.38,
+      size * 0.06,
+    );
+    context.fill();
+    context.fillStyle = `${accent}22`;
+    fillRoundedRect(
+      context,
+      -size * 0.21,
+      -size * 0.27,
+      size * 0.42,
+      size * 0.07,
+      size * 0.03,
+    );
+    context.fill();
+    context.fillStyle = accent;
+    fillRoundedRect(
+      context,
+      -size * 0.26,
+      size * 0.2,
+      size * 0.08,
+      size * 0.04,
+      size * 0.015,
+    );
+    context.fill();
+    fillRoundedRect(
+      context,
+      size * 0.18,
+      size * 0.2,
+      size * 0.08,
+      size * 0.04,
+      size * 0.015,
+    );
+    context.fill();
+    context.restore();
+  }
+
   context.save();
   context.globalAlpha = 0.12;
   context.scale(0.82, 0.82);
@@ -440,6 +505,11 @@ export const createCacheSpriteAssets = (
   badgeMaterials: createMaterialSet(document, createCacheBadgeTexture, 0.02),
   iconMaterials: createMaterialSet(document, createCacheIconTexture),
 });
+
+export const getCacheArenaBadgeSize = (
+  badgeBaseSize: number,
+  badgeScale: number,
+): number => badgeBaseSize * badgeScale * CACHE_ARENA_BADGE_SIZE_FACTOR;
 
 export const disposeCacheSpriteAssets = (assets: CacheSpriteAssets) => {
   for (const materialSet of [assets.badgeMaterials, assets.iconMaterials]) {

@@ -1,8 +1,8 @@
 import {
   ARCHETYPES,
+  ARENA_BOUNDARY_SPEC,
   BLACK_HOLE_SPEC,
   BOOST_SPEC,
-  BOUNDARY_DAMAGE_SPEC,
   CACHE_DROP_SPEED_SCALE,
   CACHE_GRAVITY_SCALE,
   CACHE_RADIUS,
@@ -17,14 +17,13 @@ import {
   GRAVITY_PULSE_IMPULSE,
   GRAVITY_PULSE_RADIUS,
   getBaseShieldLoad,
-  OUTER_RING_MAX,
-  OUTER_RING_MIN,
+  getOuterRingMax,
+  getOuterRingMin,
   PLANET_HP,
   REPAIR_AMOUNT,
   ROCKET_SPECS,
   SHIELD_EXT_MULTIPLIER,
   SHIELD_SPEC,
-  TELEPORT_SWAP_MIN_DOT,
   add,
   clamp,
   clampLen,
@@ -63,7 +62,6 @@ import type { Room, RocketRuntimeState } from "./room";
 
 const TICK_MS_FLOOR = 1;
 const DEFAULT_INPUT_DIR: Vec2 = { x: 1, y: 0 };
-const SELF_HIT_GRACE_SEC = 0.15;
 const PLANET_DEBRIS_PIECES = 20;
 const PLANET_DEBRIS_SPEED = 220;
 const PLANET_DEBRIS_SPEED_VARIANCE = 170;
@@ -191,9 +189,6 @@ const blackHoleMassForTick = (tick: number, tickHz: number): number => {
   return BLACK_HOLE_SPEC.mass * alpha;
 };
 
-const selfHitGraceTicks = (tickHz: number): number =>
-  Math.max(1, Math.round(SELF_HIT_GRACE_SEC * tickHz));
-
 const lagCompMaxRewindTicks = (tickHz: number): number =>
   Math.max(0, Math.floor((LAG_COMP_MAX_REWIND_MS * tickHz) / 1000));
 
@@ -270,11 +265,6 @@ const findPlanetIndexByPlayerId = (
   playerId: PlayerId,
 ): number => planets.findIndex((planet) => planet.playerId === playerId);
 
-const findPlanetIndexById = (
-  planets: readonly PlanetPublic[],
-  planetId: number,
-): number => planets.findIndex((planet) => planet.id === planetId);
-
 const findDroneIndexById = (
   drones: readonly Drone[],
   droneId: number,
@@ -317,8 +307,10 @@ const createDebrisBurst = (
 
 const createOuterRingCache = (room: Room): Cache => {
   const angle = room.rng() * Math.PI * 2 + (room.rng() - 0.5) * 0.24;
-  const radius =
-    OUTER_RING_MIN + (OUTER_RING_MAX - OUTER_RING_MIN) * room.rng();
+  const arenaRadius = room.world?.arenaRadius ?? undefined;
+  const ringMin = getOuterRingMin(arenaRadius);
+  const ringMax = getOuterRingMax(arenaRadius);
+  const radius = ringMin + (ringMax - ringMin) * room.rng();
   const tangentialDir = fromAngle(
     angle + (Math.PI / 2) * (room.rng() < 0.5 ? -1 : 1),
   );
@@ -606,54 +598,10 @@ const applyImpulseAwayFromPoint = <T extends { pos: Vec2; vel: Vec2 }>(
   }
 };
 
-const findTeleportSwapTarget = (
-  planets: readonly PlanetPublic[],
-  playerPlanetId: number,
-  aimDir: Vec2,
-): PlanetPublic | null => {
-  if (len(aimDir) === 0) {
-    return null;
-  }
-
-  const playerPlanet = planets.find((planet) => planet.id === playerPlanetId);
-  if (!playerPlanet) {
-    return null;
-  }
-
-  let bestTarget: PlanetPublic | null = null;
-  let bestDot = TELEPORT_SWAP_MIN_DOT;
-  let bestDistance = Number.POSITIVE_INFINITY;
-
-  for (const planet of planets) {
-    if (planet.id === playerPlanetId) {
-      continue;
-    }
-
-    const dir = normalize(sub(planet.pos, playerPlanet.pos));
-    const alignment = dot(aimDir, dir);
-    if (alignment < TELEPORT_SWAP_MIN_DOT) {
-      continue;
-    }
-
-    const distance = dist(playerPlanet.pos, planet.pos);
-    if (
-      alignment > bestDot + 0.001 ||
-      (Math.abs(alignment - bestDot) <= 0.001 && distance < bestDistance)
-    ) {
-      bestTarget = planet;
-      bestDot = alignment;
-      bestDistance = distance;
-    }
-  }
-
-  return bestTarget;
-};
-
 const activateWildcard = (
   room: Room,
   playerId: PlayerId,
   wildcard: WildcardKind,
-  aimDir: Vec2,
   tickHz: number,
 ): boolean => {
   if (!room.world) {
@@ -701,43 +649,34 @@ const activateWildcard = (
         hideTrailUntilTick: room.tick + getCloakDurationTicks(tickHz),
       };
       return true;
-
-    case "teleportSwap": {
-      const target = findTeleportSwapTarget(
-        room.world.planets,
-        playerPlanet.id,
-        aimDir,
-      );
-      if (!target) {
-        return false;
-      }
-
-      const targetIndex = findPlanetIndexById(room.world.planets, target.id);
-      if (targetIndex < 0) {
-        return false;
-      }
-
-      const currentPlayerPlanet = room.world.planets[planetIndex]!;
-      const currentTargetPlanet = room.world.planets[targetIndex]!;
-      room.world.planets[planetIndex] = {
-        ...currentPlayerPlanet,
-        pos: { x: currentTargetPlanet.pos.x, y: currentTargetPlanet.pos.y },
-        vel: { x: currentTargetPlanet.vel.x, y: currentTargetPlanet.vel.y },
-      };
-      room.world.planets[targetIndex] = {
-        ...currentTargetPlanet,
-        pos: { x: currentPlayerPlanet.pos.x, y: currentPlayerPlanet.pos.y },
-        vel: { x: currentPlayerPlanet.vel.x, y: currentPlayerPlanet.vel.y },
-      };
-      return true;
-    }
   }
+};
+
+const consumeHeldWildcard = (
+  privateState: PlanetPrivateState,
+  wildcard: WildcardKind,
+): boolean => {
+  if (wildcard === "gravityPulse") {
+    if (!privateState.gravityPulseHeld) {
+      return false;
+    }
+
+    privateState.gravityPulseHeld = false;
+    return true;
+  }
+
+  if (!privateState.cloakHeld) {
+    return false;
+  }
+
+  privateState.cloakHeld = false;
+  return true;
 };
 
 const applyAbilityMessage = (
   room: Room,
   playerId: PlayerId,
-  slot: "q" | "w" | "e" | "r",
+  slot: "q" | "w" | "e" | "g" | "c",
   aimDir: Vec2 | undefined,
   tickHz: number,
 ): void => {
@@ -906,8 +845,8 @@ const applyAbilityMessage = (
       return;
     }
 
-    case "r":
-      if (privateState.wildcardSlot === undefined) {
+    case "g":
+      if (!consumeHeldWildcard(privateState, "gravityPulse")) {
         return;
       }
 
@@ -915,8 +854,7 @@ const applyAbilityMessage = (
         activateWildcard(
           room,
           playerId,
-          privateState.wildcardSlot,
-          resolvedAimDir,
+          "gravityPulse",
           tickHz,
         )
       ) {
@@ -924,10 +862,29 @@ const applyAbilityMessage = (
           kind: "wildcardUse",
           tick: room.tick,
           playerId,
-          wildcard: privateState.wildcardSlot,
+          wildcard: "gravityPulse",
         });
-        privateState.wildcardSlot = undefined;
+      } else {
+        privateState.gravityPulseHeld = true;
       }
+      return;
+
+    case "c":
+      if (!consumeHeldWildcard(privateState, "cloak")) {
+        return;
+      }
+
+      if (activateWildcard(room, playerId, "cloak", tickHz)) {
+        room.queueEvent({
+          kind: "wildcardUse",
+          tick: room.tick,
+          playerId,
+          wildcard: "cloak",
+        });
+      } else {
+        privateState.cloakHeld = true;
+      }
+      return;
   }
 };
 
@@ -1289,7 +1246,7 @@ const applyPlanetCollisions = (
   return survivors;
 };
 
-const applyBoundaryDamage = (
+const applyBoundaryEffects = (
   room: Room,
   planets: PlanetPublic[],
   nextTick: number,
@@ -1307,19 +1264,22 @@ const applyBoundaryDamage = (
       continue;
     }
 
-    runtime.boundaryEnteredTick ??= nextTick;
-    const outsideSec = (nextTick - runtime.boundaryEnteredTick) / config.tickHz;
-    const dps =
-      outsideSec >= BOUNDARY_DAMAGE_SPEC.rampAfterSec
-        ? BOUNDARY_DAMAGE_SPEC.maxDps
-        : BOUNDARY_DAMAGE_SPEC.baseDps;
-    const hpAfter = Math.max(0, planet.hp - dps / config.tickHz);
-    if (hpAfter > 0) {
-      survivors.push({
-        ...planet,
-        hp: hpAfter,
-      });
-      continue;
+    if (!ARENA_BOUNDARY_SPEC.instantDeath) {
+      runtime.boundaryEnteredTick ??= nextTick;
+      const outsideSec =
+        (nextTick - runtime.boundaryEnteredTick) / config.tickHz;
+      const dps =
+        outsideSec >= ARENA_BOUNDARY_SPEC.rampAfterSec
+          ? ARENA_BOUNDARY_SPEC.maxDps
+          : ARENA_BOUNDARY_SPEC.baseDps;
+      const hpAfter = Math.max(0, planet.hp - dps / config.tickHz);
+      if (hpAfter > 0) {
+        survivors.push({
+          ...planet,
+          hp: hpAfter,
+        });
+        continue;
+      }
     }
 
     queueKillEvent(room, nextTick, planet, "boundary");
@@ -1605,13 +1565,6 @@ const applyRocketCollisions = (
 
     for (let planetIndex = 0; planetIndex < planets.length; planetIndex += 1) {
       const planet = planets[planetIndex]!;
-      const withinSelfHitGrace =
-        planet.playerId === rocket.ownerId &&
-        nextTick < runtime.spawnedAtTick + selfHitGraceTicks(config.tickHz);
-      if (withinSelfHitGrace) {
-        continue;
-      }
-
       if (dist(rocket.pos, planet.pos) <= rocket.radius + planet.radius) {
         const absorbedByShield = shieldProtectsImpact(
           planet,
@@ -1692,13 +1645,7 @@ const applyRocketCollisions = (
     }
 
     for (const planet of planets) {
-      const withinSelfHitGrace =
-        planet.playerId === rocket.ownerId &&
-        nextTick < runtime.spawnedAtTick + selfHitGraceTicks(config.tickHz);
-      if (
-        withinSelfHitGrace ||
-        runtime.nearMissedPlayerIds.has(planet.playerId)
-      ) {
+      if (runtime.nearMissedPlayerIds.has(planet.playerId)) {
         continue;
       }
 
@@ -2027,7 +1974,7 @@ const updateWorld = (room: Room, config: AppConfig): void => {
     nextTick,
     debris,
   );
-  nextPlanets = applyBoundaryDamage(
+  nextPlanets = applyBoundaryEffects(
     room,
     nextPlanets,
     nextTick,

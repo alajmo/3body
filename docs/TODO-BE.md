@@ -137,7 +137,7 @@ Scope call: durable cross-session stats / leaderboards are a follow-on V1 slice.
 
 - [x] Planet↔sun contact: if not negated by shield arc, instant kill (HP→0). Emit `event:'kill'` with `cause:'sun'`.
 - [x] Planet↔planet contact: both planets are instantly destroyed, regardless of remaining HP or shield state. Emit `event:'kill'` for both with `cause:'planetCollision'`.
-- [x] Boundary damage: if planet is outside `arenaRadius`, apply 5 HP/s. If outside for ≥5s continuously, ramp to 20 HP/s. Reset timer on re-entry.
+- [x] Boundary killzone: if a planet moves outside `arenaRadius`, kill it immediately.
 - [x] Black Hole spawn: at 300s elapsed combat, create `world.blackHole` at origin, broadcast `event:'blackHoleSpawn'`, and apply its pull to suns, planets, rockets, drones, and caches. Any entity touching the kill radius, including suns, is destroyed immediately.
 - [x] Planet death → `Debris` entity (visual-only, short TTL, broadcast in snapshot); remove planet from sim; connection transitions to spectator (still receives snapshots, can send `chat`); subsequent snapshots for that connection must send `self:null` so FE can switch to spectator mode without inferring from world diffs. Dead players remain spectators until rematch; there is no in-match respawn.
 - [x] Win check: after every tick, if `alivePlanets.length === 1`, transition room to end-of-match with `reason:'lastAlive'`; if `alivePlanets.length === 0`, transition with `reason:'mutualKill'`.

@@ -12,6 +12,7 @@ import {
   ARENA_RADIUS,
   clamp,
   FIXED_STEP_SEC,
+  getSunVisualProfile,
   len,
   lerp,
   normalize as normalizeVec2,
@@ -44,12 +45,14 @@ import {
   createCacheSpriteAssets,
   createCacheVisual as createSharedCacheVisual,
   disposeCacheSpriteAssets,
+  getCacheArenaBadgeSize,
   getCacheIconKey as getSharedCacheIconKey,
   updateCacheVisualBadge as updateSharedCacheVisualBadge,
   type CacheVisual,
 } from "./viewport/cacheVisuals";
 import { buildAuthoritativeHudState } from "./viewport/authoritativeHud";
 import { createViewportAnimationLoopController } from "./viewport/animationLoopController";
+import { getCloakPlanetOpacity } from "./viewport/cloakVisual";
 import { createGameViewportInputController } from "./viewport/localInput";
 import { createViewportPerformanceProfiler } from "./viewport/performanceProfiler";
 import { DEFAULT_VIEWPORT_RENDER_QUALITY_PROFILE } from "./viewport/renderQuality";
@@ -81,15 +84,11 @@ import {
   createSunGlowMaterial,
   createWarpMaterial,
   getPlanetForestProfile,
+  syncBackdropFrame,
   wrapCentered,
 } from "./showcaseVisuals";
-import { getRenderedPlanetRadius } from "./planetVisualTuning";
 
 const CAMERA_DISTANCE = 100;
-const FOLLOW_VIEW_WORLD_HEIGHT = ARENA_RADIUS * 0.92;
-const READ_MODE_WORLD_HEIGHT = ARENA_RADIUS * 1.52;
-const FULL_VIEW_WORLD_HEIGHT = ARENA_RADIUS * 2.3;
-const FULL_VIEW_PADDING = 260;
 const CAMERA_FOLLOW_LERP = 6.1;
 const CAMERA_ZOOM_LERP = 5.2;
 const BACKDROP_OVERDRAW = 1.35;
@@ -101,6 +100,9 @@ const INPUT_SEND_INTERVAL_MS = 1000 / 60;
 
 interface PlanetVisual {
   glowMesh: Mesh;
+  glowOpacityUniform: ReturnType<
+    typeof createPlanetGlowMaterial
+  >["opacityUniform"];
   material: ReturnType<typeof createPlanetMaterial>;
   mesh: Mesh;
   spinAxis: ReturnType<typeof createPlanetSpinAxis>;
@@ -176,103 +178,50 @@ const interpolateDynamicEntity = <
 };
 
 const getControlledBody = (
-  playerId: string | null,
   playerPlanet: PlanetPublic | null,
   activeDrone: Drone | null,
-) => {
-  if (playerId === null) {
-    return null;
-  }
+) => activeDrone ?? playerPlanet;
 
-  return activeDrone ?? playerPlanet;
+const getGameplayCameraHeights = () => {
+  const cameraTuning = getRuntimeTuningDocument().gameplay.camera;
+
+  return {
+    followWorldHeight: cameraTuning.viewportWorldHeight,
+    readModeWorldHeight: cameraTuning.readModeWorldHeight,
+  };
 };
 
 const getCameraFrame = (
-  aspect: number,
   world: World | null,
   playerPlanet: PlanetPublic | null,
   activeDrone: Drone | null,
-  fullViewEnabled: boolean,
   readModeHeld: boolean,
 ): { centerX: number; centerY: number; visibleWorldHeight: number } => {
+  const { followWorldHeight, readModeWorldHeight } = getGameplayCameraHeights();
+
   if (world === null) {
     return {
       centerX: 0,
       centerY: 0,
-      visibleWorldHeight: FOLLOW_VIEW_WORLD_HEIGHT,
+      visibleWorldHeight: followWorldHeight,
     };
   }
 
-  if (!fullViewEnabled) {
-    const controlledBody = getControlledBody(null, playerPlanet, activeDrone);
-    if (controlledBody === null) {
-      return {
-        centerX: 0,
-        centerY: 0,
-        visibleWorldHeight: readModeHeld
-          ? READ_MODE_WORLD_HEIGHT
-          : FOLLOW_VIEW_WORLD_HEIGHT,
-      };
-    }
-
-    return {
-      centerX: controlledBody.pos.x,
-      centerY: controlledBody.pos.y,
-      visibleWorldHeight: readModeHeld
-        ? READ_MODE_WORLD_HEIGHT
-        : FOLLOW_VIEW_WORLD_HEIGHT,
-    };
-  }
-
-  let minX = Number.POSITIVE_INFINITY;
-  let maxX = Number.NEGATIVE_INFINITY;
-  let minY = Number.POSITIVE_INFINITY;
-  let maxY = Number.NEGATIVE_INFINITY;
-
-  const includeCircle = (x: number, y: number, radius: number) => {
-    minX = Math.min(minX, x - radius);
-    maxX = Math.max(maxX, x + radius);
-    minY = Math.min(minY, y - radius);
-    maxY = Math.max(maxY, y + radius);
-  };
-
-  for (const sun of world.suns) {
-    includeCircle(sun.pos.x, sun.pos.y, sun.radius);
-  }
-  for (const planet of world.planets) {
-    includeCircle(planet.pos.x, planet.pos.y, getRenderedPlanetRadius(planet));
-  }
-  for (const drone of world.drones) {
-    includeCircle(drone.pos.x, drone.pos.y, drone.radius);
-  }
-  if (world.blackHole !== undefined) {
-    includeCircle(
-      world.blackHole.pos.x,
-      world.blackHole.pos.y,
-      world.blackHole.killRadius,
-    );
-  }
-
-  if (!Number.isFinite(minX) || !Number.isFinite(minY)) {
+  const controlledBody = getControlledBody(playerPlanet, activeDrone);
+  if (controlledBody === null) {
     return {
       centerX: 0,
       centerY: 0,
-      visibleWorldHeight: FULL_VIEW_WORLD_HEIGHT,
+      visibleWorldHeight: readModeHeld
+        ? readModeWorldHeight
+        : followWorldHeight,
     };
   }
 
-  const paddedWidth = maxX - minX + FULL_VIEW_PADDING * 2;
-  const paddedHeight = maxY - minY + FULL_VIEW_PADDING * 2;
-  const safeAspect = Math.max(0.5, aspect);
-
   return {
-    centerX: (minX + maxX) * 0.5,
-    centerY: (minY + maxY) * 0.5,
-    visibleWorldHeight: Math.max(
-      FULL_VIEW_WORLD_HEIGHT,
-      paddedHeight,
-      paddedWidth / safeAspect,
-    ),
+    centerX: controlledBody.pos.x,
+    centerY: controlledBody.pos.y,
+    visibleWorldHeight: readModeHeld ? readModeWorldHeight : followWorldHeight,
   };
 };
 
@@ -381,7 +330,7 @@ export function createAuthoritativeViewport(
     centerY: 0,
     renderCenterX: 0,
     renderCenterY: 0,
-    visibleWorldHeight: FOLLOW_VIEW_WORLD_HEIGHT,
+    visibleWorldHeight: getGameplayCameraHeights().followWorldHeight,
   };
   let rendererSessionToken = 0;
 
@@ -421,18 +370,13 @@ export function createAuthoritativeViewport(
     camera.lookAt(cameraState.renderCenterX, cameraState.renderCenterY, 0);
     camera.updateProjectionMatrix();
 
-    if (backdropMesh !== null) {
-      backdropMesh.position.set(
-        cameraState.renderCenterX,
-        cameraState.renderCenterY,
-        -40,
-      );
-      backdropMesh.scale.set(
-        worldHalfWidth * 2 * BACKDROP_OVERDRAW,
-        worldHalfHeight * 2 * BACKDROP_OVERDRAW,
-        1,
-      );
-    }
+    syncBackdropFrame({
+      backdropMesh,
+      centerX: cameraState.renderCenterX,
+      centerY: cameraState.renderCenterY,
+      height: worldHalfHeight * 2 * BACKDROP_OVERDRAW,
+      width: worldHalfWidth * 2 * BACKDROP_OVERDRAW,
+    });
   };
 
   const resizeViewport = () => {
@@ -961,15 +905,10 @@ export function createAuthoritativeViewport(
               : (world.drones.find((drone) => drone.ownerId === playerId) ??
                 null);
 
-          const aspect =
-            Math.max(1, hostElement.clientWidth) /
-            Math.max(1, hostElement.clientHeight);
           const frame = getCameraFrame(
-            aspect,
             world,
             playerPlanet,
             activeDrone,
-            viewportInputController.state.fullViewEnabled,
             viewportInputController.state.readModeHeld,
           );
           const cameraMoveAlpha =
@@ -1007,6 +946,9 @@ export function createAuthoritativeViewport(
             );
           }
 
+          const boundaryRadius = world?.arenaRadius ?? ARENA_RADIUS;
+          boundaryMesh.scale.set(boundaryRadius, boundaryRadius, 1);
+
           if (
             runtime.phase === "combat" &&
             runtime.connectionState === "connected" &&
@@ -1014,11 +956,7 @@ export function createAuthoritativeViewport(
             world !== null &&
             playerId !== null
           ) {
-            const controlledBody = getControlledBody(
-              playerId,
-              playerPlanet,
-              activeDrone,
-            );
+            const controlledBody = getControlledBody(playerPlanet, activeDrone);
             if (controlledBody !== null) {
               const aimDelta = sub(
                 viewportInputController.state.inputState.aimWorld,
@@ -1067,8 +1005,11 @@ export function createAuthoritativeViewport(
               if (pendingAbilityRequests.boost) {
                 options.dispatchMessage({ slot: "e", type: "ability" });
               }
-              if (pendingAbilityRequests.wildcard) {
-                options.dispatchMessage({ slot: "r", type: "ability" });
+              if (pendingAbilityRequests.gravityPulse) {
+                options.dispatchMessage({ slot: "g", type: "ability" });
+              }
+              if (pendingAbilityRequests.cloak) {
+                options.dispatchMessage({ slot: "c", type: "ability" });
               }
             }
           }
@@ -1079,25 +1020,29 @@ export function createAuthoritativeViewport(
           const planetVisualTuning = tuning.visuals.planets;
           const rocketVisualTuning = tuning.visuals.rockets;
           const droneVisualTuning = tuning.visuals.drone;
+          const renderTick = snapshot?.tick ?? 0;
 
           const activeSunIds = new Set<number>();
-          for (const sun of world?.suns ?? []) {
+          for (const [index, sun] of (world?.suns ?? []).entries()) {
             activeSunIds.add(sun.id);
+            const sunProfile = getSunVisualProfile(tuning.visuals.suns, index);
             let visual = sunVisuals.get(sun.id);
             if (visual === undefined) {
-              const sunVisualTuning = getRuntimeTuningDocument().visuals.suns;
               const coreMaterial = createSunCoreMaterial(
-                "#ffd78a",
-                "#ffd78a",
+                sunProfile.color,
+                sunProfile.glowColor,
                 sun.id,
-                sunVisualTuning.coreBrightness,
+                sunProfile.coreBrightness,
               );
               const glowMaterial = createSunGlowMaterial(
-                "#ffd78a",
+                sunProfile.glowColor,
                 sun.id,
-                sunVisualTuning.glowBrightness,
+                sunProfile.glowBrightness,
               );
-              const warpMaterial = createWarpMaterial("#ffd78a", sun.id);
+              const warpMaterial = createWarpMaterial(
+                sunProfile.glowColor,
+                sun.id,
+              );
               const coreMesh = new Mesh(sunGeometry, coreMaterial);
               const glowMesh = new Mesh(sunGeometry, glowMaterial);
               const warpMesh = new Mesh(warpGeometry, warpMaterial);
@@ -1122,15 +1067,20 @@ export function createAuthoritativeViewport(
             visual.coreMesh.position.set(sun.pos.x, sun.pos.y, 0);
             visual.glowMesh.position.set(sun.pos.x, sun.pos.y, -2);
             visual.warpMesh.position.set(sun.pos.x, sun.pos.y, -4);
-            visual.coreMesh.scale.set(sun.radius, sun.radius, sun.radius);
+            const renderedRadius = sun.radius;
+            visual.coreMesh.scale.set(
+              renderedRadius,
+              renderedRadius,
+              renderedRadius,
+            );
             visual.glowMesh.scale.set(
-              sun.radius * tuning.visuals.suns.glowScale,
-              sun.radius * tuning.visuals.suns.glowScale,
-              sun.radius * tuning.visuals.suns.glowScale,
+              renderedRadius * sunProfile.glowScale,
+              renderedRadius * sunProfile.glowScale,
+              renderedRadius * sunProfile.glowScale,
             );
             visual.warpMesh.scale.set(
-              sun.radius * tuning.visuals.suns.warpScale,
-              sun.radius * tuning.visuals.suns.warpScale,
+              renderedRadius * sunProfile.warpScale,
+              renderedRadius * sunProfile.warpScale,
               1,
             );
             visual.coreMesh.rotation.x = 0.38;
@@ -1178,6 +1128,7 @@ export function createAuthoritativeViewport(
               scene.add(mesh, glowMesh);
               visual = {
                 glowMesh,
+                glowOpacityUniform: glowMaterial.opacityUniform,
                 material,
                 mesh,
                 spinAxis: createPlanetSpinAxis(planet.id),
@@ -1193,6 +1144,12 @@ export function createAuthoritativeViewport(
 
             visual.mesh.position.set(planet.pos.x, planet.pos.y, 0);
             visual.glowMesh.position.set(planet.pos.x, planet.pos.y, 0.16);
+            const planetOpacity = getCloakPlanetOpacity(
+              planet.hideTrailUntilTick,
+              renderTick,
+            );
+            visual.material.opacityUniform.value = planetOpacity;
+            visual.glowOpacityUniform.value = planetOpacity;
             visual.mesh.scale.set(
               planet.radius * archetypeVisual.bodyScale,
               planet.radius * archetypeVisual.bodyScale,
@@ -1399,9 +1356,10 @@ export function createAuthoritativeViewport(
             const pulse =
               1 + Math.sin(nowSec * visual.pulseRate + visual.bobPhase) * 0.04;
             const badgeSize =
-              tuning.visuals.caches.badgeBaseSize *
-              tuning.visuals.caches.badgeScale *
-              pulse;
+              getCacheArenaBadgeSize(
+                tuning.visuals.caches.badgeBaseSize,
+                tuning.visuals.caches.badgeScale,
+              ) * pulse;
             visual.badgeSprite.scale.set(badgeSize, badgeSize, 1);
           }
           for (const [cacheId, visual] of cacheVisuals) {

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createGameViewportInputController } from "./localInput";
 
 describe("createGameViewportInputController", () => {
-  it("starts in full view and toggles off with F", () => {
+  it("keeps the camera mode fixed when F is pressed", () => {
     const canvasElement = document.createElement("canvas");
     const controller = createGameViewportInputController({
       canvasElement,
@@ -21,7 +21,7 @@ describe("createGameViewportInputController", () => {
       windowTarget: window,
     });
 
-    expect(controller.state.fullViewEnabled).toBe(true);
+    expect(controller.state.fullViewEnabled).toBe(false);
 
     window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyF" }));
 
@@ -108,5 +108,33 @@ describe("createGameViewportInputController", () => {
     controller.dispose();
     canvasElement.remove();
     sandboxPanel.remove();
+  });
+
+  it("queues gravity pulse and cloak on G and C", () => {
+    const canvasElement = document.createElement("canvas");
+    const controller = createGameViewportInputController({
+      canvasElement,
+      getPlayerControlState: () => ({
+        activeDroneId: null,
+        controlMode: "planet",
+      }),
+      isShieldActive: () => false,
+      initialPlayer: {
+        aimWorld: { x: 0, y: 0 },
+        selectedRocketKind: "light",
+      },
+      isSandboxPaused: () => false,
+      sandboxControlsEnabled: () => true,
+      syncAimWorldToPointer: () => {},
+      windowTarget: window,
+    });
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyG" }));
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyC" }));
+
+    expect(controller.state.pendingAbilityRequests.gravityPulse).toBe(true);
+    expect(controller.state.pendingAbilityRequests.cloak).toBe(true);
+
+    controller.dispose();
   });
 });

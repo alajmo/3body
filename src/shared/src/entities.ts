@@ -11,7 +11,7 @@ export type ArchetypeId =
   | "umbra"
   | "corvus";
 export type RocketKind = "light" | "heavy" | "seeker";
-export type WildcardKind = "gravityPulse" | "cloak" | "teleportSwap";
+export type WildcardKind = "gravityPulse" | "cloak";
 
 export interface EntityBase {
   id: EntityId;
@@ -65,7 +65,8 @@ export interface PlanetPrivateState {
   ammo: PlanetPrivateAmmo;
   cooldowns: PlanetCooldowns;
   boostCharges: number;
-  wildcardSlot?: WildcardKind;
+  gravityPulseHeld: boolean;
+  cloakHeld: boolean;
   nextShieldExt: boolean;
   nextForesightExt: boolean;
 }
@@ -84,7 +85,6 @@ export type CacheContents =
   | { kind: "heavyAmmo" }
   | { kind: "seekerPack" }
   | { kind: "repair" }
-  | { kind: "boostCharge" }
   | { kind: "shieldExt" }
   | { kind: "foresightExt" }
   | {

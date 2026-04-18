@@ -57,14 +57,18 @@ import {
 import { getRuntimeTuningDocument } from "../runtimeTuning";
 import { MAX_FORESIGHT_SAMPLES } from "./foresightShared";
 const PLANET_EXPLOSION_CHUNK_COUNT = 12;
-const STARFIELD_RADIUS = ARENA_RADIUS * 2.35;
-const STARFIELD_TILE_SIZE = STARFIELD_RADIUS * 2;
+const getStarfieldRadius = (): number => ARENA_RADIUS * 2.35;
+const getStarfieldTileSize = (): number => getStarfieldRadius() * 2;
 
 const getRuntimeVisuals = () => getRuntimeTuningDocument().visuals;
 const getBoostColor = () => getRuntimeVisuals().abilities.boostColor;
 const getPlanetMaterialTuning = () => getRuntimeVisuals().planets.material;
 const getPlanetAuraTuning = () => getRuntimeVisuals().planets.aura;
 const getPlanetVariationTuning = () => getRuntimeVisuals().planets.variation;
+
+export interface PlanetSurfaceMaterial extends MeshBasicNodeMaterial {
+  opacityUniform: ReturnType<typeof uniform>;
+}
 
 const tintColor = (
   value: string,
@@ -409,8 +413,13 @@ export const createPlanetMaterial = (
     color: string;
     coverage: number;
   },
-): MeshBasicNodeMaterial => {
-  const material = new MeshBasicNodeMaterial();
+): PlanetSurfaceMaterial => {
+  const opacityUniform = uniform(1);
+  const material = new MeshBasicNodeMaterial() as PlanetSurfaceMaterial;
+  material.transparent = true;
+  material.opacityNode = opacityUniform;
+  material.opacityUniform = opacityUniform;
+  material.alphaTest = 0.01;
   const materialTuning = getPlanetMaterialTuning();
   const forestCoverage =
     forestProfile?.coverage ?? planetVisuals.forestCoverage;
@@ -451,7 +460,10 @@ export const createPlanetMaterial = (
   const forestOpacity = clamp(forestCoverage, 0, 1);
 
   const base = new Color(planetVisuals.color);
-  const lowland = tintWithOffset(planetVisuals.color, materialTuning.lowlandTint);
+  const lowland = tintWithOffset(
+    planetVisuals.color,
+    materialTuning.lowlandTint,
+  );
   const highland = tintWithOffset(
     planetVisuals.color,
     materialTuning.highlandTint,
@@ -475,9 +487,9 @@ export const createPlanetMaterial = (
   );
 
   const continents = mx_fractal_noise_float(
-    dir.mul(materialTuning.continentsScale * planetVisuals.continentsScale).add(
-      seedOffset,
-    ),
+    dir
+      .mul(materialTuning.continentsScale * planetVisuals.continentsScale)
+      .add(seedOffset),
     materialTuning.continentsOctaves,
     materialTuning.continentsLacunarity,
     materialTuning.continentsGain,
@@ -582,18 +594,8 @@ export const createPlanetMaterial = (
     forestBandStart,
     forestBandEnd,
     landElevation,
-  ).mul(
-    smoothstep(
-      forestFadeStart,
-      forestFadeEnd,
-      landElevation,
-    ),
-  );
-  const forestBody = smoothstep(
-    forestClumpStart,
-    forestClumpEnd,
-    forestClumps,
-  );
+  ).mul(smoothstep(forestFadeStart, forestFadeEnd, landElevation));
+  const forestBody = smoothstep(forestClumpStart, forestClumpEnd, forestClumps);
   const forestTexture = mix(
     color(forestDark),
     color(forestLight),
@@ -667,6 +669,7 @@ export const createPlanetGlowMaterial = (
   auraScale: number,
   auraGap: number,
 ) => {
+  const opacityUniform = uniform(1);
   const material = new MeshBasicNodeMaterial({
     transparent: true,
     depthWrite: false,
@@ -705,14 +708,17 @@ export const createPlanetGlowMaterial = (
     mix(color(innerGlow), color(outerGlow), haloBlend)
       .mul(haloMask)
       .mul(pulse)
+      .mul(opacityUniform)
       .mul(auraTuning.brightness),
-    haloMask.mul(auraTuning.alpha).mul(pulse),
+    haloMask.mul(auraTuning.alpha).mul(pulse).mul(opacityUniform),
   );
+  material.alphaTest = 0.01;
 
   return {
     contactStartNode,
     fadeStartNode,
     material,
+    opacityUniform,
     riseEndNode,
     riseStartNode,
   };
@@ -854,7 +860,9 @@ export const createBoostWakeMaterial = () => {
       headGradient.addColorStop(0, "rgba(255,255,255,0)");
       headGradient.addColorStop(0.08, "rgba(255,255,255,0.88)");
       headGradient.addColorStop(0.26, "rgba(255,255,255,1)");
-      headGradient.addColorStop(1, "rgba(255,255,255,0.12)");
+      headGradient.addColorStop(0.72, "rgba(255,255,255,0.28)");
+      headGradient.addColorStop(0.9, "rgba(255,255,255,0.08)");
+      headGradient.addColorStop(1, "rgba(255,255,255,0)");
       context.fillStyle = headGradient;
       context.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -1123,6 +1131,7 @@ export const createStarfieldLayer = (
   z: number,
   parallax: number,
 ) => {
+  const starfieldTileSize = getStarfieldTileSize();
   const geometry = new BufferGeometry();
   const positions = new Float32Array(count * 3);
   const alpha = new Float32Array(count);
@@ -1132,8 +1141,8 @@ export const createStarfieldLayer = (
 
   for (let index = 0; index < count; index += 1) {
     const offset = index * 3;
-    const x = (Math.random() - 0.5) * STARFIELD_TILE_SIZE;
-    const y = (Math.random() - 0.5) * STARFIELD_TILE_SIZE;
+    const x = (Math.random() - 0.5) * starfieldTileSize;
+    const y = (Math.random() - 0.5) * starfieldTileSize;
 
     positions[offset] = x;
     positions[offset + 1] = y;
@@ -1179,8 +1188,8 @@ export const createStarfieldLayer = (
     for (let tileX = -1; tileX <= 1; tileX += 1) {
       const points = new Points(geometry, material);
       points.position.set(
-        tileX * STARFIELD_TILE_SIZE,
-        tileY * STARFIELD_TILE_SIZE,
+        tileX * starfieldTileSize,
+        tileY * starfieldTileSize,
         z,
       );
       points.frustumCulled = false;
@@ -1194,6 +1203,6 @@ export const createStarfieldLayer = (
     group,
     material,
     parallax,
-    tileSize: STARFIELD_TILE_SIZE,
+    tileSize: starfieldTileSize,
   };
 };

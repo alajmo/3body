@@ -152,11 +152,13 @@ const createPreviewHudState = (
 
 export function EditorPreviewStage({
   documentValue,
+  externalRevision = 0,
   hudTuning,
   itemId,
   showHud,
 }: {
   documentValue: GameTuningDocument;
+  externalRevision?: number;
   hudTuning: HudVisualTuning;
   itemId: EditorPreviewViewportItemId | "orbits";
   showHud: boolean;
@@ -169,6 +171,16 @@ export function EditorPreviewStage({
     createViewportRefreshSignature(documentValue),
   );
   const [viewportRevision, setViewportRevision] = useState(0);
+  const resolvedRevision = viewportRevision + externalRevision;
+
+  useEffect(() => {
+    return () => {
+      if (refreshTimeoutRef.current !== null) {
+        window.clearTimeout(refreshTimeoutRef.current);
+        refreshTimeoutRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const nextSignature = createViewportRefreshSignature(documentValue);
@@ -185,13 +197,6 @@ export function EditorPreviewStage({
       refreshTimeoutRef.current = null;
       setViewportRevision((current) => current + 1);
     }, VIEWPORT_REFRESH_DEBOUNCE_MS);
-
-    return () => {
-      if (refreshTimeoutRef.current !== null) {
-        window.clearTimeout(refreshTimeoutRef.current);
-        refreshTimeoutRef.current = null;
-      }
-    };
   }, [documentValue]);
 
   return (
@@ -200,21 +205,21 @@ export function EditorPreviewStage({
         <ShowcaseViewportPanel
           className="editor-preview-surface"
           focus="all"
-          revision={viewportRevision}
+          revision={resolvedRevision}
         />
       ) : useHudBackgroundSurface ? (
         <EditorItemViewportPanel
           className="editor-preview-surface"
           itemId="background"
           presentation="stage"
-          revision={viewportRevision}
+          revision={resolvedRevision}
         />
       ) : (
         <EditorItemViewportPanel
           className="editor-preview-surface"
           itemId={itemId}
           presentation="stage"
-          revision={viewportRevision}
+          revision={resolvedRevision}
         />
       )}
       {showHud ? (

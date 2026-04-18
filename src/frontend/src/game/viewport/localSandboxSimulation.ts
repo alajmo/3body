@@ -1,6 +1,7 @@
-import type { Vec2 } from "@3body/shared";
+import type { Vec2, WildcardKind } from "@3body/shared";
 import {
   FIXED_STEP_SEC,
+  GRAVITY_PULSE_RADIUS,
   PLANET_HP,
   clamp,
   normalize as normalizeVec2,
@@ -54,6 +55,13 @@ interface LocalSandboxBoostBurstState {
   tick: number;
 }
 
+export interface LocalSandboxGravityPulseState {
+  effectRadius: number;
+  origin: Vec2;
+  planetRadius: number;
+  startedAtSec: number;
+}
+
 const decayUnitValue = (
   value: number,
   deltaSec: number,
@@ -62,19 +70,21 @@ const decayUnitValue = (
   Math.max(0, value - deltaSec / Math.max(durationSec, Number.EPSILON));
 
 const describePlanetDeath = (
-  planet: Pick<CombatSandboxPlanet, "deathReason" | "label">,
+  planet: Pick<CombatSandboxPlanet, "deathReason" | "displayName" | "label">,
 ): string => {
+  const displayName = planet.displayName || planet.label;
+
   switch (planet.deathReason) {
     case "boundary":
-      return `${planet.label} drifted beyond the arena`;
+      return `${displayName} drifted beyond the arena`;
     case "blackHole":
-      return `${planet.label} fell into the Black Hole`;
+      return `${displayName} fell into the Black Hole`;
     case "planetCollision":
-      return `${planet.label} broke apart on impact`;
+      return `${displayName} broke apart on impact`;
     case "sunCollision":
-      return `${planet.label} was consumed by a sun`;
+      return `${displayName} was consumed by a sun`;
     default:
-      return `${planet.label} was destroyed`;
+      return `${displayName} was destroyed`;
   }
 };
 
@@ -179,6 +189,7 @@ export const createLocalSandboxSimulationState = (
   const state = {
     accumulatorSec: 0,
     activeBoostBursts: [] as LocalSandboxBoostBurstState[],
+    activeGravityPulse: null as LocalSandboxGravityPulseState | null,
     cameraShake: 0,
     currentState: initialState,
     foresightPathsByEntityId: new Map<number, readonly Vec2[]>(),
@@ -243,6 +254,7 @@ export const resetLocalSandboxSimulationState = ({
   simulationState.foresightPathsByEntityId.clear();
   simulationState.lastBoostVisualTick = nextState.player.lastBoostTick;
   simulationState.activeBoostBursts.length = 0;
+  simulationState.activeGravityPulse = null;
   simulationState.killFeedEntries.length = 0;
   simulationState.nextKillFeedId = 1;
   simulationState.cameraShake = 0;
@@ -388,6 +400,12 @@ export const runLocalSandboxSimulationFrame = ({
     const previousControlMode = simulationState.currentState.player.controlMode;
     const previousActiveDroneId =
       simulationState.currentState.player.activeDroneId;
+    const previousGravityPulseHeld =
+      simulationState.currentState.player.gravityPulseHeld;
+    const previousCloakHeld = simulationState.currentState.player.cloakHeld;
+    const gravityPulseRequestedThisStep =
+      inputRuntime.pendingAbilityRequests.gravityPulse;
+    const cloakRequestedThisStep = inputRuntime.pendingAbilityRequests.cloak;
     const fireRequestedThisStep =
       inputController?.consumeShotRequest() ?? false;
     const nextState = stepSandbox(
@@ -395,14 +413,15 @@ export const runLocalSandboxSimulationFrame = ({
       {
         aimWorld: inputRuntime.inputState.aimWorld,
         boostRequested: inputRuntime.pendingAbilityRequests.boost,
+        cloakRequested: inputRuntime.pendingAbilityRequests.cloak,
         droneLaunchRequested: inputRuntime.pendingDroneRequests.launch,
         droneTurnLeftHeld: inputRuntime.droneSteering.leftHeld,
         droneTurnRightHeld: inputRuntime.droneSteering.rightHeld,
         fireRequested: fireRequestedThisStep,
         foresightRequested: inputRuntime.pendingAbilityRequests.foresight,
+        gravityPulseRequested: inputRuntime.pendingAbilityRequests.gravityPulse,
         selectedRocketKind: inputRuntime.inputState.selectedRocketKind,
         shieldRequested: inputRuntime.pendingAbilityRequests.shield,
-        wildcardRequested: inputRuntime.pendingAbilityRequests.wildcard,
       },
       blackHoleSettings,
     );
@@ -503,6 +522,42 @@ export const runLocalSandboxSimulationFrame = ({
       }
       simulationState.lastBoostVisualTick =
         simulationState.currentState.player.lastBoostTick;
+    }
+
+    const consumedGravityPulse =
+      gravityPulseRequestedThisStep &&
+      previousGravityPulseHeld &&
+      !simulationState.currentState.player.gravityPulseHeld;
+    const consumedCloak =
+      cloakRequestedThisStep &&
+      previousCloakHeld &&
+      !simulationState.currentState.player.cloakHeld;
+
+    if (consumedGravityPulse) {
+      const pulsingPlanet =
+        simulationState.currentState.planets.find(
+          (planet) =>
+            planet.id === simulationState.currentState.player.planetId,
+        ) ?? null;
+      if (pulsingPlanet?.alive) {
+        simulationState.activeGravityPulse = {
+          effectRadius: GRAVITY_PULSE_RADIUS,
+          origin: { x: pulsingPlanet.pos.x, y: pulsingPlanet.pos.y },
+          planetRadius: pulsingPlanet.radius,
+          startedAtSec: nowSec,
+        };
+        simulationState.cameraShake = Math.max(
+          simulationState.cameraShake,
+          0.36,
+        );
+      }
+    }
+
+    if (consumedCloak) {
+      simulationState.cameraShake = Math.max(
+        simulationState.cameraShake,
+        0.12,
+      );
     }
 
     simulationState.accumulatorSec -= FIXED_STEP_SEC;

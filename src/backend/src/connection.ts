@@ -127,7 +127,11 @@ const isShieldAimMsg = (value: unknown): value is ShieldAimMsg =>
   isRecord(value) && value.type === "shieldAim" && isVec2(value.dir);
 
 const isAbilitySlot = (value: unknown): value is AbilityMsg["slot"] =>
-  value === "q" || value === "w" || value === "e" || value === "r";
+  value === "q" ||
+  value === "w" ||
+  value === "e" ||
+  value === "g" ||
+  value === "c";
 
 const isAbilityMsg = (value: unknown): value is AbilityMsg =>
   isRecord(value) &&

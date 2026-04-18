@@ -6,7 +6,7 @@
         "terra": {
           "auraGap": 0,
           "auraScale": 2.2,
-          "bodyScale": 2,
+          "bodyScale": 1,
           "color": "#9fc66f",
           "continentsScale": 1,
           "forestAltitude": 0,
@@ -23,7 +23,7 @@
         "ignis": {
           "auraGap": 0,
           "auraScale": 2.2,
-          "bodyScale": 2,
+          "bodyScale": 1,
           "color": "#ff8550",
           "continentsScale": 1,
           "forestAltitude": 0,
@@ -40,7 +40,7 @@
         "glacius": {
           "auraGap": 0,
           "auraScale": 2.2,
-          "bodyScale": 2,
+          "bodyScale": 1,
           "color": "#8ed8ff",
           "continentsScale": 1,
           "forestAltitude": 0,
@@ -57,7 +57,7 @@
         "volans": {
           "auraGap": 0,
           "auraScale": 2.2,
-          "bodyScale": 2,
+          "bodyScale": 1,
           "color": "#5fe7da",
           "continentsScale": 1,
           "forestAltitude": 0,
@@ -74,7 +74,7 @@
         "oculus": {
           "auraGap": 0,
           "auraScale": 2.2,
-          "bodyScale": 2,
+          "bodyScale": 1,
           "color": "#ffd56b",
           "continentsScale": 1,
           "forestAltitude": 0,
@@ -91,7 +91,7 @@
         "umbra": {
           "auraGap": 0,
           "auraScale": 2.2,
-          "bodyScale": 2,
+          "bodyScale": 1,
           "color": "#8c7dff",
           "continentsScale": 1,
           "forestAltitude": 0,
@@ -108,7 +108,7 @@
         "corvus": {
           "auraGap": 0,
           "auraScale": 2.2,
-          "bodyScale": 2,
+          "bodyScale": 1,
           "color": "#d7e4ff",
           "continentsScale": 1,
           "forestAltitude": 0,
@@ -254,8 +254,35 @@
       }
     },
     "suns": {
-      "glowScale": 0.5,
-      "warpScale": 0.5
+      "profiles": [
+        {
+          "bodyScale": 1,
+          "color": "#ffd78a",
+          "coreBrightness": 1,
+          "glowBrightness": 1,
+          "glowColor": "#ffefb5",
+          "glowScale": 0.5,
+          "warpScale": 0.5
+        },
+        {
+          "bodyScale": 1,
+          "color": "#ffd78a",
+          "coreBrightness": 1,
+          "glowBrightness": 1,
+          "glowColor": "#ffefb5",
+          "glowScale": 0.5,
+          "warpScale": 0.5
+        },
+        {
+          "bodyScale": 1,
+          "color": "#ffd78a",
+          "coreBrightness": 1,
+          "glowBrightness": 1,
+          "glowColor": "#ffefb5",
+          "glowScale": 0.5,
+          "warpScale": 0.5
+        }
+      ]
     },
     "blackHole": {
       "coreRadius": 110,
@@ -353,6 +380,18 @@
       "badgeBaseSize": 80,
       "badgeScale": 1
     },
+    "orbits": {
+      "boundaryDebris": {
+        "coolColor": "#8ca8c7",
+        "density": 1,
+        "dustSize": 3.6,
+        "largeRockScale": 1,
+        "smallRockScale": 1,
+        "speed": 1,
+        "thickness": 148,
+        "warmColor": "#b7a18e"
+      }
+    },
     "hud": {
       "bottomInset": 20,
       "cardRadius": 14,
@@ -372,11 +411,144 @@
     }
   },
   "gameplay": {
+    "arena": {
+      "instantDeath": true,
+      "radius": 2000
+    },
     "blackHole": {
       "killRadius": 150,
       "mass": 8000000,
       "rampSec": 30,
       "spawnSec": 300
+    },
+    "camera": {
+      "readModeWorldHeight": 7600,
+      "viewportWorldHeight": 4600
+    },
+    "orbits": {
+      "sunStartDistanceScale": 1,
+      "planetCircleRadius": 2200,
+      "systemDrift": {
+        "directionDeg": 0,
+        "speed": 0
+      },
+      "suns": [
+        {
+          "mass": 140000,
+          "pos": {
+            "x": -1600,
+            "y": 0
+          },
+          "radius": 88,
+          "vel": {
+            "x": 72.32160915498832,
+            "y": 110.93745960353417
+          }
+        },
+        {
+          "mass": 140000,
+          "pos": {
+            "x": 1600,
+            "y": 0
+          },
+          "radius": 124,
+          "vel": {
+            "x": 72.32160915498832,
+            "y": 110.93745960353417
+          }
+        },
+        {
+          "mass": 140000,
+          "pos": {
+            "x": 0,
+            "y": 0
+          },
+          "radius": 160,
+          "vel": {
+            "x": -144.64321830997665,
+            "y": -221.87491920706827
+          }
+        }
+      ],
+      "planets": [
+        {
+          "pos": {
+            "x": 1051.733345716462,
+            "y": -486.2037513362361
+          },
+          "radius": 22,
+          "vel": {
+            "x": 207.27459254394333,
+            "y": 436.57125872427775
+          }
+        },
+        {
+          "pos": {
+            "x": 1237.2001757998341,
+            "y": 495.31145926706535
+          },
+          "radius": 22,
+          "vel": {
+            "x": -163.37440434072008,
+            "y": 400.77881724748056
+          }
+        },
+        {
+          "pos": {
+            "x": 460.1445835773605,
+            "y": 1556.3928974903736
+          },
+          "radius": 22,
+          "vel": {
+            "x": -372.65622642539535,
+            "y": 111.7201256085271
+          }
+        },
+        {
+          "pos": {
+            "x": -1196.4670734311585,
+            "y": 1528.8907139662576
+          },
+          "radius": 22,
+          "vel": {
+            "x": -272.90915043475695,
+            "y": -216.89824635627662
+          }
+        },
+        {
+          "pos": {
+            "x": -1985.7429230504715,
+            "y": 198.96788944608195
+          },
+          "radius": 22,
+          "vel": {
+            "x": -37.30840816112747,
+            "y": -348.6404574643785
+          }
+        },
+        {
+          "pos": {
+            "x": -1491.5073043121004,
+            "y": -1768.4204616689865
+          },
+          "radius": 24,
+          "vel": {
+            "x": 241.48513032988333,
+            "y": -205.26122266372127
+          }
+        },
+        {
+          "pos": {
+            "x": 510.8599255453144,
+            "y": -2319.9217869943445
+          },
+          "radius": 24,
+          "vel": {
+            "x": 304.54386524914696,
+            "y": 67.92373710106013
+          }
+        }
+      ]
     },
     "rockets": {
       "light": {
@@ -424,6 +596,10 @@
         "charges": 1,
         "cooldownSec": 1,
         "magnitude": 280
+      },
+      "gravityPulse": {
+        "force": 1800,
+        "radius": 2000
       }
     },
     "cache": {

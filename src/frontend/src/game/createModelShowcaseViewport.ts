@@ -1,4 +1,4 @@
-import type { RocketKind, Vec2 } from "@3body/shared";
+import { getSunVisualProfile, type RocketKind, type Vec2 } from "@3body/shared";
 import { renderOutput } from "three/tsl";
 import { bloom } from "three/addons/tsl/display/BloomNode.js";
 import { rgbShift } from "three/addons/tsl/display/RGBShiftNode.js";
@@ -37,6 +37,7 @@ import {
   createSunCoreMaterial,
   createSunGlowMaterial,
   createWarpMaterial,
+  syncBackdropFrame,
   wrapCentered,
   type CacheIconKey,
 } from "./showcaseVisuals";
@@ -49,6 +50,7 @@ import {
 } from "./viewport/rendererBootstrap";
 import { createCompatibleScenePass } from "./viewport/postProcessingCompat";
 import { createViewportAnimationLoopController } from "./viewport/animationLoopController";
+import { getCacheArenaBadgeSize } from "./viewport/cacheVisuals";
 
 const CAMERA_DISTANCE = 100;
 const MAX_PIXEL_RATIO = 2;
@@ -194,6 +196,10 @@ export function createModelShowcaseViewport(
   const planetVisuals = runtimeTuning.visuals.planets;
   const sunVisuals = runtimeTuning.visuals.suns;
   const cacheVisuals = runtimeTuning.visuals.caches;
+  const cacheBadgeSize = getCacheArenaBadgeSize(
+    cacheVisuals.badgeBaseSize,
+    cacheVisuals.badgeScale,
+  );
   const rocketVisuals = runtimeTuning.visuals.rockets;
   const focus = options.focus ?? (options.rocketKind ? "rockets" : "all");
   const showPlanets = focus === "all" || focus === "planets";
@@ -229,14 +235,13 @@ export function createModelShowcaseViewport(
     camera.lookAt(sceneCenterX, sceneCenterY, 0);
     camera.updateProjectionMatrix();
 
-    if (backdropMesh !== null) {
-      backdropMesh.position.set(sceneCenterX, sceneCenterY, -40);
-      backdropMesh.scale.set(
-        worldHalfWidth * 2 * BACKDROP_OVERDRAW,
-        sceneHalfHeight * 2 * BACKDROP_OVERDRAW,
-        1,
-      );
-    }
+    syncBackdropFrame({
+      backdropMesh,
+      centerX: sceneCenterX,
+      centerY: sceneCenterY,
+      height: sceneHalfHeight * 2 * BACKDROP_OVERDRAW,
+      width: worldHalfWidth * 2 * BACKDROP_OVERDRAW,
+    });
   };
 
   const resizeViewport = () => {
@@ -391,7 +396,7 @@ export function createModelShowcaseViewport(
             );
             const mesh = new Mesh(planetGeometry, material);
             const glowMesh = new Mesh(glowGeometry, glowMaterial.material);
-            const renderRadius = planet.radius * visualStyle.bodyScale;
+            const renderRadius = planet.radius;
             const spinAxis = createPlanetSpinAxis(planet.id);
             const spinPhase =
               ((planet.id * 0.173) % 1) * Math.PI * 2 + index * 0.37;
@@ -424,27 +429,28 @@ export function createModelShowcaseViewport(
         : [];
 
       const showcaseSuns = showSuns
-        ? DEFAULT_ORBIT_PRESET.suns.map((sun, index) => {
+        ? sandboxState.suns.map((sun, index) => {
+            const profile = getSunVisualProfile(sunVisuals, index);
             const basePosition = getGridPosition(
               index,
-              DEFAULT_ORBIT_PRESET.suns.length,
+              sandboxState.suns.length,
               3,
               SUN_SECTION_SPACING_X,
               SUN_SECTION_SPACING_Y,
               SUN_SECTION_CENTER,
             );
             const coreMaterial = createSunCoreMaterial(
-              sun.color,
-              sun.glowColor,
+              profile.color,
+              profile.glowColor,
               sun.id,
-              sunVisuals.coreBrightness,
+              profile.coreBrightness,
             );
             const glowMaterial = createSunGlowMaterial(
-              sun.glowColor,
+              profile.glowColor,
               sun.id,
-              sunVisuals.glowBrightness,
+              profile.glowBrightness,
             );
-            const warpMaterial = createWarpMaterial(sun.glowColor, sun.id);
+            const warpMaterial = createWarpMaterial(profile.glowColor, sun.id);
             const coreMesh = new Mesh(sunGeometry, coreMaterial);
             const glowMesh = new Mesh(sunGeometry, glowMaterial);
             const warpMesh = new Mesh(warpGeometry, warpMaterial);
@@ -465,8 +471,8 @@ export function createModelShowcaseViewport(
               layoutBounds,
               basePosition.x,
               basePosition.y,
-              sun.radius * sunVisuals.warpScale,
-              sun.radius * sunVisuals.warpScale,
+              sun.radius * profile.warpScale,
+              sun.radius * profile.warpScale,
             );
             hasLayoutContent = true;
 
@@ -564,8 +570,8 @@ export function createModelShowcaseViewport(
               layoutBounds,
               basePosition.x,
               basePosition.y,
-              cacheVisuals.badgeBaseSize * cacheVisuals.badgeScale,
-              cacheVisuals.badgeBaseSize * cacheVisuals.badgeScale,
+              cacheBadgeSize,
+              cacheBadgeSize,
             );
             hasLayoutContent = true;
 
@@ -666,6 +672,7 @@ export function createModelShowcaseViewport(
           }
 
           for (const [index, sun] of showcaseSuns.entries()) {
+            const profile = getSunVisualProfile(sunVisuals, index);
             sun.coreMesh.position.set(
               sun.basePosition.x,
               sun.basePosition.y,
@@ -683,13 +690,13 @@ export function createModelShowcaseViewport(
             );
             sun.coreMesh.scale.set(sun.radius, sun.radius, sun.radius);
             sun.glowMesh.scale.set(
-              sun.radius * sunVisuals.glowScale,
-              sun.radius * sunVisuals.glowScale,
-              sun.radius * sunVisuals.glowScale,
+              sun.radius * profile.glowScale,
+              sun.radius * profile.glowScale,
+              sun.radius * profile.glowScale,
             );
             sun.warpMesh.scale.set(
-              sun.radius * sunVisuals.warpScale,
-              sun.radius * sunVisuals.warpScale,
+              sun.radius * profile.warpScale,
+              sun.radius * profile.warpScale,
               1,
             );
             sun.coreMesh.rotation.x = 0.38;
@@ -760,8 +767,8 @@ export function createModelShowcaseViewport(
             );
             cache.group.rotation.z = 0;
             cache.badgeSprite.scale.set(
-              cacheVisuals.badgeBaseSize * cacheVisuals.badgeScale * pulse,
-              cacheVisuals.badgeBaseSize * cacheVisuals.badgeScale * pulse,
+              cacheBadgeSize * pulse,
+              cacheBadgeSize * pulse,
               1,
             );
           }

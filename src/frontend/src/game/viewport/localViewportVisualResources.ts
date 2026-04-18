@@ -4,7 +4,7 @@ import type {
   RocketKind,
   Vec2,
 } from "@3body/shared";
-import { SHIELD_SPEC, mulberry32 } from "@3body/shared";
+import { SHIELD_SPEC, getSunVisualProfile, mulberry32 } from "@3body/shared";
 import { getRuntimeTuningDocument } from "../runtimeTuning";
 import {
   attribute,
@@ -56,6 +56,11 @@ import {
 } from "../rocketMeshSilhouette";
 import type { CombatSandboxState } from "../combatSandbox";
 import { ROCKET_RENDER_INSTANCE_LIMITS } from "../rocketVisibility";
+import { createShieldVisual } from "../shieldVisuals";
+import {
+  createAmbientBoundaryDebrisVisual,
+  type AmbientBoundaryDebrisVisual,
+} from "./ambientBoundaryDebris";
 import {
   createCacheSpriteAssets,
   disposeCacheSpriteAssets,
@@ -87,10 +92,12 @@ interface PlanetVisual {
   glowContactStartNode: ReturnType<typeof uniform>;
   glowFadeStartNode: ReturnType<typeof uniform>;
   glowMesh: Mesh;
+  glowOpacityUniform: ReturnType<typeof uniform>;
   glowRiseEndNode: ReturnType<typeof uniform>;
   glowRiseStartNode: ReturnType<typeof uniform>;
   mesh: Mesh;
   rotationSpeed: number;
+  surfaceOpacityUniform: ReturnType<typeof uniform>;
   spinAxis: Vector3;
   spinPhase: number;
 }
@@ -134,6 +141,8 @@ interface DebrisVisual {
   positionAttribute: Float32BufferAttribute;
 }
 
+interface BoundaryDebrisVisual extends AmbientBoundaryDebrisVisual {}
+
 interface BoostBurstVisual {
   geometry: BufferGeometry;
   opacityAttribute: Float32BufferAttribute;
@@ -143,10 +152,26 @@ interface BoostBurstVisual {
   wakeMesh: Mesh;
 }
 
+interface GravityPulseVisual {
+  coreMaterial: MeshBasicMaterial;
+  coreMesh: Mesh;
+  echoMaterial: MeshBasicMaterial;
+  echoMesh: Mesh;
+  ringMaterial: MeshBasicMaterial;
+  ringMesh: Mesh;
+}
+
 interface ImpactBurstVisual {
   coreMesh: Mesh;
   glowMesh: Mesh;
   ringMesh: Mesh;
+}
+
+interface CloakVisual {
+  ringMaterial: MeshBasicMaterial;
+  ringMesh: Mesh;
+  veilMaterial: MeshBasicMaterial;
+  veilMesh: Mesh;
 }
 
 interface PlanetExplosionChunkVisual {
@@ -194,6 +219,7 @@ interface PlanetGlowMaterialResult {
   contactStartNode: ReturnType<typeof uniform>;
   fadeStartNode: ReturnType<typeof uniform>;
   material: MeshBasicNodeMaterial;
+  opacityUniform: ReturnType<typeof uniform>;
   riseEndNode: ReturnType<typeof uniform>;
   riseStartNode: ReturnType<typeof uniform>;
 }
@@ -288,6 +314,7 @@ export const createLocalViewportVisualResources = ({
   sunGeometrySegments,
   glowGeometrySegments,
   warpGeometrySegments,
+  wildcardColor,
   reticleBaseColor,
   weaponColors,
 }: {
@@ -315,7 +342,9 @@ export const createLocalViewportVisualResources = ({
       color: string;
       coverage: number;
     },
-  ) => MeshBasicNodeMaterial;
+  ) => MeshBasicNodeMaterial & {
+    opacityUniform: ReturnType<typeof uniform>;
+  };
   getPlanetForestProfile: (
     archetype: ArchetypeId,
     planetId: number,
@@ -379,6 +408,7 @@ export const createLocalViewportVisualResources = ({
   sunGeometrySegments: number;
   glowGeometrySegments: number;
   warpGeometrySegments: number;
+  wildcardColor: string;
   reticleBaseColor: string;
   weaponColors: Record<RocketKind, { accent: string }>;
 }) => {
@@ -396,19 +426,19 @@ export const createLocalViewportVisualResources = ({
   );
   const sunTuning = getRuntimeTuningDocument().visuals.suns;
   const sunVisuals = initialState.suns.map((sun, index) => {
-    const presetSun = initialState.preset.suns[index]!;
+    const profile = getSunVisualProfile(sunTuning, index);
     const coreMaterial = createSunCoreMaterial(
-      presetSun.color,
-      presetSun.glowColor,
+      profile.color,
+      profile.glowColor,
       sun.id,
-      sunTuning.coreBrightness,
+      profile.coreBrightness,
     );
     const glowMaterial = createSunGlowMaterial(
-      presetSun.glowColor,
+      profile.glowColor,
       sun.id,
-      sunTuning.glowBrightness,
+      profile.glowBrightness,
     );
-    const warpMaterial = createWarpMaterial(presetSun.glowColor, sun.id);
+    const warpMaterial = createWarpMaterial(profile.glowColor, sun.id);
     const coreMesh = new Mesh(sunGeometry, coreMaterial);
     const glowMesh = new Mesh(sunGeometry, glowMaterial);
     const warpMesh = new Mesh(warpGeometry, warpMaterial);
@@ -438,6 +468,7 @@ export const createLocalViewportVisualResources = ({
       planet.id * 0.173,
       forestProfile,
     );
+    material.transparent = true;
     const glowMaterial = createPlanetGlowMaterial(
       archetypeVisuals.color,
       planet.id * 0.173,
@@ -461,10 +492,12 @@ export const createLocalViewportVisualResources = ({
       glowContactStartNode: glowMaterial.contactStartNode,
       glowFadeStartNode: glowMaterial.fadeStartNode,
       glowMesh,
+      glowOpacityUniform: glowMaterial.opacityUniform,
       glowRiseEndNode: glowMaterial.riseEndNode,
       glowRiseStartNode: glowMaterial.riseStartNode,
       mesh,
       rotationSpeed: 0.28 + index * 0.045,
+      surfaceOpacityUniform: material.opacityUniform,
       spinAxis,
       spinPhase,
     } satisfies PlanetVisual;
@@ -876,6 +909,19 @@ export const createLocalViewportVisualResources = ({
   } satisfies DebrisVisual;
   registerDisposables(disposables, debrisGeometry, debrisMaterial);
 
+  const boundaryDebrisVisual = createAmbientBoundaryDebrisVisual({
+    renderOrder: -11,
+    z: -5,
+  });
+  scene.add(boundaryDebrisVisual.bandGroup, boundaryDebrisVisual.points);
+  registerDisposables(
+    disposables,
+    boundaryDebrisVisual.bandGeometries,
+    boundaryDebrisVisual.bandMaterials,
+    boundaryDebrisVisual.geometry,
+    boundaryDebrisVisual.points.material as { dispose: () => void },
+  );
+
   const cannonMetalMaterial = new MeshBasicNodeMaterial();
   {
     const lightDir = normalize(vec3(-0.35, 0.82, 0.45));
@@ -1041,51 +1087,28 @@ export const createLocalViewportVisualResources = ({
   lockRingMesh.position.z = 5.5;
   scene.add(lockRingMesh);
 
-  const shieldArcRadians = (SHIELD_SPEC.arcDeg * Math.PI) / 180;
-  const shieldGlowMaterial = new MeshBasicMaterial({
-    color: shieldColor,
-    depthWrite: false,
-    opacity: 0.22,
-    transparent: true,
-    blending: AdditiveBlending,
-  });
-  const shieldGlowMesh = new Mesh(
-    new RingGeometry(
-      shieldOuterScale * 0.84,
-      shieldGlowOuterScale,
-      72,
-      1,
-      -shieldArcRadians / 2,
-      shieldArcRadians,
-    ),
-    shieldGlowMaterial,
-  );
-  shieldGlowMesh.renderOrder = 11;
-  shieldGlowMesh.position.z = 2.6;
-
-  const shieldArcMaterial = new MeshBasicMaterial({
-    color: shieldColor,
-    depthWrite: false,
-    opacity: 0.58,
-    transparent: true,
-  });
-  const shieldArcMesh = new Mesh(
-    new RingGeometry(
-      shieldInnerScale,
-      shieldOuterScale,
-      72,
-      1,
-      -shieldArcRadians / 2,
-      shieldArcRadians,
-    ),
+  const {
     shieldArcMaterial,
-  );
-  shieldArcMesh.renderOrder = 12;
-  shieldArcMesh.position.z = 2.8;
-
-  const shieldGroup = new Group();
+    shieldArcMesh,
+    shieldArcOpacityUniform,
+    shieldPanelMaterial,
+    shieldPanelMesh,
+    shieldPanelOpacityUniform,
+    shieldCrestMaterial,
+    shieldCrestMesh,
+    shieldCrestOpacityUniform,
+    shieldGlowMaterial,
+    shieldGlowMesh,
+    shieldGlowOpacityUniform,
+    shieldGroup,
+  } = createShieldVisual({
+    arcDeg: SHIELD_SPEC.arcDeg,
+    glowOuterScale: shieldGlowOuterScale,
+    innerScale: shieldInnerScale,
+    outerScale: shieldOuterScale,
+    shieldColor,
+  });
   shieldGroup.visible = false;
-  shieldGroup.add(shieldGlowMesh, shieldArcMesh);
   scene.add(shieldGroup);
 
   const boostBurstGeometry = new BufferGeometry();
@@ -1129,6 +1152,7 @@ export const createLocalViewportVisualResources = ({
   const boostWakeGeometry = new PlaneGeometry(1, 1);
   boostWakeGeometry.translate(0.5, 0, 0);
   const boostWakeMesh = new Mesh(boostWakeGeometry, boostWake.material);
+  boostWakeMesh.frustumCulled = false;
   boostWakeMesh.renderOrder = 11.8;
   boostWakeMesh.position.z = 2.26;
   boostWakeMesh.visible = false;
@@ -1144,6 +1168,8 @@ export const createLocalViewportVisualResources = ({
 
   const impactFlashGeometry = new CircleGeometry(1, 48);
   const impactRingGeometry = new RingGeometry(0.72, 1, 56);
+  const gravityPulseCoreGeometry = new CircleGeometry(1, 56);
+  const gravityPulseRingGeometry = new RingGeometry(0.9, 1, 72);
   const impactBurstVisuals = Array.from({ length: impactBurstLimit }, () => {
     const glowMaterial = new MeshBasicMaterial({
       depthWrite: false,
@@ -1185,6 +1211,107 @@ export const createLocalViewportVisualResources = ({
     } satisfies ImpactBurstVisual;
   });
   registerDisposables(disposables, impactFlashGeometry, impactRingGeometry);
+
+  const gravityPulseCoreMaterial = new MeshBasicMaterial({
+    color: tintColor(wildcardColor, 0.02, 0.08, 0.18),
+    depthWrite: false,
+    opacity: 0,
+    transparent: true,
+    blending: AdditiveBlending,
+  });
+  const gravityPulseRingMaterial = new MeshBasicMaterial({
+    color: tintColor(wildcardColor, -0.02, 0.18, 0.16),
+    depthWrite: false,
+    opacity: 0,
+    transparent: true,
+    blending: AdditiveBlending,
+  });
+  const gravityPulseEchoMaterial = new MeshBasicMaterial({
+    color: tintColor(wildcardColor, -0.05, 0.06, 0.1),
+    depthWrite: false,
+    opacity: 0,
+    transparent: true,
+    blending: AdditiveBlending,
+  });
+  const gravityPulseCoreMesh = new Mesh(
+    gravityPulseCoreGeometry,
+    gravityPulseCoreMaterial,
+  );
+  const gravityPulseRingMesh = new Mesh(
+    gravityPulseRingGeometry,
+    gravityPulseRingMaterial,
+  );
+  const gravityPulseEchoMesh = new Mesh(
+    gravityPulseRingGeometry,
+    gravityPulseEchoMaterial,
+  );
+  gravityPulseCoreMesh.visible = false;
+  gravityPulseRingMesh.visible = false;
+  gravityPulseEchoMesh.visible = false;
+  gravityPulseCoreMesh.renderOrder = 12.4;
+  gravityPulseRingMesh.renderOrder = 12.9;
+  gravityPulseEchoMesh.renderOrder = 12.7;
+  gravityPulseCoreMesh.position.z = 2.2;
+  gravityPulseRingMesh.position.z = 2.35;
+  gravityPulseEchoMesh.position.z = 2.3;
+  scene.add(gravityPulseCoreMesh, gravityPulseRingMesh, gravityPulseEchoMesh);
+  const gravityPulseVisual = {
+    coreMaterial: gravityPulseCoreMaterial,
+    coreMesh: gravityPulseCoreMesh,
+    echoMaterial: gravityPulseEchoMaterial,
+    echoMesh: gravityPulseEchoMesh,
+    ringMaterial: gravityPulseRingMaterial,
+    ringMesh: gravityPulseRingMesh,
+  } satisfies GravityPulseVisual;
+  registerDisposables(
+    disposables,
+    gravityPulseCoreGeometry,
+    gravityPulseRingGeometry,
+    gravityPulseCoreMaterial,
+    gravityPulseRingMaterial,
+    gravityPulseEchoMaterial,
+  );
+
+  const cloakVeilGeometry = new CircleGeometry(1, 48);
+  const cloakRingGeometry = new RingGeometry(0.88, 1, 64);
+  const cloakVisuals = initialState.planets.map(() => {
+    const veilMaterial = new MeshBasicMaterial({
+      color: tintColor(wildcardColor, -0.12, 0.04, 0.1),
+      depthWrite: false,
+      opacity: 0,
+      transparent: true,
+      blending: AdditiveBlending,
+    });
+    const ringMaterial = new MeshBasicMaterial({
+      color: tintColor(wildcardColor, 0.08, 0.18, 0.22),
+      depthWrite: false,
+      opacity: 0,
+      transparent: true,
+      blending: AdditiveBlending,
+    });
+    const veilMesh = new Mesh(cloakVeilGeometry, veilMaterial);
+    const ringMesh = new Mesh(cloakRingGeometry, ringMaterial);
+    veilMesh.visible = false;
+    ringMesh.visible = false;
+    veilMesh.renderOrder = 1.2;
+    ringMesh.renderOrder = 1.6;
+    veilMesh.position.z = 0.28;
+    ringMesh.position.z = 0.34;
+    scene.add(veilMesh, ringMesh);
+
+    return {
+      ringMaterial,
+      ringMesh,
+      veilMaterial,
+      veilMesh,
+    } satisfies CloakVisual;
+  });
+  registerDisposables(
+    disposables,
+    cloakVeilGeometry,
+    cloakRingGeometry,
+    cloakVisuals.flatMap((visual) => [visual.veilMaterial, visual.ringMaterial]),
+  );
 
   const planetExplosionFragmentGeometries = [
     new BoxGeometry(1, 1, 1, 3, 3, 3),
@@ -1288,6 +1415,10 @@ export const createLocalViewportVisualResources = ({
     shieldGlowMaterial,
     shieldArcMesh.geometry,
     shieldArcMaterial,
+    shieldPanelMesh.geometry,
+    shieldPanelMaterial,
+    shieldCrestMesh.geometry,
+    shieldCrestMaterial,
     boostBurstGeometry,
     boostBurstMaterial,
     boostWakeMesh.geometry,
@@ -1317,8 +1448,10 @@ export const createLocalViewportVisualResources = ({
     cannonGroup,
     cannonMuzzleMesh,
     cannonStemMesh,
+    boundaryDebrisVisual,
     debrisVisual,
     droneVisual,
+    gravityPulseVisual,
     hiddenTrailUntilByPlanetId,
     impactBurstVisuals,
     inactivePlanetExplosionVisuals,
@@ -1332,10 +1465,13 @@ export const createLocalViewportVisualResources = ({
     reticleRingMesh,
     rocketLaunchBurstPools,
     rocketPools,
-    shieldArcMaterial,
-    shieldGlowMaterial,
+    shieldArcOpacityUniform,
+    shieldPanelOpacityUniform,
+    shieldCrestOpacityUniform,
+    shieldGlowOpacityUniform,
     shieldGroup,
     sunVisuals,
     trailVisuals,
+    cloakVisuals,
   };
 };

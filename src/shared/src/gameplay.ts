@@ -51,7 +51,6 @@ const SIMPLE_CACHE_KINDS: readonly CacheContents[] = [
   { kind: "heavyAmmo" },
   { kind: "seekerPack" },
   { kind: "repair" },
-  { kind: "boostCharge" },
   { kind: "shieldExt" },
   { kind: "foresightExt" },
 ];

@@ -5,9 +5,14 @@ import {
   FORESIGHT_SPEC,
   len,
   type AbilitySpec,
+  type BlackHole,
   type BlackHoleSpec,
   type BoostSpec,
+  type Cache,
+  type Drone,
+  type PlanetPublic,
   type RocketKind,
+  type Sun,
   SHIELD_SPEC,
   type Vec2,
 } from "@3body/shared";
@@ -15,12 +20,9 @@ import { DEFAULT_ORBIT_PRESET } from "./orbitPresets";
 import { getRuntimeTuningDocument } from "./runtimeTuning";
 const DEFAULT_PLANET_VISUALS =
   CURRENT_GAME_TUNING.visuals.planets.archetypes.terra;
-export const DEFAULT_PLANET_BODY_SCALE =
-  DEFAULT_PLANET_VISUALS.bodyScale;
-export const DEFAULT_PLANET_AURA_SCALE =
-  DEFAULT_PLANET_VISUALS.auraScale;
-export const DEFAULT_PLANET_AURA_GAP =
-  DEFAULT_PLANET_VISUALS.auraGap;
+export const DEFAULT_PLANET_BODY_SCALE = DEFAULT_PLANET_VISUALS.bodyScale;
+export const DEFAULT_PLANET_AURA_SCALE = DEFAULT_PLANET_VISUALS.auraScale;
+export const DEFAULT_PLANET_AURA_GAP = DEFAULT_PLANET_VISUALS.auraGap;
 export const DEFAULT_CACHE_BADGE_SCALE =
   CURRENT_GAME_TUNING.visuals.caches.badgeScale;
 export const DEFAULT_FORESIGHT_SETTINGS: AbilitySpec = { ...FORESIGHT_SPEC };
@@ -34,7 +36,7 @@ export type HudStatusMode = "ready" | "active" | "cooldown";
 
 export interface GameViewportHudAbility {
   accent: string;
-  id: "foresight" | "shield" | "boost" | "wildcard";
+  id: "foresight" | "shield" | "boost" | "gravityPulse" | "cloak";
   keyLabel: string;
   label: string;
   mode: HudStatusMode;
@@ -93,6 +95,27 @@ export interface GameViewportConnectionState {
   state: "connected" | "local" | "reconnecting";
 }
 
+export type GameViewportMinimapEntityKind =
+  | "blackHole"
+  | "cache"
+  | "drone"
+  | "planet"
+  | "sun";
+
+export interface GameViewportMinimapEntity {
+  highlighted: boolean;
+  id: number;
+  kind: GameViewportMinimapEntityKind;
+  pos: Vec2;
+  radius: number;
+}
+
+export interface GameViewportMinimapState {
+  arenaRadius: number;
+  entities: GameViewportMinimapEntity[];
+  extentRadius: number;
+}
+
 export interface GameViewportHudState {
   alivePlayerCount: number;
   abilities: GameViewportHudAbility[];
@@ -112,6 +135,7 @@ export interface GameViewportHudState {
   foresightSettings: AbilitySpec;
   hudOpacity: number;
   killFeed: GameViewportKillFeedEntry[];
+  minimap: GameViewportMinimapState;
   planetBars: GameViewportPlanetBar[];
   planetBodyScale: number;
   planetAuraGap: number;
@@ -200,6 +224,102 @@ export const getPlayerMotionHud = (
   };
 };
 
+const createMinimapEntity = (
+  entity:
+    | Pick<BlackHole, "id" | "pos">
+    | Pick<Cache, "id" | "pos" | "radius">
+    | Pick<Drone, "id" | "pos" | "radius">
+    | Pick<PlanetPublic, "id" | "pos" | "radius">
+    | Pick<Sun, "id" | "pos" | "radius">,
+  kind: GameViewportMinimapEntityKind,
+  highlighted = false,
+  radius = "radius" in entity ? entity.radius : 0,
+): GameViewportMinimapEntity => ({
+  highlighted,
+  id: entity.id,
+  kind,
+  pos: {
+    x: entity.pos.x,
+    y: entity.pos.y,
+  },
+  radius,
+});
+
+export const createHudMinimapState = ({
+  arenaRadius,
+  blackHole,
+  caches,
+  drones,
+  highlightedEntity,
+  planets,
+  suns,
+}: {
+  arenaRadius: number;
+  blackHole?: BlackHole | null;
+  caches: readonly Cache[];
+  drones: readonly Drone[];
+  highlightedEntity?: {
+    id: number;
+    kind: GameViewportMinimapEntityKind;
+  } | null;
+  planets: readonly PlanetPublic[];
+  suns: readonly Sun[];
+}): GameViewportMinimapState => {
+  const entities: GameViewportMinimapEntity[] = [];
+  const isHighlighted = (id: number, kind: GameViewportMinimapEntityKind) =>
+    highlightedEntity?.id === id && highlightedEntity.kind === kind;
+
+  if (blackHole !== null && blackHole !== undefined) {
+    entities.push(
+      createMinimapEntity(
+        blackHole,
+        "blackHole",
+        isHighlighted(blackHole.id, "blackHole"),
+        Math.max(blackHole.killRadius, blackHole.radius),
+      ),
+    );
+  }
+
+  for (const sun of suns) {
+    entities.push(
+      createMinimapEntity(sun, "sun", isHighlighted(sun.id, "sun")),
+    );
+  }
+
+  for (const planet of planets) {
+    entities.push(
+      createMinimapEntity(planet, "planet", isHighlighted(planet.id, "planet")),
+    );
+  }
+
+  for (const cache of caches) {
+    entities.push(
+      createMinimapEntity(cache, "cache", isHighlighted(cache.id, "cache")),
+    );
+  }
+
+  for (const drone of drones) {
+    entities.push(
+      createMinimapEntity(drone, "drone", isHighlighted(drone.id, "drone")),
+    );
+  }
+
+  const extentRadius = entities.reduce(
+    (maxRadius, entity) => {
+      const radialDistance =
+        Math.hypot(entity.pos.x, entity.pos.y) + entity.radius;
+      return Math.max(maxRadius, radialDistance);
+    },
+    Math.max(arenaRadius, 0),
+  );
+
+  return {
+    arenaRadius: Math.max(arenaRadius, 0),
+    entities,
+    extentRadius,
+  };
+};
+
 export const createInitialHudState = (): GameViewportHudState => {
   const tuning = getRuntimeTuningDocument();
   const visualTuning = tuning.visuals;
@@ -231,6 +351,11 @@ export const createInitialHudState = (): GameViewportHudState => {
     foresightSettings: { ...DEFAULT_FORESIGHT_SETTINGS },
     hudOpacity: 1,
     killFeed: [],
+    minimap: {
+      arenaRadius: 0,
+      entities: [],
+      extentRadius: 0,
+    },
     planetBars: [],
     planetBodyScale: DEFAULT_PLANET_BODY_SCALE,
     planetAuraGap: DEFAULT_PLANET_AURA_GAP,
@@ -281,6 +406,24 @@ const areSettingsEqual = (
       current[key as keyof typeof current] === next[key as keyof typeof next],
   );
 
+const areMinimapStatesEqual = (
+  current: GameViewportMinimapState,
+  next: GameViewportMinimapState,
+) =>
+  current.arenaRadius === next.arenaRadius &&
+  current.extentRadius === next.extentRadius &&
+  areObjectsEqual(
+    current.entities,
+    next.entities,
+    (left, right) =>
+      left.highlighted === right.highlighted &&
+      left.id === right.id &&
+      left.kind === right.kind &&
+      left.pos.x === right.pos.x &&
+      left.pos.y === right.pos.y &&
+      left.radius === right.radius,
+  );
+
 export const areHudStatesEqual = (
   current: GameViewportHudState,
   next: GameViewportHudState,
@@ -296,6 +439,7 @@ export const areHudStatesEqual = (
   current.currentPresetId === next.currentPresetId &&
   current.damageFlash === next.damageFlash &&
   current.hudOpacity === next.hudOpacity &&
+  areMinimapStatesEqual(current.minimap, next.minimap) &&
   current.planetBodyScale === next.planetBodyScale &&
   current.planetAuraGap === next.planetAuraGap &&
   current.planetAuraScale === next.planetAuraScale &&
