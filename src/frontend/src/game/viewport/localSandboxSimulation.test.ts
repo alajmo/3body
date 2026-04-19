@@ -7,8 +7,8 @@ import {
 } from "./localSandboxSimulation";
 import type { GameViewportInputRuntimeState } from "./localInput";
 import {
-  FORESIGHT_DISPLAY_SAMPLE_COUNT,
   FORESIGHT_TARGET_DISTANCE,
+  MAX_FORESIGHT_SAMPLES,
   getForesightPathDistance,
 } from "./foresightShared";
 
@@ -225,8 +225,8 @@ describe("local sandbox held ability visuals", () => {
     expect(slowerDistance).toBeCloseTo(FORESIGHT_TARGET_DISTANCE, 0);
     expect(fasterDistance).toBeCloseTo(FORESIGHT_TARGET_DISTANCE, 0);
     expect(fasterDistance).toBeCloseTo(slowerDistance, 0);
-    expect(slowerPath).toHaveLength(FORESIGHT_DISPLAY_SAMPLE_COUNT);
-    expect(fasterPath).toHaveLength(FORESIGHT_DISPLAY_SAMPLE_COUNT);
+    expect(slowerPath).toHaveLength(MAX_FORESIGHT_SAMPLES);
+    expect(fasterPath).toHaveLength(MAX_FORESIGHT_SAMPLES);
     expect(Math.max(...slowerPath.map((point) => point.y))).toBeGreaterThan(40);
     expect(Math.max(...fasterPath.map((point) => point.y))).toBeGreaterThan(10);
   });

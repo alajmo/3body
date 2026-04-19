@@ -3,10 +3,10 @@ import type { NeutronStarVisualTuning } from "@3body/shared";
 export const NEUTRON_STAR_JET_SECONDARY_LENGTH_FACTOR = 0.86;
 export const NEUTRON_STAR_JET_SECONDARY_OPACITY_FACTOR = 0.84;
 export const NEUTRON_STAR_JET_SECONDARY_WIDTH_FACTOR = 0.74;
-export const NEUTRON_STAR_LENGTH_MASS_SCALE = 2.4;
-export const NEUTRON_STAR_LENS_MASS_SCALE = 1.1;
-export const NEUTRON_STAR_HALO_MASS_SCALE = 0.9;
-export const NEUTRON_STAR_WIDTH_MASS_SCALE = 0.12;
+const NEUTRON_STAR_LENGTH_MASS_SCALE = 2.4;
+const NEUTRON_STAR_LENS_MASS_SCALE = 1.1;
+const NEUTRON_STAR_HALO_MASS_SCALE = 0.9;
+const NEUTRON_STAR_WIDTH_MASS_SCALE = 0.12;
 
 export const getNeutronStarVisualShape = ({
   haloPulse,

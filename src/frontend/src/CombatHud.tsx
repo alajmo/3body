@@ -140,7 +140,7 @@ const formatMinimapAriaLabel = (
 
 const projectMinimapRadius = (radius: number, extentRadius: number): number =>
   MINIMAP_DRAWABLE_RADIUS *
-  Math.pow(clamp(radius / extentRadius, 0, 1), MINIMAP_RANGE_EXPONENT);
+  clamp(radius / extentRadius, 0, 1) ** MINIMAP_RANGE_EXPONENT;
 
 const projectMinimapPoint = (x: number, y: number, extentRadius: number) => {
   const center = MINIMAP_VIEWBOX_SIZE / 2;
@@ -374,6 +374,7 @@ function WorldMinimap({ minimap }: { minimap: GameViewportMinimapState }) {
             const markerStyle = getMinimapMarkerStyle(point.y, scanlineY);
             const highlight = entity.highlighted ? (
               <circle
+                key={`highlight-${entity.kind}-${entity.id}`}
                 className="minimap__marker-highlight"
                 cx={point.x}
                 cy={point.y}
@@ -470,6 +471,8 @@ function WorldMinimap({ minimap }: { minimap: GameViewportMinimapState }) {
                     />
                   </g>
                 );
+              default:
+                return null;
             }
           })}
         </svg>

@@ -5,7 +5,7 @@ import {
 } from "./game/createEditorItemPreviewViewport";
 import { createSunInteractionViewport } from "./game/createSunInteractionViewport";
 
-export type EditorItemViewportPanelId = EditorPreviewViewportItemId | "orbits";
+type EditorItemViewportPanelId = EditorPreviewViewportItemId | "orbits";
 
 export function EditorItemViewportPanel({
   className = "app-shell",
@@ -25,6 +25,7 @@ export function EditorItemViewportPanel({
     if (viewportElement === null) {
       return;
     }
+    void revision;
 
     if (itemId === "orbits" || itemId === "background" || itemId === "hud") {
       return createSunInteractionViewport(viewportElement, {

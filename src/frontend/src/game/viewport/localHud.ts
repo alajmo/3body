@@ -34,7 +34,7 @@ interface LocalSandboxHudColors {
   wildcard: string;
 }
 
-export interface BuildLocalSandboxHudStateParams {
+interface BuildLocalSandboxHudStateParams {
   blackHoleRemainingSec: number;
   blackHoleSettings: BlackHoleSpec;
   botsEnabled: boolean;
@@ -364,7 +364,7 @@ const buildPrimaryShortcuts = (
     : [];
 
 const buildContextualShortcuts = (
-  params: BuildLocalSandboxHudStateParams,
+  _params: BuildLocalSandboxHudStateParams,
 ): GameViewportShortcut[] => [];
 
 const buildAbilities = (

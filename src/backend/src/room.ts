@@ -46,7 +46,7 @@ const snapshotWorld = (world: World): World => ({
   debris: world.debris.slice(),
 });
 
-export type RoomPhase = "lobby" | "pick" | "countdown" | "combat" | "ended";
+type RoomPhase = "lobby" | "pick" | "countdown" | "combat" | "ended";
 
 export type RoomAdvanceEvent =
   | "lobbyState"
@@ -56,7 +56,7 @@ export type RoomAdvanceEvent =
 
 const DEFAULT_INPUT_DIR: Vec2 = { x: 1, y: 0 };
 
-export interface CombatIntentState {
+interface CombatIntentState {
   mouseDir: Vec2;
   shieldAimDir: Vec2;
   lastInputClientTick: number;
@@ -146,7 +146,7 @@ export type QueuedCombatMessage =
       aimDir?: AbilityMsg["aimDir"];
     };
 
-export interface RoomParticipant {
+interface RoomParticipant {
   playerId: PlayerId;
   name: PlayerName;
   seat: number;

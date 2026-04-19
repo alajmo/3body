@@ -25,7 +25,7 @@ export interface GameViewportInputRuntimeState {
   pointerState: PointerState;
 }
 
-export interface ViewportInputPlayerSeed {
+interface ViewportInputPlayerSeed {
   aimWorld: Vec2;
   selectedRocketKind: RocketKind;
 }

@@ -4,7 +4,7 @@ import {
   WebGPURenderer,
 } from "three/webgpu";
 
-export interface ViewportRendererBackendPolicy {
+interface ViewportRendererBackendPolicy {
   forceWebGL: boolean;
   label: "webgl" | "webgpu";
   reason: string;
@@ -18,7 +18,7 @@ export const PRODUCTION_VIEWPORT_RENDERER_BACKEND_POLICY: ViewportRendererBacken
       "Use native WebGPU when the current browser exposes WebGPU capability.",
   };
 
-export const WEBGL_VIEWPORT_RENDERER_BACKEND_POLICY: ViewportRendererBackendPolicy =
+const WEBGL_VIEWPORT_RENDERER_BACKEND_POLICY: ViewportRendererBackendPolicy =
   {
     forceWebGL: true,
     label: "webgl",
@@ -193,7 +193,7 @@ const detectViewportRendererBackend = (
   return backendPolicy.forceWebGL ? ("webgl" as const) : ("webgpu" as const);
 };
 
-export const createViewportRendererBootstrap = async ({
+const createViewportRendererBootstrap = async ({
   antialias = true,
   backendPolicy = PRODUCTION_VIEWPORT_RENDERER_BACKEND_POLICY,
   hostElement,

@@ -27,7 +27,7 @@ const serializeError = (error: unknown): Record<string, unknown> =>
       }
     : { error: String(error) };
 
-export const hashProfileToken = (profileToken: string): string =>
+const hashProfileToken = (profileToken: string): string =>
   createHash("sha256").update(profileToken).digest("hex");
 
 const leaderboardMetricOrderBy = {
@@ -39,18 +39,18 @@ const leaderboardMetricOrderBy = {
     "stats.damageDealt DESC, stats.updatedAtMs DESC, stats.playerId ASC",
 } as const;
 
-export type LeaderboardMetric = keyof typeof leaderboardMetricOrderBy;
+type LeaderboardMetric = keyof typeof leaderboardMetricOrderBy;
 
 export const isLeaderboardMetric = (
   value: string,
 ): value is LeaderboardMetric => value in leaderboardMetricOrderBy;
 
-export interface ResolvedPlayerIdentity {
+interface ResolvedPlayerIdentity {
   playerId: PlayerId;
   profileTokenHash: string;
 }
 
-export interface LeaderboardEntry {
+interface LeaderboardEntry {
   playerId: PlayerId;
   name: PlayerName;
   matchesPlayed: number;
@@ -63,7 +63,7 @@ export interface LeaderboardEntry {
   updatedAtMs: number;
 }
 
-export interface PlayerStatsView {
+interface PlayerStatsView {
   player: {
     playerId: PlayerId;
     lastKnownName: PlayerName;

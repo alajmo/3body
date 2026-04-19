@@ -30,7 +30,7 @@ import {
   sanitizeProfilingEnabled as sanitizeStoredProfilingEnabled,
 } from "./settings";
 
-export interface GameViewportSandboxSettingsState {
+interface GameViewportSandboxSettingsState {
   activePreset: OrbitPreset;
   blackHoleSettings: BlackHoleSpec;
   botsEnabled: boolean;

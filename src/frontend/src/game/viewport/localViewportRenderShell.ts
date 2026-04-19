@@ -3,8 +3,8 @@ import { bloom } from "three/addons/tsl/display/BloomNode.js";
 import { rgbShift } from "three/addons/tsl/display/RGBShiftNode.js";
 import {
   Mesh,
-  MeshBasicNodeMaterial,
-  OrthographicCamera,
+  type MeshBasicNodeMaterial,
+  type OrthographicCamera,
   PlaneGeometry,
   RenderPipeline,
   Scene,

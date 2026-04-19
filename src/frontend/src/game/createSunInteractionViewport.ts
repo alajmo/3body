@@ -18,7 +18,7 @@ import {
   Group,
   Mesh,
   MeshBasicMaterial,
-  MeshBasicNodeMaterial,
+  type MeshBasicNodeMaterial,
   OrthographicCamera,
   PlaneGeometry,
   Points,
@@ -27,7 +27,7 @@ import {
   RingGeometry,
   Scene,
   SphereGeometry,
-  WebGPURenderer,
+  type WebGPURenderer,
 } from "three/webgpu";
 import {
   createSandboxState as createCombatSandboxState,

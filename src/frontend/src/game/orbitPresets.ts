@@ -169,7 +169,7 @@ const IA1_PERIODIC_SANDBOX_NORMALIZED_SUNS = [
     glowColor: "#fff8d0",
     radius: 160,
     pos: { x: 0, y: 0 },
-    vel: { x: -0.691526850681138, y: -1.0607650045201807 },
+    vel: { x: -0.691526850681138, y: -1.0607650045201806 },
   },
 ] as const;
 

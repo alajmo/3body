@@ -5,7 +5,13 @@ import type {
   GameTuningDocument,
   HudVisualTuning,
 } from "@3body/shared";
-import { startTransition, useEffect, useRef, useState } from "react";
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { CombatHud } from "./CombatHud";
 import { createGameViewport } from "./game/createGameViewport";
 import {
@@ -145,7 +151,7 @@ export function EditGameViewportPanel({
   const [viewportController, setViewportController] =
     useState<GameViewportController | null>(null);
 
-  const restartViewport = () => {
+  const restartViewport = useCallback(() => {
     const viewportElement = viewportElementRef.current;
     if (viewportElement === null) {
       return;
@@ -168,7 +174,12 @@ export function EditGameViewportPanel({
       },
       sandboxSessionConfig,
     });
-  };
+  }, [
+    cameraWorldHeightOverride,
+    onControllerReady,
+    onHudStateChange,
+    sandboxSessionConfig,
+  ]);
 
   useEffect(() => {
     restartViewport();
@@ -181,7 +192,7 @@ export function EditGameViewportPanel({
       disposeViewportRef.current?.();
       disposeViewportRef.current = null;
     };
-  }, []);
+  }, [restartViewport]);
 
   useEffect(() => {
     if (viewportController === null) {
@@ -224,7 +235,7 @@ export function EditGameViewportPanel({
       refreshTimeoutRef.current = null;
       restartViewport();
     }, VIEWPORT_REFRESH_DEBOUNCE_MS);
-  }, [cameraWorldHeightOverride, documentValue, sandboxSessionConfig]);
+  }, [cameraWorldHeightOverride, documentValue, sandboxSessionConfig, restartViewport]);
 
   return (
     <div className={className}>

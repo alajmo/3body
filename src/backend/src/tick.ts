@@ -3,7 +3,6 @@ import {
   ARENA_BOUNDARY_SPEC,
   BLACK_HOLE_SPEC,
   BOOST_SPEC,
-  CACHE_DROP_SPEED_SCALE,
   CACHE_GRAVITY_SCALE,
   CACHE_RADIUS,
   CACHE_SPEC,
@@ -25,8 +24,6 @@ import {
   SHIELD_SPEC,
   add,
   clamp,
-  clampLen,
-  cloneCacheContents,
   consumeBlackHoleBodies,
   dist,
   dot,
@@ -205,7 +202,7 @@ const isInsideBlackHole = (
   blackHole !== undefined &&
   dist(body.pos, blackHole.pos) <= body.radius + blackHole.killRadius;
 
-const hasActiveShield = (planet: PlanetPublic, tick: number): boolean =>
+const hasActiveShield = (planet: PlanetPublic, _tick: number): boolean =>
   planet.shieldActive && planet.shieldLoad > 0;
 
 const shieldProtectsImpact = (
@@ -708,7 +705,7 @@ const applyAbilityMessage = (
       return;
     }
 
-    case "w":
+    case "w": {
       if (hasActiveShield(planet, room.tick)) {
         room.world.planets[planetIndex] = {
           ...planet,
@@ -738,6 +735,7 @@ const applyAbilityMessage = (
       };
       privateState.nextShieldExt = false;
       return;
+    }
 
     case "e": {
       const maxBoostCharges = getBoostChargeCapacity(planet.archetype);

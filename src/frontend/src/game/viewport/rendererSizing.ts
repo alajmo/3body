@@ -1,6 +1,6 @@
 import type { WebGPURenderer } from "three/webgpu";
 
-export interface ViewportHostSize {
+interface ViewportHostSize {
   aspect: number;
   height: number;
   width: number;

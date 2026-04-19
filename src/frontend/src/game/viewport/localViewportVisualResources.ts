@@ -16,7 +16,6 @@ import {
   color,
   dot,
   float,
-  length,
   max,
   mix,
   normalize,
@@ -26,7 +25,6 @@ import {
   smoothstep,
   uniform,
   uv,
-  vec2,
   vec3,
 } from "three/tsl";
 import {
@@ -63,7 +61,6 @@ import { ROCKET_RENDER_INSTANCE_LIMITS } from "../rocketVisibility";
 import { createShieldVisual } from "../shieldVisuals";
 import {
   createAmbientBoundaryDebrisVisual,
-  type AmbientBoundaryDebrisVisual,
 } from "./ambientBoundaryDebris";
 import {
   createCacheSpriteAssets,
@@ -155,8 +152,6 @@ interface DebrisVisual {
   points: Points;
   positionAttribute: Float32BufferAttribute;
 }
-
-interface BoundaryDebrisVisual extends AmbientBoundaryDebrisVisual {}
 
 interface BoostBurstVisual {
   geometry: BufferGeometry;

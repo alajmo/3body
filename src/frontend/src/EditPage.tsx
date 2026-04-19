@@ -310,7 +310,7 @@ type NumericFieldConfig<Key extends string> = {
   step: number;
 };
 
-const PLANET_MATERIAL_TINT_FIELDS = [
+const _PLANET_MATERIAL_TINT_FIELDS = [
   { key: "lowlandTint", label: "Lowland" },
   { key: "highlandTint", label: "Highland" },
   { key: "rockTint", label: "Rock" },
@@ -320,7 +320,7 @@ const PLANET_MATERIAL_TINT_FIELDS = [
   { key: "forestLightTint", label: "Forest light" },
 ] as const satisfies readonly { key: PlanetMaterialTintKey; label: string }[];
 
-const PLANET_SURFACE_GEOMETRY_FIELDS = [
+const _PLANET_SURFACE_GEOMETRY_FIELDS = [
   { key: "baseRadius", label: "Base radius", min: 0.25, max: 1.5, step: 0.01 },
   {
     key: "displacementBudget",
@@ -408,7 +408,7 @@ const PLANET_SURFACE_GEOMETRY_FIELDS = [
   },
 ] as const satisfies readonly NumericFieldConfig<PlanetMaterialNumberKey>[];
 
-const PLANET_SURFACE_RAMP_FIELDS = [
+const _PLANET_SURFACE_RAMP_FIELDS = [
   {
     key: "landMaskStart",
     label: "Land mask start",
@@ -534,7 +534,7 @@ const PLANET_SURFACE_RAMP_FIELDS = [
   },
 ] as const satisfies readonly NumericFieldConfig<PlanetMaterialNumberKey>[];
 
-const PLANET_LIGHTING_FIELDS = [
+const _PLANET_LIGHTING_FIELDS = [
   { key: "lambertMin", label: "Lambert min", min: 0, max: 2, step: 0.01 },
   { key: "lambertMax", label: "Lambert max", min: 0, max: 2, step: 0.01 },
   { key: "aoMin", label: "AO min", min: 0, max: 2, step: 0.01 },
@@ -551,12 +551,12 @@ const PLANET_LIGHTING_FIELDS = [
   },
 ] as const satisfies readonly NumericFieldConfig<PlanetMaterialNumberKey>[];
 
-const PLANET_AURA_TINT_FIELDS = [
+const _PLANET_AURA_TINT_FIELDS = [
   { key: "glowOuterTint", label: "Glow outer" },
   { key: "glowInnerTint", label: "Glow inner" },
 ] as const satisfies readonly { key: PlanetAuraTintKey; label: string }[];
 
-const PLANET_AURA_SHAPE_FIELDS = [
+const _PLANET_AURA_SHAPE_FIELDS = [
   {
     key: "bodyBoundaryMin",
     label: "Body boundary min",
@@ -625,7 +625,7 @@ const PLANET_AURA_SHAPE_FIELDS = [
   { key: "fadeStartMax", label: "Fade start max", min: 0, max: 1, step: 0.001 },
 ] as const satisfies readonly NumericFieldConfig<PlanetAuraNumberKey>[];
 
-const PLANET_AURA_PULSE_FIELDS = [
+const _PLANET_AURA_PULSE_FIELDS = [
   {
     key: "pulseFrequency",
     label: "Pulse frequency",
@@ -673,13 +673,13 @@ const PLANET_AURA_PULSE_FIELDS = [
   { key: "alpha", label: "Alpha", min: 0, max: 1, step: 0.01 },
 ] as const satisfies readonly NumericFieldConfig<PlanetAuraNumberKey>[];
 
-const PLANET_LIGHT_DIRECTION_FIELDS = [
+const _PLANET_LIGHT_DIRECTION_FIELDS = [
   { key: "x", label: "Light X", min: -2, max: 2, step: 0.01 },
   { key: "y", label: "Light Y", min: -2, max: 2, step: 0.01 },
   { key: "z", label: "Light Z", min: -2, max: 2, step: 0.01 },
 ] as const satisfies readonly NumericFieldConfig<PlanetLightDirectionKey>[];
 
-const PLANET_VARIATION_FIELDS = [
+const _PLANET_VARIATION_FIELDS = [
   {
     key: "forestDensityJitterMin",
     label: "Forest jitter min",
@@ -1041,7 +1041,7 @@ const getPreviewMode = (
   }
 };
 
-const describeSaveState = (
+const _describeSaveState = (
   status: "idle" | "loading" | "saving" | "saved" | "error",
 ): string => {
   switch (status) {
@@ -1257,7 +1257,7 @@ function ColorField(props: {
   );
 }
 
-function PlanetTintOffsetFields({
+function _PlanetTintOffsetFields({
   label,
   onCommit,
   onPreviewChange,
@@ -1683,7 +1683,7 @@ export function EditPage() {
   const [saveStatus, setSaveStatus] = useState<
     "idle" | "loading" | "saving" | "saved" | "error"
   >("loading");
-  const [saveError, setSaveError] = useState<string | null>(null);
+  const [_saveError, setSaveError] = useState<string | null>(null);
   const [previewResetRevision, setPreviewResetRevision] = useState(0);
   const [aiGameplayParticipantCount, setAiGameplayParticipantCount] = useState(
     AI_GAMEPLAY_MAX_PARTICIPANTS,
@@ -2725,8 +2725,7 @@ export function EditPage() {
     switch (selectedItemId) {
       case "overview":
         return (
-          <>
-            <InspectorSection
+          <InspectorSection
               title="Camera Modes"
               note="Larger values zoom farther out. Sandbox uses the gameplay camera height."
               resetDisabled={sectionResetDisabled}
@@ -2767,7 +2766,6 @@ export function EditPage() {
                 }
               />
             </InspectorSection>
-          </>
         );
       case "hud":
         return (

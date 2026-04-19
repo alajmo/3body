@@ -8,7 +8,7 @@ import {
   SRGBColorSpace,
 } from "three/webgpu";
 
-export const CACHE_BADGE_BASE_SIZE = 80;
+const CACHE_BADGE_BASE_SIZE = 80;
 export const CACHE_ARENA_BADGE_SIZE_FACTOR = 0.95;
 
 export type CacheIconKey =

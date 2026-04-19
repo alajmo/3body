@@ -18,7 +18,7 @@ export function ShowcaseViewportPanel({
   focus = "all",
   minimumWorldHeight,
   rocketKind,
-  revision = 0,
+  revision: _revision = 0,
 }: ShowcaseViewportPanelProps) {
   const viewportElementRef = useRef<HTMLDivElement | null>(null);
 
@@ -33,7 +33,7 @@ export function ShowcaseViewportPanel({
       minimumWorldHeight,
       rocketKind,
     });
-  }, [focus, minimumWorldHeight, revision, rocketKind]);
+  }, [focus, minimumWorldHeight, rocketKind]);
 
   return (
     <div className={className}>

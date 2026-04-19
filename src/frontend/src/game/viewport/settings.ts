@@ -44,7 +44,7 @@ const BOOST_SETTING_LIMITS = {
   magnitude: { max: 1_200, min: 0 },
 } satisfies Record<keyof BoostSpec, { min: number; max: number }>;
 
-export interface LoadedViewportSettings {
+interface LoadedViewportSettings {
   blackHoleSettings: BlackHoleSpec;
   boostSettings: BoostSpec;
   cacheBadgeScale: number;

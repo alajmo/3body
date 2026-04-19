@@ -15,18 +15,18 @@ import {
 } from "@3body/shared";
 import {
   Color,
-  Float32BufferAttribute,
-  Group,
-  InstancedMesh,
-  Line,
+  type Float32BufferAttribute,
+  type Group,
+  type InstancedMesh,
+  type Line,
   type LineBasicMaterial,
-  Matrix4,
-  Mesh,
-  MeshBasicMaterial,
-  MeshBasicNodeMaterial,
-  Points,
+  type Matrix4,
+  type Mesh,
+  type MeshBasicMaterial,
+  type MeshBasicNodeMaterial,
+  type Points,
   type PointsNodeMaterial,
-  Quaternion,
+  type Quaternion,
   Vector3,
 } from "three/webgpu";
 import type {
@@ -2554,8 +2554,7 @@ export const updateLocalViewportScene = ({
   const shieldActive =
     currentState.player.shieldActive &&
     currentState.player.shieldLoad > 0 &&
-    playerPlanet !== null &&
-    playerPlanet.alive;
+    playerPlanet?.alive === true;
   shieldGroup.visible = shieldActive;
   if (shieldActive && playerPlanet !== null) {
     const shieldAngle = Math.atan2(

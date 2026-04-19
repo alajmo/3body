@@ -3,7 +3,7 @@ import { renderOutput } from "three/tsl";
 import { bloom } from "three/addons/tsl/display/BloomNode.js";
 import { rgbShift } from "three/addons/tsl/display/RGBShiftNode.js";
 import {
-  CanvasTexture,
+  type CanvasTexture,
   CircleGeometry,
   CylinderGeometry,
   Group,
@@ -15,8 +15,8 @@ import {
   Scene,
   SphereGeometry,
   Sprite,
-  SpriteMaterial,
-  WebGPURenderer,
+  type SpriteMaterial,
+  type WebGPURenderer,
 } from "three/webgpu";
 import { createSandboxState } from "./combatSandbox";
 import { DEFAULT_ORBIT_PRESET } from "./orbitPresets";

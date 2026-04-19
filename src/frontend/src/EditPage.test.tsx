@@ -1,5 +1,4 @@
 import {
-  ARENA_RADIUS_MIN,
   CURRENT_GAME_TUNING,
   DEFAULT_GAME_TUNING,
 } from "@3body/shared";

@@ -2,7 +2,7 @@ import { pass } from "three/tsl";
 import { ssaaPass } from "three/addons/tsl/display/SSAAPassNode.js";
 import type { Camera, Scene, WebGPURenderer } from "three/webgpu";
 
-export type CompatibleScenePass = ReturnType<typeof pass> & {
+type CompatibleScenePass = ReturnType<typeof pass> & {
   sampleLevel: number;
 };
 

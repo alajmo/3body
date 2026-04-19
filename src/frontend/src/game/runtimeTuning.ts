@@ -10,7 +10,7 @@ import {
   type GameTuningDocument,
 } from "@3body/shared";
 
-export interface RuntimeViewportDefaults {
+interface RuntimeViewportDefaults {
   blackHoleSettings: typeof BLACK_HOLE_SPEC;
   boostSettings: typeof BOOST_SPEC;
   cacheBadgeScale: number;

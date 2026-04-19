@@ -1,6 +1,6 @@
 import type { GameTuningDocument } from "@3body/shared";
 
-export type EditorPreviewCameraItemId =
+type EditorPreviewCameraItemId =
   | "overview"
   | "hud"
   | "orbits"

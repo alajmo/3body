@@ -1,33 +1,15 @@
-import type { ForesightPathVisualTuning, Vec2 } from "@3body/shared";
+import type { Vec2 } from "@3body/shared";
 import { FIXED_STEP_SEC, clamp } from "@3body/shared";
-
-const FORESIGHT_NEAR_THRESHOLD = 0.28;
-const FORESIGHT_MID_THRESHOLD = 0.68;
-const FORESIGHT_FADE_END = 0.92;
 
 export const FORESIGHT_TARGET_DISTANCE = 2_200;
 export const FORESIGHT_WINDOW_SEC = 12;
-export const FORESIGHT_STEP_INTERVAL = 2;
+const FORESIGHT_STEP_INTERVAL = 2;
 export const FORESIGHT_STEP_SEC = FIXED_STEP_SEC * FORESIGHT_STEP_INTERVAL;
-export const FORESIGHT_DISPLAY_SAMPLE_COUNT =
-  Math.ceil(6 / FORESIGHT_STEP_SEC) + 2;
+const FORESIGHT_DISPLAY_SAMPLE_COUNT = Math.ceil(6 / FORESIGHT_STEP_SEC) + 2;
 export const MAX_FORESIGHT_SAMPLES = FORESIGHT_DISPLAY_SAMPLE_COUNT;
 
 const getDistance = (from: Vec2, to: Vec2) =>
   Math.hypot(to.x - from.x, to.y - from.y);
-
-const getPointProgress = (index: number, pointCount: number) =>
-  pointCount <= 1 ? 0 : index / (pointCount - 1);
-
-const getPointStride = (progress: number, tuning: ForesightPathVisualTuning) =>
-  Math.max(
-    1,
-    progress < FORESIGHT_NEAR_THRESHOLD
-      ? tuning.nearStride
-      : progress < FORESIGHT_MID_THRESHOLD
-        ? tuning.midStride
-        : tuning.farStride,
-  );
 
 export const clipForesightPathAtDistance = (
   pathPoints: readonly Vec2[],
@@ -181,22 +163,4 @@ export const resampleForesightPath = (
   }
 
   return resampledPath;
-};
-
-export const getForesightPointOpacity = ({
-  index,
-  pointCount,
-  tuning,
-}: {
-  index: number;
-  pointCount: number;
-  tuning: ForesightPathVisualTuning;
-}) => {
-  const progress = getPointProgress(index, pointCount);
-  const fade = clamp(1 - progress / FORESIGHT_FADE_END, 0, 1);
-  const step = getPointStride(progress, tuning);
-  const visible =
-    tuning.showDots && progress < FORESIGHT_FADE_END && index % step === 0;
-
-  return visible ? fade : 0;
 };

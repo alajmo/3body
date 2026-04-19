@@ -1,6 +1,6 @@
 import type { PlanetPrivateState, PlanetPublic, World } from "../entities";
 import type { BotDifficulty } from "../protocol";
-import { dot, len, normalize, scale, sub } from "../vec2";
+import { dot, len, normalize, scale, } from "../vec2";
 import type { Vec2 } from "../vec2";
 import { defaultCombatAiAimDir } from "./blackboard";
 import { COMBAT_AI_TUNING } from "./runtimeTuning";
@@ -352,8 +352,7 @@ const buildAbilityPolicy = ({
     ticksSinceBoost >= tickHz * 2 &&
     dot(normalize(self.vel), moveGoal.dir) < 0.74;
   const boundaryRescueWindow =
-    moveGoal !== null &&
-    moveGoal.usesBoost &&
+    moveGoal?.usesBoost &&
     perception.boundaryPressure >= 0.32 &&
     moveGoal.breakdown.survival >= 0.44 &&
     inwardAlignment >= 0.18 &&
@@ -601,8 +600,7 @@ export const buildCombatAiPlan = ({
         ? cacheMoveGoal
         : null;
   const edgeRescueBoostGoal =
-    bestMoveGoal !== null &&
-    bestMoveGoal.usesBoost &&
+    bestMoveGoal?.usesBoost &&
     perception.boundaryPressure >= 0.32 &&
     bestMoveGoal.breakdown.survival >= 0.44 &&
     dot(bestMoveGoal.dir, inwardDir(self.pos)) >= 0.18;

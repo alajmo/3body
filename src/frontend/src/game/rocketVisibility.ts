@@ -18,7 +18,7 @@ export const ROCKET_MIN_SCREEN_WIDTH_PX = {
   trail: 1.6,
 } as const;
 
-export interface CannonWorldLayout {
+interface CannonWorldLayout {
   bandLenWorld: number;
   bandRadiusWorld: number;
   barrelLenWorld: number;
@@ -62,7 +62,7 @@ export const getCannonWorldLayout = (
   stemRadiusWorld: visuals.stemWidth * 0.5 * worldUnitsPerPixel,
 });
 
-export const getMaxConcurrentRocketsPerController = (
+const getMaxConcurrentRocketsPerController = (
   rocketKind: RocketKind,
 ): number =>
   Math.floor(

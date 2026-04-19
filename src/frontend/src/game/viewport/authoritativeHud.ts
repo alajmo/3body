@@ -217,6 +217,8 @@ const describeEvent = (
         case "rocket":
           return `${victim} was destroyed`;
       }
+
+      return null;
     }
     case "cachePickup": {
       const player = rosterNameByPlayerId.get(event.playerId) ?? "Unknown";

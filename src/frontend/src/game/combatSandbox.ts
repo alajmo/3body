@@ -28,14 +28,12 @@ import {
   ARENA_RADIUS,
   add,
   BOOST_SPEC,
-  CACHE_DROP_SPEED_SCALE,
   CACHE_GRAVITY_SCALE,
   CACHE_RADIUS,
   CACHE_SPEC,
   CACHE_TANGENTIAL_SPEED_MAX,
   CACHE_TANGENTIAL_SPEED_MIN,
   clamp,
-  clampLen,
   cloneCacheContents,
   cloneCombatBotMemory,
   consumeBlackHoleBodies,
@@ -90,7 +88,6 @@ import { resolveRuntimeOrbitPreset } from "./runtimeOrbitPreset";
 import { getRuntimeTuningDocument } from "./runtimeTuning";
 import { SHIELD_OUTER_SCALE } from "./shieldPresentation";
 
-export const SUN_SWALLOW_FADE_SEC = 2.4;
 const LIGHT_RELOCK_DISTANCE = 96;
 
 // Use a calmer outer-orbit body for the local player so combat starts are playable.
@@ -189,7 +186,7 @@ export type CombatPlanetDeathReason =
   | "boundary"
   | "blackHole";
 
-export type CombatResetReason = "allPlanetsLost" | "playerLost";
+type CombatResetReason = "allPlanetsLost" | "playerLost";
 
 export interface CombatSandboxSun extends Sun {
   swallowedAtSec: number | null;
@@ -313,7 +310,7 @@ export interface CombatSandboxState {
   rng: () => number;
 }
 
-export interface CreateSandboxStateOptions {
+interface CreateSandboxStateOptions {
   botsEnabled?: boolean;
   botDifficulty?: BotDifficulty;
   participantCount?: number;
@@ -332,11 +329,11 @@ export interface CombatSandboxStepInput {
   cloakRequested: boolean;
 }
 
-export interface CombatSandboxSimulationOptions {
+interface CombatSandboxSimulationOptions {
   planetImpactRadiusMultiplier?: number;
 }
 
-export interface CombatSandboxInterpolationCache {
+interface CombatSandboxInterpolationCache {
   previousRocketMap: Map<number, CombatSandboxRocket>;
   previousCacheMap: Map<number, CombatSandboxCache>;
   previousDebrisMap: Map<number, CombatSandboxDebris>;
@@ -700,7 +697,7 @@ const setAimWorldFromDirection = (
   );
 };
 
-const rotateVec2 = (dir: Vec2, angleRad: number): Vec2 => {
+const _rotateVec2 = (dir: Vec2, angleRad: number): Vec2 => {
   const cosAngle = Math.cos(angleRad);
   const sinAngle = Math.sin(angleRad);
   return {
@@ -1069,7 +1066,7 @@ const refreshForesightState = (
 
 const hasActiveShield = (
   controller: CombatSandboxControllerState,
-  tick: number,
+  _tick: number,
 ): boolean => controller.shieldActive && controller.shieldLoad > 0;
 
 const getShieldDrainAmount = (): number =>
@@ -2007,7 +2004,7 @@ export const stepSandbox = (
     const archetypeId =
       planetBeforeStep?.archetype ??
       getPlayerArchetypeId(planets, controller.planetId);
-    const archetype = getArchetypeStats(archetypeId);
+    const _archetype = getArchetypeStats(archetypeId);
     const maxBoostCharges = getBoostChargeCapacity(archetypeId);
     const currentAimDir = aimDirFromWorldTarget(
       planetBeforeStep,

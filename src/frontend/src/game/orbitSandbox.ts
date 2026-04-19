@@ -30,13 +30,13 @@ const PLANET_BOUNDARY_MAX_PUSH = 84;
 const PLANET_BOUNDARY_OUTWARD_DAMPING = 0.45;
 const PLANET_BOUNDARY_MIN_INWARD_SPEED = 26;
 
-export type PlanetDeathReason = "sunCollision";
-export type SandboxResetReason =
+type PlanetDeathReason = "sunCollision";
+type SandboxResetReason =
   | "sunCollision"
   | "allPlanetsLost"
   | "tooFewPlanetsTooEarly";
 
-export interface SandboxPlanet extends EntityBase {
+interface SandboxPlanet extends EntityBase {
   kind: "planet";
   label: string;
   color: string;
@@ -46,7 +46,7 @@ export interface SandboxPlanet extends EntityBase {
   deathReason?: PlanetDeathReason;
 }
 
-export interface SandboxState {
+interface SandboxState {
   tick: number;
   elapsedSec: number;
   preset: OrbitPreset;
@@ -54,7 +54,7 @@ export interface SandboxState {
   planets: SandboxPlanet[];
 }
 
-export interface SandboxDebugSnapshot {
+interface SandboxDebugSnapshot {
   elapsedSec: number;
   alivePlanets: number;
   minCurrentPlanetSunGap: number;

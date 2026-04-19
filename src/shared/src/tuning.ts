@@ -12,7 +12,7 @@ import type {
 } from "./constants";
 import type { ArchetypeId, RocketKind } from "./entities";
 import type { BotDifficulty } from "./protocol";
-import { type Vec2 } from "./vec2";
+import type { Vec2 } from "./vec2";
 
 export interface ShieldSpec extends AbilitySpec {
   arcDeg: number;

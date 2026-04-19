@@ -1,16 +1,12 @@
 import type {
   ClientMsg,
-  PlanetPrivateState,
   PlanetPublic,
-  Rocket,
-  RocketKind,
   Vec2,
   World,
 } from "@3body/shared";
 import {
   ARENA_RADIUS,
   clamp,
-  FIXED_STEP_SEC,
   getNeutronStarMassAlpha,
   getSunVisualProfile,
   len,
@@ -19,10 +15,9 @@ import {
   SNAPSHOT_HZ,
   sub,
 } from "@3body/shared";
-import { attribute, color, float, length, smoothstep, vec2 } from "three/tsl";
+import { attribute, color, } from "three/tsl";
 import {
   AdditiveBlending,
-  BoxGeometry,
   BufferGeometry,
   CircleGeometry,
   CylinderGeometry,
@@ -30,7 +25,7 @@ import {
   Group,
   Mesh,
   MeshBasicMaterial,
-  Object3D,
+  type Object3D,
   OrthographicCamera,
   PlaneGeometry,
   Points,
@@ -38,7 +33,7 @@ import {
   RingGeometry,
   Scene,
   SphereGeometry,
-  WebGPURenderer,
+  type WebGPURenderer,
 } from "three/webgpu";
 import type { AuthoritativeMatchRuntimeState } from "./authoritativeMatchRuntime";
 import {

@@ -17,12 +17,8 @@ import type { Sun, Vec2 } from "@3body/shared";
 import {
   attribute,
   color,
-  float,
-  length,
   renderOutput,
-  smoothstep,
   uniform,
-  vec2,
 } from "three/tsl";
 import { bloom } from "three/addons/tsl/display/BloomNode.js";
 import { rgbShift } from "three/addons/tsl/display/RGBShiftNode.js";
@@ -47,7 +43,7 @@ import {
   Scene,
   SphereGeometry,
   Sprite,
-  WebGPURenderer,
+  type WebGPURenderer,
 } from "three/webgpu";
 import { DEFAULT_ORBIT_PRESET, getDefaultOrbitSunLabel } from "./orbitPresets";
 import { getEditorPreviewCameraHalfHeight } from "./editorPreviewCamera";
@@ -106,10 +102,10 @@ import { CLOAK_PLANET_TARGET_OPACITY } from "./viewport/cloakVisual";
 import { createCompatibleScenePass } from "./viewport/postProcessingCompat";
 import {
   clipForesightPathAtDistance,
-  FORESIGHT_DISPLAY_SAMPLE_COUNT,
   FORESIGHT_STEP_SEC,
   FORESIGHT_TARGET_DISTANCE,
   FORESIGHT_WINDOW_SEC,
+  MAX_FORESIGHT_SAMPLES,
   resampleForesightPath,
   trimForesightPathToDistance,
 } from "./viewport/foresightShared";
@@ -216,7 +212,7 @@ export type EditorPreviewViewportItemId =
   | "cloak"
   | "cache";
 
-export interface EditorItemPreviewViewportOptions {
+interface EditorItemPreviewViewportOptions {
   itemId: EditorPreviewViewportItemId;
   presentation?: "card" | "stage";
 }
@@ -1284,7 +1280,7 @@ const createPreviewForesightPath = ({
   );
   const displayPath = resampleForesightPath(
     trimmedWorldPath,
-    FORESIGHT_DISPLAY_SAMPLE_COUNT,
+    MAX_FORESIGHT_SAMPLES,
   );
   const start = displayPath[0]!;
   const relativePath = displayPath.map((point) => ({

@@ -1,31 +1,23 @@
 import type { RocketKind, Vec2 } from "@3body/shared";
 import { ARENA_RADIUS, FIXED_STEP_SEC } from "@3body/shared";
 import {
-  Group,
+  type Group,
   Matrix4,
-  Mesh,
-  MeshBasicMaterial,
+  type Mesh,
+  type MeshBasicMaterial,
   OrthographicCamera,
   Quaternion,
   Vector3,
-  WebGPURenderer,
+  type WebGPURenderer,
 } from "three/webgpu";
 import {
   type CombatSandboxCache,
-  type CombatSandboxPlanet,
   type CombatSandboxRocket,
   type CombatSandboxRocketLaunchBurst,
   createSandboxState,
   getSandboxDebugSnapshot,
 } from "./combatSandbox";
 import {
-  getCannonMuzzleDistance,
-  getCannonMuzzleOrigin,
-  getLaunchBurstHandoffDuration,
-  getLaunchBurstTravelDistance,
-  getMinScreenAxisScale,
-  getRocketVisibleDistanceThreshold,
-  ROCKET_MIN_SCREEN_WIDTH_PX,
   ROCKET_RENDER_INSTANCE_LIMITS,
 } from "./rocketVisibility";
 import { getScaledRocketVisuals } from "./rocketVisualTuning";
@@ -151,19 +143,19 @@ const MAX_BOOST_BURST_SAMPLES = BOOST_BURST_PARTICLES * MAX_ACTIVE_BOOST_BURSTS;
 const MAX_VISIBLE_IMPACT_BURSTS = 20;
 const MAX_ACTIVE_PLANET_EXPLOSIONS = 6;
 const RETICLE_BASE_COLOR = "#dff3ff";
-const CANNON_STEM_LENGTH_PX = 4;
-const CANNON_STEM_WIDTH_PX = 8;
-const CANNON_BREECH_LENGTH_PX = 11;
-const CANNON_BREECH_WIDTH_PX = 16;
-const CANNON_BREECH_DEPTH_PX = 14;
-const CANNON_BARREL_LENGTH_PX = 26;
-const CANNON_BARREL_WIDTH_PX = 9;
-const CANNON_BARREL_BAND_LENGTH_PX = 3.5;
-const CANNON_BARREL_BAND_WIDTH_PX = 11.5;
-const CANNON_MUZZLE_LENGTH_PX = 4;
-const CANNON_MUZZLE_RADIUS_PX = 5.6;
-const CANNON_FLASH_RADIUS_PX = 16;
-const CANNON_FLASH_DURATION_SEC = 0.14;
+const _CANNON_STEM_LENGTH_PX = 4;
+const _CANNON_STEM_WIDTH_PX = 8;
+const _CANNON_BREECH_LENGTH_PX = 11;
+const _CANNON_BREECH_WIDTH_PX = 16;
+const _CANNON_BREECH_DEPTH_PX = 14;
+const _CANNON_BARREL_LENGTH_PX = 26;
+const _CANNON_BARREL_WIDTH_PX = 9;
+const _CANNON_BARREL_BAND_LENGTH_PX = 3.5;
+const _CANNON_BARREL_BAND_WIDTH_PX = 11.5;
+const _CANNON_MUZZLE_LENGTH_PX = 4;
+const _CANNON_MUZZLE_RADIUS_PX = 5.6;
+const _CANNON_FLASH_RADIUS_PX = 16;
+const _CANNON_FLASH_DURATION_SEC = 0.14;
 const PLAYER_NAME_STORAGE_KEY = "3body.playerName";
 const WEAPON_KINDS = [
   "light",
@@ -444,7 +436,6 @@ export function createGameViewport(
         disposables: shellDisposables,
         postProcessing,
         scene,
-        scenePass,
       } = shell;
       backdropMesh = shellBackdropMesh;
       disposables.push(...shellDisposables);

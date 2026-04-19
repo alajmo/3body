@@ -6,7 +6,6 @@ import {
   chooseCombatAiIntent,
   cloneCombatAiBlackboard,
   createCombatAiBlackboard,
-  detectImmediateInterrupt,
   detectSoftInterrupt,
   isCombatAiPlanInvalid,
   probeCombatAiThreats,
@@ -45,7 +44,7 @@ const FIRE_CADENCE_TICKS = {
 const PLAN_REFRESH_TICKS = 6;
 const WILDCARD_CADENCE_TICKS = 10;
 
-export interface CombatBotRuntime {}
+export type CombatBotRuntime = object;
 
 export interface CombatBotContext {
   difficulty: BotDifficulty;
@@ -399,6 +398,8 @@ const setCommandTrace = (
         return `fire:${command.kind}`;
       case "ability":
         return `ability:${command.slot}`;
+      default:
+        return "unknown";
     }
   });
   blackboard.debug = buildCombatAiDebugState(blackboard);

@@ -1,4 +1,4 @@
-import type { Vec2, WildcardKind } from "@3body/shared";
+import type { Vec2, } from "@3body/shared";
 import {
   FIXED_STEP_SEC,
   GRAVITY_PULSE_RADIUS,
@@ -25,10 +25,10 @@ import {
   syncInterpolatedSandboxState,
 } from "../combatSandbox";
 import {
-  FORESIGHT_DISPLAY_SAMPLE_COUNT,
   FORESIGHT_STEP_SEC,
   FORESIGHT_TARGET_DISTANCE,
   FORESIGHT_WINDOW_SEC,
+  MAX_FORESIGHT_SAMPLES,
   resampleForesightPath,
   trimForesightPathToDistance,
 } from "./foresightShared";
@@ -42,8 +42,8 @@ const MAX_ACTIVE_BOOST_BURSTS = ROOM_CAPACITY * 2;
 const HIT_FLASH_DURATION_SEC = 0.24;
 const HP_PULSE_DURATION_SEC = 0.48;
 const CAMERA_SHAKE_DURATION_SEC = 0.3;
-export const LOCAL_SANDBOX_HUD_UPDATE_INTERVAL_SEC = 1 / 12;
-export const LOCAL_SANDBOX_KILL_FEED_DURATION_SEC = 4;
+const LOCAL_SANDBOX_HUD_UPDATE_INTERVAL_SEC = 1 / 12;
+const LOCAL_SANDBOX_KILL_FEED_DURATION_SEC = 4;
 
 interface LocalSandboxKillFeedEntry {
   accent: string;
@@ -208,7 +208,7 @@ const computeForesightPathsByEntityId = (
       entityId,
       resampleForesightPath(
         trimForesightPathToDistance(path, FORESIGHT_TARGET_DISTANCE),
-        FORESIGHT_DISPLAY_SAMPLE_COUNT,
+        MAX_FORESIGHT_SAMPLES,
       ),
     ]),
   );
@@ -358,7 +358,7 @@ export const runLocalSandboxSimulationFrame = ({
   nowSec,
   onPlanetExplosionRequested,
   onSandboxResetRequested,
-  onViewportFocusChanged,
+  onViewportFocusChanged: _onViewportFocusChanged,
   profilingEnabled,
   resetAccumulator,
   sandboxPaused,

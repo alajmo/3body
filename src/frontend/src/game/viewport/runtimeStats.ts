@@ -1,4 +1,4 @@
-export interface ViewportRuntimeStats {
+interface ViewportRuntimeStats {
   fps: number;
   frameTimeMs: number;
 }

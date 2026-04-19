@@ -10,7 +10,7 @@ interface ScalarMetricSnapshot {
   max: number;
 }
 
-export interface ViewportPerformanceFrameSample {
+interface ViewportPerformanceFrameSample {
   frameCpuMs: number;
   frameDeltaSec: number;
   interpolationMs: number;

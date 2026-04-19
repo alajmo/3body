@@ -1,10 +1,8 @@
 import {
   ARENA_RADIUS,
   type BackgroundVisualTuning,
-  type CacheContents,
   mulberry32,
   type PlanetArchetypeVisualSpec,
-  type Vec2,
 } from "@3body/shared";
 import {
   abs,
@@ -39,7 +37,7 @@ import {
   Color,
   Float32BufferAttribute,
   Group,
-  Mesh,
+  type Mesh,
   MeshBasicNodeMaterial,
   Points,
   PointsNodeMaterial,
@@ -50,7 +48,7 @@ import {
 } from "three/webgpu";
 import { getRuntimeTuningDocument } from "./runtimeTuning";
 
-export interface BackgroundParallaxLayerVisual {
+interface BackgroundParallaxLayerVisual {
   geometry: BufferGeometry;
   group: Group;
   material: PointsNodeMaterial;
@@ -60,9 +58,9 @@ export interface BackgroundParallaxLayerVisual {
   tileSize: number;
 }
 
-export type BackgroundParallaxLayerKind = "dust" | "stars";
+type BackgroundParallaxLayerKind = "dust" | "stars";
 
-export interface BackgroundParallaxLayerConfig {
+interface BackgroundParallaxLayerConfig {
   alphaScale: number;
   count: number;
   coolColor: string;
@@ -96,7 +94,7 @@ type CacheBadgeShape =
   | "chevron"
   | "star";
 
-export interface PlanetGlowMaterialNodes {
+interface PlanetGlowMaterialNodes {
   contactStartNode: ReturnType<typeof uniform>;
   fadeStartNode: ReturnType<typeof uniform>;
   material: MeshBasicNodeMaterial;
@@ -105,19 +103,16 @@ export interface PlanetGlowMaterialNodes {
   riseStartNode: ReturnType<typeof uniform>;
 }
 
-export interface PlanetSurfaceMaterial extends MeshBasicNodeMaterial {
+interface PlanetSurfaceMaterial extends MeshBasicNodeMaterial {
   opacityUniform: ReturnType<typeof uniform>;
 }
 
-export interface BackdropMaterial extends MeshBasicNodeMaterial {
+interface BackdropMaterial extends MeshBasicNodeMaterial {
   parallaxOffsetUniform: {
     value: Vector2;
   };
 }
 
-export const SUN_GLOW_SCALE = 1.7;
-export const SUN_WARP_SCALE = 3.2;
-export const CACHE_BADGE_BASE_SIZE = 80;
 const DUST_CAMERA_FOLLOW = 0.06;
 const DISTANT_BODIES_CAMERA_FOLLOW = 0.08;
 const NEBULA_CAMERA_FOLLOW = 0.12;
@@ -151,24 +146,6 @@ const BASE_STARFIELD_LAYERS = [
     z: -22,
   },
 ] as const;
-
-interface StarfieldLayerConfig {
-  alphaScale: number;
-  count: number;
-  driftX: number;
-  driftY: number;
-  parallax: number;
-  size: number;
-  z: number;
-}
-
-interface StarfieldLayerVisual {
-  geometry: { dispose: () => void };
-  group: import("three/webgpu").Group;
-  material: { dispose: () => void };
-  parallax: number;
-  tileSize: number;
-}
 
 const toHexString = (value: Color): string => `#${value.getHexString()}`;
 
@@ -209,37 +186,6 @@ export const createBackgroundLayerConfigs = (
 
   return configs;
 };
-
-export const createStarfieldLayerConfigs = (
-  background: BackgroundVisualTuning,
-): BackgroundParallaxLayerConfig[] => createBackgroundLayerConfigs(background);
-
-export const ROCKET_RENDER_PROFILES = {
-  heavy: {
-    bodyScale: { x: 31, y: 7.8 } satisfies Vec2,
-    core: "#ff8d4a",
-    flameScale: { x: 28, y: 14 } satisfies Vec2,
-    scale: 1,
-    trail: "#ff6130",
-    trailScale: { x: 36, y: 9 } satisfies Vec2,
-  },
-  light: {
-    bodyScale: { x: 24, y: 4.8 } satisfies Vec2,
-    core: "#f4f9ff",
-    flameScale: { x: 22, y: 9 } satisfies Vec2,
-    scale: 1,
-    trail: "#b7e6ff",
-    trailScale: { x: 30, y: 6 } satisfies Vec2,
-  },
-  seeker: {
-    bodyScale: { x: 27, y: 6.2 } satisfies Vec2,
-    core: "#f564ff",
-    flameScale: { x: 25, y: 11 } satisfies Vec2,
-    scale: 1,
-    trail: "#ff4dd4",
-    trailScale: { x: 33, y: 7.5 } satisfies Vec2,
-  },
-} as const;
 
 export const CACHE_ICON_KEYS = [
   "heavyAmmo",
@@ -452,7 +398,7 @@ export const createBackdropMaterial = (
   )
     .mul(0.5)
     .add(0.5);
-  let backdropColor: any = mix(
+  let backdropColor = mix(
     color(background.baseColor),
     color(background.glowColor),
     surfaceUv.y.add(glowNoise.mul(0.12)),
@@ -1362,28 +1308,6 @@ export const createBackgroundLayer = (
   };
 };
 
-export const createStarfieldLayer = (
-  count: number,
-  size: number,
-  alphaScale: number,
-  z: number,
-  parallax: number,
-): BackgroundParallaxLayerVisual =>
-  createBackgroundLayer({
-    alphaScale,
-    colorVariance: 1,
-    coolColor: "#7ea8ff",
-    count,
-    driftX: 0,
-    driftY: 0,
-    kind: "stars",
-    parallax,
-    size,
-    twinkleAmount: 1,
-    warmColor: "#fff3d1",
-    z,
-  });
-
 const fillRoundedRect = (
   context: CanvasRenderingContext2D,
   x: number,
@@ -1777,10 +1701,3 @@ export const createCacheBadgeSpriteMaterial = (
     }),
   };
 };
-
-export const getCacheIconKey = (contents: CacheContents): CacheIconKey =>
-  contents.kind === "wildcard"
-    ? contents.wildcard.kind === "gravityPulse"
-      ? "wildcardGravityPulse"
-      : "wildcardCloak"
-    : contents.kind;

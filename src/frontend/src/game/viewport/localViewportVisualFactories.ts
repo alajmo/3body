@@ -1,5 +1,4 @@
 import {
-  ARENA_RADIUS,
   clamp,
   mulberry32,
   type ArchetypeId,
@@ -36,7 +35,7 @@ import {
   AdditiveBlending,
   BufferGeometry,
   CanvasTexture,
-  CircleGeometry,
+  type CircleGeometry,
   Color,
   DynamicDrawUsage,
   Float32BufferAttribute,
@@ -49,24 +48,21 @@ import {
   MeshBasicNodeMaterial,
   Points,
   PointsNodeMaterial,
-  RingGeometry,
+  type RingGeometry,
   SRGBColorSpace,
-  Scene,
+  type Scene,
   Vector3,
 } from "three/webgpu";
 import { getRuntimeTuningDocument } from "../runtimeTuning";
 import { MAX_FORESIGHT_SAMPLES } from "./foresightShared";
 const PLANET_EXPLOSION_CHUNK_COUNT = 12;
-const getStarfieldRadius = (): number => ARENA_RADIUS * 2.35;
-const getStarfieldTileSize = (): number => getStarfieldRadius() * 2;
-
 const getRuntimeVisuals = () => getRuntimeTuningDocument().visuals;
 const getBoostColor = () => getRuntimeVisuals().abilities.boostColor;
 const getPlanetMaterialTuning = () => getRuntimeVisuals().planets.material;
 const getPlanetAuraTuning = () => getRuntimeVisuals().planets.aura;
 const getPlanetVariationTuning = () => getRuntimeVisuals().planets.variation;
 
-export interface PlanetSurfaceMaterial extends MeshBasicNodeMaterial {
+interface PlanetSurfaceMaterial extends MeshBasicNodeMaterial {
   opacityUniform: ReturnType<typeof uniform>;
 }
 
@@ -1287,87 +1283,4 @@ export const createNeutronStarLensMaterial = (
   );
 
   return material;
-};
-
-export const createStarfieldLayer = (
-  count: number,
-  size: number,
-  alphaScale: number,
-  z: number,
-  parallax: number,
-) => {
-  const starfieldTileSize = getStarfieldTileSize();
-  const geometry = new BufferGeometry();
-  const positions = new Float32Array(count * 3);
-  const alpha = new Float32Array(count);
-  const warmth = new Float32Array(count);
-  const phase = new Float32Array(count);
-  const pulse = new Float32Array(count);
-
-  for (let index = 0; index < count; index += 1) {
-    const offset = index * 3;
-    const x = (Math.random() - 0.5) * starfieldTileSize;
-    const y = (Math.random() - 0.5) * starfieldTileSize;
-
-    positions[offset] = x;
-    positions[offset + 1] = y;
-    positions[offset + 2] = 0;
-    alpha[index] = alphaScale * (0.45 + Math.random() * 0.55);
-    warmth[index] = Math.random();
-    phase[index] = Math.random() * Math.PI * 2;
-    pulse[index] = 0.8 + Math.random() * 2.6;
-  }
-
-  geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
-  geometry.setAttribute("starAlpha", new Float32BufferAttribute(alpha, 1));
-  geometry.setAttribute("starWarmth", new Float32BufferAttribute(warmth, 1));
-  geometry.setAttribute("starPhase", new Float32BufferAttribute(phase, 1));
-  geometry.setAttribute("starPulse", new Float32BufferAttribute(pulse, 1));
-
-  const material = new PointsNodeMaterial({
-    transparent: true,
-    depthWrite: false,
-    blending: AdditiveBlending,
-  });
-  const starAlphaNode = attribute<"float">("starAlpha", "float");
-  const twinkle = sin(
-    time
-      .mul(0.08)
-      .mul(attribute("starPulse", "float"))
-      .add(attribute("starPhase", "float")),
-  )
-    .mul(0.28)
-    .add(0.78);
-
-  material.colorNode = mix(
-    color("#7ea8ff"),
-    color("#fff3d1"),
-    attribute("starWarmth", "float"),
-  );
-  material.opacityNode = starAlphaNode.mul(twinkle);
-  material.size = size;
-  material.alphaTest = 0.01;
-
-  const group = new Group();
-  for (let tileY = -1; tileY <= 1; tileY += 1) {
-    for (let tileX = -1; tileX <= 1; tileX += 1) {
-      const points = new Points(geometry, material);
-      points.position.set(
-        tileX * starfieldTileSize,
-        tileY * starfieldTileSize,
-        z,
-      );
-      points.frustumCulled = false;
-      points.renderOrder = -25;
-      group.add(points);
-    }
-  }
-
-  return {
-    geometry,
-    group,
-    material,
-    parallax,
-    tileSize: starfieldTileSize,
-  };
 };
