@@ -11,6 +11,8 @@ import { createGameViewport } from "./game/createGameViewport";
 import {
   createInitialHudState,
   type GameViewportController,
+  type GameViewportHudState,
+  type GameViewportSandboxSessionConfig,
 } from "./game/viewportHud";
 
 const VIEWPORT_REFRESH_DEBOUNCE_MS = 140;
@@ -32,6 +34,8 @@ const BOOST_SETTING_KEYS = [
 
 const createViewportRefreshSignature = (
   documentValue: GameTuningDocument,
+  cameraWorldHeightOverride: number | undefined,
+  sandboxSessionConfig: GameViewportSandboxSessionConfig | undefined,
 ): string =>
   JSON.stringify({
     abilities: {
@@ -42,6 +46,8 @@ const createViewportRefreshSignature = (
     background: documentValue.visuals.background,
     blackHole: documentValue.visuals.blackHole,
     camera: documentValue.gameplay.camera,
+    cameraWorldHeightOverride,
+    sandboxSessionConfig,
     planets: {
       archetypes: documentValue.visuals.planets.archetypes,
     },
@@ -103,21 +109,33 @@ const syncSandboxSettings = (
 };
 
 export function EditGameViewportPanel({
+  cameraWorldHeightOverride,
   className = "app-shell",
   documentValue,
   hudTuning,
+  onControllerReady,
+  onHudStateChange,
+  sandboxSessionConfig,
   showHud,
 }: {
+  cameraWorldHeightOverride?: number;
   className?: string;
   documentValue: GameTuningDocument;
   hudTuning: HudVisualTuning;
+  onControllerReady?: (controller: GameViewportController | null) => void;
+  onHudStateChange?: (state: GameViewportHudState) => void;
+  sandboxSessionConfig?: GameViewportSandboxSessionConfig;
   showHud: boolean;
 }) {
   const viewportElementRef = useRef<HTMLDivElement | null>(null);
   const disposeViewportRef = useRef<(() => void) | null>(null);
   const refreshTimeoutRef = useRef<number | null>(null);
   const lastRefreshSignatureRef = useRef(
-    createViewportRefreshSignature(documentValue),
+    createViewportRefreshSignature(
+      documentValue,
+      cameraWorldHeightOverride,
+      sandboxSessionConfig,
+    ),
   );
   const lastSyncedDocumentRef = useRef(documentValue);
   const [hudState, setHudState] = useState(() => ({
@@ -135,14 +153,20 @@ export function EditGameViewportPanel({
 
     disposeViewportRef.current?.();
     disposeViewportRef.current = createGameViewport(viewportElement, {
+      cameraWorldHeightOverride,
       defaultBotsEnabled: true,
       enableSandboxStorage: false,
-      onControllerReady: setViewportController,
+      onControllerReady: (controller) => {
+        setViewportController(controller);
+        onControllerReady?.(controller);
+      },
       onHudStateChange: (nextState) => {
+        onHudStateChange?.(nextState);
         startTransition(() => {
           setHudState(nextState);
         });
       },
+      sandboxSessionConfig,
     });
   };
 
@@ -183,7 +207,11 @@ export function EditGameViewportPanel({
   }, []);
 
   useEffect(() => {
-    const nextSignature = createViewportRefreshSignature(documentValue);
+    const nextSignature = createViewportRefreshSignature(
+      documentValue,
+      cameraWorldHeightOverride,
+      sandboxSessionConfig,
+    );
     if (lastRefreshSignatureRef.current === nextSignature) {
       return;
     }
@@ -196,7 +224,7 @@ export function EditGameViewportPanel({
       refreshTimeoutRef.current = null;
       restartViewport();
     }, VIEWPORT_REFRESH_DEBOUNCE_MS);
-  }, [documentValue]);
+  }, [cameraWorldHeightOverride, documentValue, sandboxSessionConfig]);
 
   return (
     <div className={className}>

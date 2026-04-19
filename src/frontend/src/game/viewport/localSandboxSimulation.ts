@@ -3,7 +3,9 @@ import {
   FIXED_STEP_SEC,
   GRAVITY_PULSE_RADIUS,
   PLANET_HP,
+  ROOM_CAPACITY,
   clamp,
+  getSeekerLockTicks,
   normalize as normalizeVec2,
   stepBody,
   stepSuns,
@@ -20,18 +22,24 @@ import {
   createSandboxInterpolationCache,
   getActiveCombatSuns,
   getSandboxResetReason,
-  SEEKER_LOCK_TICKS,
   stepSandbox,
   syncInterpolatedSandboxState,
 } from "../combatSandbox";
-import { FORESIGHT_STEP_SEC, FORESIGHT_WINDOW_SEC } from "./foresightShared";
+import {
+  FORESIGHT_DISPLAY_SAMPLE_COUNT,
+  FORESIGHT_STEP_SEC,
+  FORESIGHT_TARGET_DISTANCE,
+  FORESIGHT_WINDOW_SEC,
+  resampleForesightPath,
+  trimForesightPathToDistance,
+} from "./foresightShared";
 import type { GameViewportInputRuntimeState } from "./localInput";
 import { createViewportPerformanceProfiler } from "./performanceProfiler";
 import { createRuntimeStatsTracker } from "./runtimeStats";
 
 const MAX_FRAME_DELTA_SEC = 0.1;
 const MAX_STEPS_PER_FRAME = 12;
-const MAX_ACTIVE_BOOST_BURSTS = 4;
+const MAX_ACTIVE_BOOST_BURSTS = ROOM_CAPACITY * 2;
 const HIT_FLASH_DURATION_SEC = 0.24;
 const HP_PULSE_DURATION_SEC = 0.48;
 const CAMERA_SHAKE_DURATION_SEC = 0.3;
@@ -62,6 +70,25 @@ export interface LocalSandboxGravityPulseState {
   startedAtSec: number;
 }
 
+type BoostVisualControllerState = Pick<
+  CombatSandboxState["player"],
+  "lastBoostAimDir" | "lastBoostTick" | "planetId" | "playerId"
+>;
+
+const getBoostVisualControllers = (
+  state: Pick<CombatSandboxState, "player" | "bots">,
+): readonly BoostVisualControllerState[] => [state.player, ...state.bots];
+
+const createBoostVisualTickMap = (
+  state: Pick<CombatSandboxState, "player" | "bots">,
+): Map<string, number | null> =>
+  new Map(
+    getBoostVisualControllers(state).map((controller) => [
+      controller.playerId,
+      controller.lastBoostTick,
+    ]),
+  );
+
 const decayUnitValue = (
   value: number,
   deltaSec: number,
@@ -79,6 +106,8 @@ const describePlanetDeath = (
       return `${displayName} drifted beyond the arena`;
     case "blackHole":
       return `${displayName} fell into the Black Hole`;
+    case "neutronStar":
+      return `${displayName} was crushed by a neutron star`;
     case "planetCollision":
       return `${displayName} broke apart on impact`;
     case "sunCollision":
@@ -93,7 +122,8 @@ const isPlanetExplosionDeath = (
 ): boolean =>
   deathReason === "rocket" ||
   deathReason === "planetCollision" ||
-  deathReason === "sunCollision";
+  deathReason === "sunCollision" ||
+  deathReason === "neutronStar";
 
 const syncLocalSandboxEntityLookups = (
   planetsById: Map<number, CombatSandboxPlanet>,
@@ -167,6 +197,7 @@ const computeForesightPathsByEntityId = (
         predictedSuns,
         FORESIGHT_STEP_SEC,
         state.blackHole ?? undefined,
+        state.neutronStars,
       ),
     );
 
@@ -180,7 +211,15 @@ const computeForesightPathsByEntityId = (
     }
   }
 
-  return pathsByEntityId;
+  return new Map(
+    Array.from(pathsByEntityId, ([entityId, path]) => [
+      entityId,
+      resampleForesightPath(
+        trimForesightPathToDistance(path, FORESIGHT_TARGET_DISTANCE),
+        FORESIGHT_DISPLAY_SAMPLE_COUNT,
+      ),
+    ]),
+  );
 };
 
 export const createLocalSandboxSimulationState = (
@@ -194,7 +233,7 @@ export const createLocalSandboxSimulationState = (
     currentState: initialState,
     foresightPathsByEntityId: new Map<number, readonly Vec2[]>(),
     killFeedEntries: [] as LocalSandboxKillFeedEntry[],
-    lastBoostVisualTick: initialState.player.lastBoostTick,
+    lastBoostVisualTickByPlayerId: createBoostVisualTickMap(initialState),
     nextHudUpdateSec: 0,
     nextKillFeedId: 1,
     performanceProfiler: createViewportPerformanceProfiler(),
@@ -252,7 +291,8 @@ export const resetLocalSandboxSimulationState = ({
   simulationState.accumulatorSec = 0;
   simulationState.previousFrameTimeSec = null;
   simulationState.foresightPathsByEntityId.clear();
-  simulationState.lastBoostVisualTick = nextState.player.lastBoostTick;
+  simulationState.lastBoostVisualTickByPlayerId =
+    createBoostVisualTickMap(nextState);
   simulationState.activeBoostBursts.length = 0;
   simulationState.activeGravityPulse = null;
   simulationState.killFeedEntries.length = 0;
@@ -492,36 +532,42 @@ export const runLocalSandboxSimulationFrame = ({
       onViewportFocusChanged?.(simulationState.currentState);
     }
 
-    if (
-      simulationState.currentState.player.lastBoostTick !== null &&
-      simulationState.currentState.player.lastBoostTick !==
-        simulationState.lastBoostVisualTick
-    ) {
-      const boostedPlanet =
-        simulationState.currentState.planets.find(
-          (planet) =>
-            planet.id === simulationState.currentState.player.planetId,
+    for (const controller of getBoostVisualControllers(
+      simulationState.currentState,
+    )) {
+      const lastSeenTick =
+        simulationState.lastBoostVisualTickByPlayerId.get(
+          controller.playerId,
         ) ?? null;
-      if (boostedPlanet?.alive) {
-        simulationState.activeBoostBursts.push({
-          direction: normalizeVec2(
-            simulationState.currentState.player.lastBoostAimDir,
-          ),
-          origin: { x: boostedPlanet.pos.x, y: boostedPlanet.pos.y },
-          planetArchetype: boostedPlanet.archetype,
-          planetId: boostedPlanet.id,
-          radius: boostedPlanet.radius,
-          startedAtSec: nowSec,
-          tick: simulationState.currentState.player.lastBoostTick,
-        });
+      if (
+        controller.lastBoostTick !== null &&
+        controller.lastBoostTick !== lastSeenTick
+      ) {
+        const boostedPlanet =
+          simulationState.currentState.planets.find(
+            (planet) => planet.id === controller.planetId,
+          ) ?? null;
+        if (boostedPlanet?.alive) {
+          simulationState.activeBoostBursts.push({
+            direction: normalizeVec2(controller.lastBoostAimDir),
+            origin: { x: boostedPlanet.pos.x, y: boostedPlanet.pos.y },
+            planetArchetype: boostedPlanet.archetype,
+            planetId: boostedPlanet.id,
+            radius: boostedPlanet.radius,
+            startedAtSec: nowSec,
+            tick: controller.lastBoostTick,
+          });
+        }
         while (
           simulationState.activeBoostBursts.length > MAX_ACTIVE_BOOST_BURSTS
         ) {
           simulationState.activeBoostBursts.shift();
         }
       }
-      simulationState.lastBoostVisualTick =
-        simulationState.currentState.player.lastBoostTick;
+      simulationState.lastBoostVisualTickByPlayerId.set(
+        controller.playerId,
+        controller.lastBoostTick,
+      );
     }
 
     const consumedGravityPulse =
@@ -554,10 +600,7 @@ export const runLocalSandboxSimulationFrame = ({
     }
 
     if (consumedCloak) {
-      simulationState.cameraShake = Math.max(
-        simulationState.cameraShake,
-        0.12,
-      );
+      simulationState.cameraShake = Math.max(simulationState.cameraShake, 0.12);
     }
 
     simulationState.accumulatorSec -= FIXED_STEP_SEC;
@@ -622,10 +665,18 @@ export const getLocalSandboxLockProgress = ({
 }: {
   currentTick: number;
   lockAcquiredTick: number | null;
-}) =>
-  lockAcquiredTick === null
-    ? 0
-    : Math.min(
-        1,
-        Math.max(0, currentTick - lockAcquiredTick) / SEEKER_LOCK_TICKS,
-      );
+}) => {
+  if (lockAcquiredTick === null) {
+    return 0;
+  }
+
+  const seekerLockTicks = getSeekerLockTicks();
+  if (seekerLockTicks <= 0) {
+    return 1;
+  }
+
+  return Math.min(
+    1,
+    Math.max(0, currentTick - lockAcquiredTick) / seekerLockTicks,
+  );
+};

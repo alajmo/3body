@@ -6,6 +6,7 @@ import type {
   Debris,
   Drone,
   EntityId,
+  NeutronStar,
   PlanetPrivateState,
   PlanetPublic,
   PlayerId,
@@ -69,6 +70,7 @@ export interface PickEntry {
 
 export interface SnapshotDelta {
   suns?: Sun[];
+  neutronStars?: NeutronStar[];
   planets?: PlanetPublic[];
   rockets?: Rocket[];
   drones?: Drone[];
@@ -79,6 +81,7 @@ export interface SnapshotDelta {
 
 export interface SnapshotRemoved {
   suns?: EntityId[];
+  neutronStars?: EntityId[];
   planets?: EntityId[];
   rockets?: EntityId[];
   drones?: EntityId[];
@@ -105,7 +108,13 @@ export type SnapshotEvent =
       victimPlayerId: PlayerId;
       victimPlanetId: EntityId;
       killerPlayerId?: PlayerId;
-      cause: "rocket" | "sun" | "planetCollision" | "boundary" | "blackHole";
+      cause:
+        | "rocket"
+        | "sun"
+        | "neutronStar"
+        | "planetCollision"
+        | "boundary"
+        | "blackHole";
     }
   | {
       kind: "cachePickup";

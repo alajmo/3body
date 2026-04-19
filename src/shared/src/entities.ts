@@ -109,6 +109,11 @@ export type BlackHole = EntityBase & {
   killRadius: number;
 };
 
+export type NeutronStar = EntityBase & {
+  kind: "neutronStar";
+  mass: number;
+};
+
 export type Debris = EntityBase & {
   kind: "debris";
   ttlUntilTick: number;
@@ -117,6 +122,7 @@ export type Debris = EntityBase & {
 
 export interface World {
   suns: Sun[];
+  neutronStars: NeutronStar[];
   planets: PlanetPublic[];
   rockets: Rocket[];
   drones: Drone[];
@@ -128,6 +134,7 @@ export interface World {
 
 export type WorldEntity =
   | Sun
+  | NeutronStar
   | PlanetPublic
   | Rocket
   | Drone

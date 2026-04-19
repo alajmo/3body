@@ -7,11 +7,13 @@ import {
   CACHE_TANGENTIAL_SPEED_MAX,
   CACHE_TANGENTIAL_SPEED_MIN,
   createInitialAmmo,
+  createNeutronStars,
   fromAngle,
   G,
   getOuterRingMax,
   getOuterRingMin,
   getShieldLoadCapacity,
+  NEUTRON_STAR_SPEC,
   mulberry32,
   nextFloat,
   PLANET_HP,
@@ -162,6 +164,13 @@ export const createInitialMatchState = (
     privateStates.set(player.playerId, privateState);
     return planet;
   });
+  const neutronStars = createNeutronStars({
+    arenaRadius: ARENA_RADIUS,
+    blockedBodies: [...suns, ...planets],
+    createId: () => entityIds.nextEntityId(),
+    rng,
+    spec: NEUTRON_STAR_SPEC,
+  });
   const caches = Array.from({ length: CACHE_SPEC.count }, () =>
     createCache(entityIds, rng),
   );
@@ -169,6 +178,7 @@ export const createInitialMatchState = (
   return {
     world: {
       suns,
+      neutronStars,
       planets,
       rockets: [],
       drones: [],

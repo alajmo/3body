@@ -2,7 +2,6 @@ import {
   lerp,
   mulberry32,
   type OrbitBoundaryDebrisVisualTuning,
-  type Vec2,
 } from "@3body/shared";
 import {
   attribute,
@@ -122,7 +121,6 @@ interface CreateAmbientBoundaryDebrisVisualOptions {
 interface UpdateAmbientBoundaryDebrisVisualOptions {
   innerRadius: number;
   nowSec: number;
-  offset?: Vec2;
   outerRadius: number;
   visual: AmbientBoundaryDebrisVisual;
 }
@@ -479,7 +477,6 @@ const updateShardLayer = ({
 export const updateAmbientBoundaryDebrisVisual = ({
   innerRadius,
   nowSec,
-  offset,
   outerRadius,
   visual,
 }: UpdateAmbientBoundaryDebrisVisualOptions) => {
@@ -495,10 +492,6 @@ export const updateAmbientBoundaryDebrisVisual = ({
     return;
   }
 
-  visual.bandGroup.position.x = offset?.x ?? 0;
-  visual.bandGroup.position.y = offset?.y ?? 0;
-  visual.points.position.x = offset?.x ?? 0;
-  visual.points.position.y = offset?.y ?? 0;
   visual.bandGroup.visible = true;
   for (const [index, layer] of visual.shardLayers.entries()) {
     updateShardLayer({

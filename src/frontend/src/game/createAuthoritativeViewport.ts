@@ -12,6 +12,7 @@ import {
   ARENA_RADIUS,
   clamp,
   FIXED_STEP_SEC,
+  getNeutronStarMassAlpha,
   getSunVisualProfile,
   len,
   lerp,
@@ -56,12 +57,19 @@ import { getCloakPlanetOpacity } from "./viewport/cloakVisual";
 import { createGameViewportInputController } from "./viewport/localInput";
 import { createViewportPerformanceProfiler } from "./viewport/performanceProfiler";
 import { DEFAULT_VIEWPORT_RENDER_QUALITY_PROFILE } from "./viewport/renderQuality";
+import { disposeViewportDisposables } from "./viewport/disposables";
 import {
   disposeViewportRendererSession,
   initializeViewportRendererSession,
   reportViewportRendererFailure,
   type ViewportRendererBootstrap,
 } from "./viewport/rendererBootstrap";
+import {
+  createViewportRendererSizeState,
+  getViewportHostSize,
+  syncViewportRendererSize,
+} from "./viewport/rendererSizing";
+import { getScaledRocketVisuals } from "./rocketVisualTuning";
 import { createRuntimeStatsTracker } from "./viewport/runtimeStats";
 import {
   areHudStatesEqual,
@@ -69,6 +77,12 @@ import {
   type GameViewportHudState,
 } from "./viewportHud";
 import { getRuntimeTuningDocument } from "./runtimeTuning";
+import {
+  getNeutronStarVisualShape,
+  NEUTRON_STAR_JET_SECONDARY_LENGTH_FACTOR,
+  NEUTRON_STAR_JET_SECONDARY_OPACITY_FACTOR,
+  NEUTRON_STAR_JET_SECONDARY_WIDTH_FACTOR,
+} from "./neutronStarVisuals";
 import {
   createBackgroundLayer,
   createBackgroundLayerConfigs,
@@ -87,6 +101,12 @@ import {
   syncBackdropFrame,
   wrapCentered,
 } from "./showcaseVisuals";
+import {
+  createNeutronStarCoreMaterial,
+  createNeutronStarHaloMaterial,
+  createNeutronStarJetMaterial,
+  createNeutronStarLensMaterial,
+} from "./viewport/localViewportVisualFactories";
 
 const CAMERA_DISTANCE = 100;
 const CAMERA_FOLLOW_LERP = 6.1;
@@ -129,6 +149,17 @@ interface SunVisual {
   glowMesh: Mesh;
   rotationSpeed: number;
   warpMesh: Mesh;
+}
+
+interface NeutronStarVisual {
+  coreMesh: Mesh;
+  group: Group;
+  haloMesh: Mesh;
+  jetMeshA: Mesh;
+  jetMeshB: Mesh;
+  lensMesh: Mesh;
+  phase: number;
+  spinSpeed: number;
 }
 
 interface DroneVisual {
@@ -186,8 +217,7 @@ const getGameplayCameraHeights = () => {
   const cameraTuning = getRuntimeTuningDocument().gameplay.camera;
 
   return {
-    followWorldHeight: cameraTuning.viewportWorldHeight,
-    readModeWorldHeight: cameraTuning.readModeWorldHeight,
+    followWorldHeight: cameraTuning.gameplayCameraWorldHeight,
   };
 };
 
@@ -195,9 +225,8 @@ const getCameraFrame = (
   world: World | null,
   playerPlanet: PlanetPublic | null,
   activeDrone: Drone | null,
-  readModeHeld: boolean,
 ): { centerX: number; centerY: number; visibleWorldHeight: number } => {
-  const { followWorldHeight, readModeWorldHeight } = getGameplayCameraHeights();
+  const { followWorldHeight } = getGameplayCameraHeights();
 
   if (world === null) {
     return {
@@ -212,16 +241,14 @@ const getCameraFrame = (
     return {
       centerX: 0,
       centerY: 0,
-      visibleWorldHeight: readModeHeld
-        ? readModeWorldHeight
-        : followWorldHeight,
+      visibleWorldHeight: followWorldHeight,
     };
   }
 
   return {
     centerX: controlledBody.pos.x,
     centerY: controlledBody.pos.y,
-    visibleWorldHeight: readModeHeld ? readModeWorldHeight : followWorldHeight,
+    visibleWorldHeight: followWorldHeight,
   };
 };
 
@@ -320,6 +347,7 @@ export function createAuthoritativeViewport(
   const disposables: Array<{ dispose: () => void }> = [];
   let cleanupComplete = false;
   const sunVisuals = new Map<number, SunVisual>();
+  const neutronStarVisuals = new Map<number, NeutronStarVisual>();
   const planetVisuals = new Map<number, PlanetVisual>();
   const planetTrails = new Map<number, PlanetTrailVisual>();
   const rocketVisuals = new Map<number, RocketVisual>();
@@ -332,6 +360,7 @@ export function createAuthoritativeViewport(
     renderCenterY: 0,
     visibleWorldHeight: getGameplayCameraHeights().followWorldHeight,
   };
+  const rendererSizeState = createViewportRendererSizeState();
   let rendererSessionToken = 0;
 
   const emitHudState = (nextState: GameViewportHudState) => {
@@ -350,9 +379,7 @@ export function createAuthoritativeViewport(
       return;
     }
 
-    const width = Math.max(1, hostElement.clientWidth);
-    const height = Math.max(1, hostElement.clientHeight);
-    const aspect = width / height;
+    const { aspect } = getViewportHostSize(hostElement);
     const worldHalfHeight = cameraState.visibleWorldHeight / 2;
     const worldHalfWidth = worldHalfHeight * aspect;
 
@@ -384,14 +411,12 @@ export function createAuthoritativeViewport(
       return;
     }
 
-    renderer.setPixelRatio(
-      Math.min(window.devicePixelRatio || 1, currentMaxPixelRatio),
-    );
-    renderer.setSize(
-      Math.max(1, hostElement.clientWidth),
-      Math.max(1, hostElement.clientHeight),
-      false,
-    );
+    syncViewportRendererSize({
+      hostElement,
+      maxPixelRatio: currentMaxPixelRatio,
+      renderer,
+      sizeState: rendererSizeState,
+    });
     applyCameraFrame();
     syncAimWorldToPointer?.();
   };
@@ -438,17 +463,7 @@ export function createAuthoritativeViewport(
     droneVisuals.clear();
     cacheVisuals.clear();
 
-    for (let index = disposables.length - 1; index >= 0; index -= 1) {
-      try {
-        disposables[index]!.dispose();
-      } catch (error) {
-        console.warn(
-          "[frontend] Failed to dispose authoritative viewport resource.",
-          error,
-        );
-      }
-    }
-    disposables.length = 0;
+    disposeViewportDisposables(disposables, "authoritative viewport resource");
 
     disposeViewportRendererSession({
       animationLoopController,
@@ -836,6 +851,11 @@ export function createAuthoritativeViewport(
                         interpolationAlpha,
                       ),
                     ),
+                    neutronStars: snapshot.world.neutronStars.map((neutronStar) => ({
+                      ...neutronStar,
+                      pos: { ...neutronStar.pos },
+                      vel: { ...neutronStar.vel },
+                    })),
                     planets: snapshot.world.planets.map((planet) =>
                       interpolateDynamicEntity(
                         planet,
@@ -905,12 +925,7 @@ export function createAuthoritativeViewport(
               : (world.drones.find((drone) => drone.ownerId === playerId) ??
                 null);
 
-          const frame = getCameraFrame(
-            world,
-            playerPlanet,
-            activeDrone,
-            viewportInputController.state.readModeHeld,
-          );
+          const frame = getCameraFrame(world, playerPlanet, activeDrone);
           const cameraMoveAlpha =
             1 - Math.exp(-CAMERA_FOLLOW_LERP * frameDeltaSec);
           const cameraZoomAlpha =
@@ -997,13 +1012,13 @@ export function createAuthoritativeViewport(
               const pendingAbilityRequests =
                 viewportInputController.state.pendingAbilityRequests;
               if (pendingAbilityRequests.foresight) {
-                options.dispatchMessage({ slot: "q", type: "ability" });
+                options.dispatchMessage({ slot: "e", type: "ability" });
               }
               if (pendingAbilityRequests.shield) {
-                options.dispatchMessage({ slot: "w", type: "ability" });
+                options.dispatchMessage({ slot: "q", type: "ability" });
               }
               if (pendingAbilityRequests.boost) {
-                options.dispatchMessage({ slot: "e", type: "ability" });
+                options.dispatchMessage({ slot: "w", type: "ability" });
               }
               if (pendingAbilityRequests.gravityPulse) {
                 options.dispatchMessage({ slot: "g", type: "ability" });
@@ -1019,6 +1034,8 @@ export function createAuthoritativeViewport(
           const tuning = getRuntimeTuningDocument();
           const planetVisualTuning = tuning.visuals.planets;
           const rocketVisualTuning = tuning.visuals.rockets;
+          const scaledRocketVisualTuning =
+            getScaledRocketVisuals(rocketVisualTuning);
           const droneVisualTuning = tuning.visuals.drone;
           const renderTick = snapshot?.tick ?? 0;
 
@@ -1094,6 +1111,122 @@ export function createAuthoritativeViewport(
               (visual.glowMesh.material as { dispose: () => void }).dispose();
               (visual.warpMesh.material as { dispose: () => void }).dispose();
               sunVisuals.delete(sunId);
+            }
+          }
+
+          const activeNeutronStarIds = new Set<number>();
+          const neutronStarVisualTuning = tuning.visuals.neutronStars;
+          for (const [index, neutronStar] of (world?.neutronStars ?? []).entries()) {
+            activeNeutronStarIds.add(neutronStar.id);
+            const massAlpha = getNeutronStarMassAlpha(
+              neutronStar.mass,
+              tuning.gameplay.neutronStars,
+            );
+            let visual = neutronStarVisuals.get(neutronStar.id);
+            if (visual === undefined) {
+              const group = new Group();
+              const coreMesh = new Mesh(
+                sunGeometry,
+                createNeutronStarCoreMaterial(neutronStar.id),
+              );
+              const haloMesh = new Mesh(
+                glowGeometry,
+                createNeutronStarHaloMaterial(neutronStar.id),
+              );
+              const lensMesh = new Mesh(
+                glowGeometry,
+                createNeutronStarLensMaterial(neutronStar.id),
+              );
+              const jetMeshA = new Mesh(
+                ribbonGeometry,
+                createNeutronStarJetMaterial(neutronStar.id),
+              );
+              const jetMeshB = new Mesh(
+                ribbonGeometry,
+                createNeutronStarJetMaterial(neutronStar.id + 0.37),
+              );
+              coreMesh.renderOrder = -6;
+              haloMesh.renderOrder = -7;
+              lensMesh.renderOrder = -8;
+              jetMeshA.renderOrder = -7;
+              jetMeshB.renderOrder = -7;
+              haloMesh.position.z = -1.6;
+              lensMesh.position.z = -2.4;
+              jetMeshA.position.z = -1.2;
+              jetMeshB.position.z = -1.2;
+              group.add(lensMesh, haloMesh, jetMeshA, jetMeshB, coreMesh);
+              scene.add(group);
+              visual = {
+                coreMesh,
+                group,
+                haloMesh,
+                jetMeshA,
+                jetMeshB,
+                lensMesh,
+                phase: index * 0.91 + neutronStar.id * 0.0008,
+                spinSpeed: 0.22 + index * 0.04,
+              };
+              neutronStarVisuals.set(neutronStar.id, visual);
+            }
+
+            const pulse = 1 + Math.sin(nowSec * 6.4 + visual.phase) * 0.04;
+            const haloPulse =
+              1 + Math.sin(nowSec * 4.8 + visual.phase * 1.7) * 0.08;
+            const { coreRadius, haloRadius, lensRadius, jetLength, jetWidth } =
+              getNeutronStarVisualShape({
+                haloPulse,
+                massAlpha,
+                pulse,
+                radius: neutronStar.radius,
+                tuning: neutronStarVisualTuning,
+              });
+            const haloMaterial = visual.haloMesh
+              .material as ReturnType<typeof createNeutronStarHaloMaterial>;
+            const lensMaterial = visual.lensMesh
+              .material as ReturnType<typeof createNeutronStarLensMaterial>;
+            const jetMaterialA = visual.jetMeshA
+              .material as ReturnType<typeof createNeutronStarJetMaterial>;
+            const jetMaterialB = visual.jetMeshB
+              .material as ReturnType<typeof createNeutronStarJetMaterial>;
+
+            visual.group.visible = true;
+            visual.group.position.set(neutronStar.pos.x, neutronStar.pos.y, -1);
+            visual.group.rotation.z = nowSec * 0.06 + visual.phase * 0.18;
+            visual.coreMesh.scale.set(coreRadius, coreRadius, coreRadius);
+            visual.haloMesh.scale.set(haloRadius, haloRadius, 1);
+            visual.lensMesh.scale.set(lensRadius, lensRadius, 1);
+            visual.jetMeshA.scale.set(jetWidth, jetLength, 1);
+            visual.jetMeshB.scale.set(
+              jetWidth * NEUTRON_STAR_JET_SECONDARY_WIDTH_FACTOR,
+              jetLength * NEUTRON_STAR_JET_SECONDARY_LENGTH_FACTOR,
+              1,
+            );
+            visual.jetMeshA.rotation.z =
+              visual.phase + Math.sin(nowSec * 0.4 + visual.phase) * 0.08;
+            visual.jetMeshB.rotation.z =
+              visual.phase +
+              Math.PI / 2 -
+              Math.sin(nowSec * 0.36 + visual.phase) * 0.06;
+            visual.haloMesh.rotation.z = nowSec * 0.18 + visual.phase * 0.4;
+            visual.lensMesh.rotation.z = -nowSec * 0.12 - visual.phase * 0.3;
+            visual.coreMesh.rotation.x = 0.44;
+            visual.coreMesh.rotation.y = nowSec * visual.spinSpeed;
+            haloMaterial.opacity = neutronStarVisualTuning.haloOpacity;
+            lensMaterial.opacity = neutronStarVisualTuning.lensOpacity;
+            jetMaterialA.opacity = neutronStarVisualTuning.jetOpacity;
+            jetMaterialB.opacity =
+              neutronStarVisualTuning.jetOpacity *
+              NEUTRON_STAR_JET_SECONDARY_OPACITY_FACTOR;
+          }
+          for (const [neutronStarId, visual] of neutronStarVisuals) {
+            if (!activeNeutronStarIds.has(neutronStarId)) {
+              scene.remove(visual.group);
+              (visual.coreMesh.material as { dispose: () => void }).dispose();
+              (visual.haloMesh.material as { dispose: () => void }).dispose();
+              (visual.lensMesh.material as { dispose: () => void }).dispose();
+              (visual.jetMeshA.material as { dispose: () => void }).dispose();
+              (visual.jetMeshB.material as { dispose: () => void }).dispose();
+              neutronStarVisuals.delete(neutronStarId);
             }
           }
 
@@ -1193,7 +1326,8 @@ export function createAuthoritativeViewport(
           for (const rocket of world?.rockets ?? []) {
             activeRocketIds.add(rocket.id);
             let visual = rocketVisuals.get(rocket.id);
-            const rocketAppearance = rocketVisualTuning[rocket.rocketKind];
+            const rocketAppearance =
+              scaledRocketVisualTuning[rocket.rocketKind];
             if (visual === undefined) {
               const body = new Mesh(
                 rocketGeometry,

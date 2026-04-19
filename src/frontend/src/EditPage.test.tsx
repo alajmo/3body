@@ -14,7 +14,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EditPage } from "./EditPage";
 import { applyRuntimeTuningDocument } from "./game/runtimeTuning";
 
-const { editorPreviewStageMock } = vi.hoisted(() => ({
+const { editGameViewportPanelMock, editorPreviewStageMock } = vi.hoisted(() => ({
+  editGameViewportPanelMock: vi.fn(),
   editorPreviewStageMock: vi.fn(),
 }));
 
@@ -39,6 +40,26 @@ vi.mock("./EditorPreviewStage", () => ({
   },
 }));
 
+vi.mock("./EditGameViewportPanel", () => ({
+  EditGameViewportPanel: (props: {
+    sandboxSessionConfig?: {
+      botDifficulty?: string;
+      participantCount?: number;
+    };
+  }) => {
+    editGameViewportPanelMock(props);
+    return (
+      <div
+        data-testid="edit-game-viewport-panel"
+        data-bot-difficulty={props.sandboxSessionConfig?.botDifficulty ?? ""}
+        data-participant-count={String(
+          props.sandboxSessionConfig?.participantCount ?? "",
+        )}
+      />
+    );
+  },
+}));
+
 describe("EditPage", () => {
   const FIRST_SUN_LABEL = "Auric";
   const fetchMock = vi.fn();
@@ -51,10 +72,11 @@ describe("EditPage", () => {
     initialDocument: typeof CURRENT_GAME_TUNING = CURRENT_GAME_TUNING,
   ) => {
     fetchMock.mockImplementation(
-      async (_input: unknown, init?: RequestInit) => {
+      async (input: unknown, init?: RequestInit) => {
         const method = init?.method ?? "GET";
+        const path = String(input);
         const document =
-          method === "PUT"
+          method === "PUT" && path === "/api/editor/tuning"
             ? (JSON.parse(String(init?.body)) as typeof CURRENT_GAME_TUNING)
             : initialDocument;
 
@@ -68,6 +90,7 @@ describe("EditPage", () => {
 
   beforeEach(() => {
     fetchMock.mockReset();
+    editGameViewportPanelMock.mockReset();
     editorPreviewStageMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
     applyRuntimeTuningDocument(CURRENT_GAME_TUNING);
@@ -130,6 +153,66 @@ describe("EditPage", () => {
     ).not.toHaveProperty("gameplay.drone");
   });
 
+  it("does not render a turret-only planet size control", async () => {
+    mockTuningFetch();
+    window.history.pushState({}, "", "/edit?item=turret");
+
+    render(<EditPage />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+    });
+
+    expect(screen.getByTestId("editor-preview-stage")).toHaveAttribute(
+      "data-item-id",
+      "cannon",
+    );
+    expect(screen.queryByLabelText("Planet size")).not.toBeInTheDocument();
+  });
+
+  it("renders missile scale controls and saves rocket visual scale changes", async () => {
+    mockTuningFetch();
+    window.history.pushState({}, "", "/edit?item=rocketlight");
+
+    render(<EditPage />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+    });
+
+    expect(screen.getByTestId("editor-preview-stage")).toHaveAttribute(
+      "data-item-id",
+      "rocketLight",
+    );
+
+    const scaleInput = await screen.findByLabelText("Scale");
+    expect(scaleInput).toHaveValue(CURRENT_GAME_TUNING.visuals.rockets.light.scale);
+
+    fireEvent.change(scaleInput, { target: { value: "1.8" } });
+    fireEvent.blur(scaleInput);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    const saveCall = fetchMock.mock.calls[1];
+    expect(saveCall?.[0]).toBe("/api/editor/tuning");
+    expect(saveCall?.[1]).toMatchObject({
+      method: "PUT",
+    });
+    expect(
+      JSON.parse(String((saveCall?.[1] as RequestInit | undefined)?.body)),
+    ).toMatchObject({
+      visuals: {
+        rockets: {
+          light: {
+            scale: 1.8,
+          },
+        },
+      },
+    });
+  });
+
   it("reads the selected edit item from the query param", async () => {
     mockTuningFetch();
     window.history.pushState({}, "", "/edit?item=turret");
@@ -146,6 +229,25 @@ describe("EditPage", () => {
     );
     expect(await screen.findByLabelText("Stem length")).toHaveValue(
       CURRENT_GAME_TUNING.visuals.cannon.stemLength,
+    );
+  });
+
+  it("supports the neutron query alias", async () => {
+    mockTuningFetch();
+    window.history.pushState({}, "", "/edit?item=neutron");
+
+    render(<EditPage />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+    });
+
+    expect(screen.getByTestId("editor-preview-stage")).toHaveAttribute(
+      "data-item-id",
+      "neutronStars",
+    );
+    expect(await screen.findByLabelText("Neutron star count")).toHaveValue(
+      CURRENT_GAME_TUNING.gameplay.neutronStars.count,
     );
   });
 
@@ -168,6 +270,126 @@ describe("EditPage", () => {
       "data-item-id",
       "shield",
     );
+  });
+
+  it("syncs the neutron stars item into the canonical query param", async () => {
+    mockTuningFetch();
+
+    render(<EditPage />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Neutron Stars/i }));
+
+    expect(window.location.pathname).toBe("/edit");
+    expect(window.location.search).toBe("?item=neutron");
+    expect(screen.getByTestId("editor-preview-stage")).toHaveAttribute(
+      "data-item-id",
+      "neutronStars",
+    );
+  });
+
+  it("renders the AI gameplay view and syncs its sandbox controls", async () => {
+    mockTuningFetch();
+    window.history.pushState({}, "", "/edit?item=ai-gameplay");
+
+    render(<EditPage />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+    });
+
+    expect(screen.getByTestId("edit-game-viewport-panel")).toHaveAttribute(
+      "data-bot-difficulty",
+      "normal",
+    );
+    expect(screen.getByTestId("edit-game-viewport-panel")).toHaveAttribute(
+      "data-participant-count",
+      "7",
+    );
+    expect(screen.getByRole("button", { name: /^Pause$/i })).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: /^Play$/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^Fullscreen$/i }),
+    ).toBeInTheDocument();
+    expect(await screen.findByLabelText("AI pilots")).toHaveValue(7);
+
+    fireEvent.change(screen.getByLabelText("AI pilots"), {
+      target: { value: "5" },
+    });
+    fireEvent.blur(screen.getByLabelText("AI pilots"));
+    fireEvent.change(screen.getByLabelText("Difficulty"), {
+      target: { value: "hard" },
+    });
+
+    expect(screen.getByTestId("edit-game-viewport-panel")).toHaveAttribute(
+      "data-bot-difficulty",
+      "hard",
+    );
+    expect(screen.getByTestId("edit-game-viewport-panel")).toHaveAttribute(
+      "data-participant-count",
+      "5",
+    );
+    expect(window.location.search).toBe("?item=ai-gameplay");
+  });
+
+  it("toggles AI gameplay fullscreen mode from the inspector action", async () => {
+    mockTuningFetch();
+    window.history.pushState({}, "", "/edit?item=ai-gameplay");
+
+    render(<EditPage />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+    });
+
+    const previewStage = screen.getByTestId("ai-gameplay-preview-stage");
+    let fullscreenElement: Element | null = null;
+    const requestFullscreenMock = vi.fn(async () => {
+      fullscreenElement = previewStage;
+      document.dispatchEvent(new Event("fullscreenchange"));
+    });
+    const exitFullscreenMock = vi.fn(async () => {
+      fullscreenElement = null;
+      document.dispatchEvent(new Event("fullscreenchange"));
+    });
+
+    Object.defineProperty(document, "fullscreenElement", {
+      configurable: true,
+      get: () => fullscreenElement,
+    });
+    Object.defineProperty(document, "exitFullscreen", {
+      configurable: true,
+      value: exitFullscreenMock,
+    });
+    Object.defineProperty(previewStage, "requestFullscreen", {
+      configurable: true,
+      value: requestFullscreenMock,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /^Fullscreen$/i }));
+
+    await waitFor(() => {
+      expect(requestFullscreenMock).toHaveBeenCalledTimes(1);
+    });
+    expect(
+      screen.getAllByRole("button", { name: /^Exit fullscreen$/i }).length,
+    ).toBeGreaterThan(0);
+
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /^Exit fullscreen$/i })[0]!,
+    );
+
+    await waitFor(() => {
+      expect(exitFullscreenMock).toHaveBeenCalledTimes(1);
+    });
+    expect(
+      screen.getByRole("button", { name: /^Fullscreen$/i }),
+    ).toBeInTheDocument();
   });
 
   it("updates the selected item from history navigation on /edit", async () => {
@@ -355,6 +577,7 @@ describe("EditPage", () => {
     expect(screen.getByLabelText("Star density")).toHaveValue(
       CURRENT_GAME_TUNING.visuals.background.starDensity,
     );
+    expect(screen.queryByLabelText("Neutron star count")).not.toBeInTheDocument();
     expect(screen.queryByText("Moving Objects")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Enable movers")).not.toBeInTheDocument();
 
@@ -381,7 +604,26 @@ describe("EditPage", () => {
     });
   });
 
-  it("syncs background inspector edits into the preview stage document", async () => {
+  it("renders numeric editor inputs without min or max attributes", async () => {
+    mockTuningFetch();
+
+    render(<EditPage />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Background/i }));
+
+    const spinbuttons = await screen.findAllByRole("spinbutton");
+    expect(spinbuttons.length).toBeGreaterThan(0);
+    for (const input of spinbuttons) {
+      expect(input).not.toHaveAttribute("min");
+      expect(input).not.toHaveAttribute("max");
+    }
+  });
+
+  it("defers color preview updates until blur", async () => {
     mockTuningFetch();
 
     render(<EditPage />);
@@ -395,12 +637,67 @@ describe("EditPage", () => {
     const baseColorInput = await screen.findByLabelText("Base color");
     fireEvent.change(baseColorInput, { target: { value: "#112233" } });
 
+    expect(
+      getLastEditorPreviewStageProps()?.documentValue.visuals.background
+        .baseColor,
+    ).toBe(CURRENT_GAME_TUNING.visuals.background.baseColor);
+
+    fireEvent.blur(baseColorInput);
+
     await waitFor(() => {
       expect(getLastEditorPreviewStageProps()?.itemId).toBe("background");
       expect(
         getLastEditorPreviewStageProps()?.documentValue.visuals.background
           .baseColor,
       ).toBe("#112233");
+    });
+  });
+
+  it("defers numeric preview updates until blur or Enter", async () => {
+    mockTuningFetch();
+
+    render(<EditPage />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Background/i }));
+
+    const starBrightnessInput = await screen.findByLabelText("Star brightness");
+
+    fireEvent.change(starBrightnessInput, { target: { value: "0.77" } });
+
+    expect(
+      getLastEditorPreviewStageProps()?.documentValue.visuals.background
+        .starBrightness,
+    ).toBe(CURRENT_GAME_TUNING.visuals.background.starBrightness);
+
+    fireEvent.blur(starBrightnessInput);
+
+    await waitFor(() => {
+      expect(
+        getLastEditorPreviewStageProps()?.documentValue.visuals.background
+          .starBrightness,
+      ).toBe(0.77);
+    });
+
+    fireEvent.change(starBrightnessInput, { target: { value: "0.91" } });
+
+    expect(
+      getLastEditorPreviewStageProps()?.documentValue.visuals.background
+        .starBrightness,
+    ).toBe(0.77);
+
+    fireEvent.keyDown(starBrightnessInput, {
+      key: "Enter",
+    });
+
+    await waitFor(() => {
+      expect(
+        getLastEditorPreviewStageProps()?.documentValue.visuals.background
+          .starBrightness,
+      ).toBe(0.91);
     });
   });
 
@@ -446,11 +743,168 @@ describe("EditPage", () => {
     });
   });
 
+  it("renders neutron star controls and saves neutron-star gameplay changes", async () => {
+    mockTuningFetch();
+
+    render(<EditPage />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Neutron Stars/i }));
+
+    const countInput = await screen.findByLabelText("Neutron star count");
+    expect(countInput).toHaveValue(CURRENT_GAME_TUNING.gameplay.neutronStars.count);
+    expect(screen.getByLabelText("Min mass (kg)")).toHaveValue(
+      CURRENT_GAME_TUNING.gameplay.neutronStars.minMassKg,
+    );
+    expect(
+      screen.getByLabelText("Randomize position inside playable circle"),
+    ).toBeChecked();
+    expect(screen.getByLabelText("Halo scale")).toHaveValue(
+      CURRENT_GAME_TUNING.visuals.neutronStars.haloScale,
+    );
+
+    fireEvent.change(countInput, { target: { value: "3" } });
+    fireEvent.blur(countInput);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    expect(screen.getByTestId("editor-preview-stage")).toHaveAttribute(
+      "data-item-id",
+      "neutronStars",
+    );
+
+    const saveCall = fetchMock.mock.calls[1];
+    expect(
+      JSON.parse(String((saveCall?.[1] as RequestInit | undefined)?.body)),
+    ).toMatchObject({
+      gameplay: {
+        neutronStars: {
+          count: 3,
+        },
+      },
+    });
+  });
+
+  it("saves neutron-star visual changes", async () => {
+    mockTuningFetch();
+
+    render(<EditPage />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Neutron Stars/i }));
+
+    const haloScaleInput = await screen.findByLabelText("Halo scale");
+    const jetOpacityInput = screen.getByLabelText("Jet opacity");
+
+    fireEvent.change(haloScaleInput, { target: { value: "3.75" } });
+    fireEvent.blur(haloScaleInput);
+    fireEvent.change(jetOpacityInput, { target: { value: "0.42" } });
+    fireEvent.blur(jetOpacityInput);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+
+    const saveCall = fetchMock.mock.calls.at(-1);
+    expect(
+      JSON.parse(String((saveCall?.[1] as RequestInit | undefined)?.body)),
+    ).toMatchObject({
+      visuals: {
+        neutronStars: {
+          haloScale: 3.75,
+          jetOpacity: 0.42,
+        },
+      },
+    });
+  });
+
+  it("saves uncapped neutron star sizes", async () => {
+    mockTuningFetch();
+
+    render(<EditPage />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Neutron Stars/i }));
+
+    const minSizeInput = await screen.findByLabelText("Min size");
+    const maxSizeInput = screen.getByLabelText("Max size");
+
+    expect(minSizeInput).toHaveValue(
+      CURRENT_GAME_TUNING.gameplay.neutronStars.minSize,
+    );
+    expect(maxSizeInput).toHaveValue(
+      CURRENT_GAME_TUNING.gameplay.neutronStars.maxSize,
+    );
+    expect(minSizeInput).not.toHaveAttribute("max");
+    expect(maxSizeInput).not.toHaveAttribute("max");
+
+    fireEvent.change(minSizeInput, { target: { value: "320" } });
+    fireEvent.blur(minSizeInput);
+    fireEvent.change(maxSizeInput, { target: { value: "420" } });
+    fireEvent.blur(maxSizeInput);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+
+    const saveCall = fetchMock.mock.calls.at(-1);
+    const savedDocument = JSON.parse(
+      String((saveCall?.[1] as RequestInit | undefined)?.body),
+    ) as typeof CURRENT_GAME_TUNING;
+
+    expect(savedDocument.gameplay.neutronStars.minSize).toBe(320);
+    expect(savedDocument.gameplay.neutronStars.maxSize).toBe(420);
+  });
+
+  it("saves uncapped neutron star masses", async () => {
+    mockTuningFetch();
+
+    render(<EditPage />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Neutron Stars/i }));
+
+    const minMassInput = await screen.findByLabelText("Min mass (kg)");
+    const maxMassInput = screen.getByLabelText("Max mass (kg)");
+
+    fireEvent.change(minMassInput, { target: { value: "2500" } });
+    fireEvent.blur(minMassInput);
+    fireEvent.change(maxMassInput, { target: { value: "2400000" } });
+    fireEvent.blur(maxMassInput);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+
+    const saveCall = fetchMock.mock.calls.at(-1);
+    const savedDocument = JSON.parse(
+      String((saveCall?.[1] as RequestInit | undefined)?.body),
+    ) as typeof CURRENT_GAME_TUNING;
+
+    expect(savedDocument.gameplay.neutronStars.minMassKg).toBe(2500);
+    expect(savedDocument.gameplay.neutronStars.maxMassKg).toBe(2400000);
+  });
+
   it("resets the selected background scope back to defaults", async () => {
     const customDocument = structuredClone(CURRENT_GAME_TUNING);
     customDocument.visuals.background.baseColor = "#112233";
     customDocument.visuals.background.starsEnabled = false;
     customDocument.visuals.background.nebulaStrength = 0.9;
+    customDocument.gameplay.neutronStars.count = 2;
     mockTuningFetch(customDocument);
 
     render(<EditPage />);
@@ -474,11 +928,67 @@ describe("EditPage", () => {
     expect(
       JSON.parse(String((saveCall?.[1] as RequestInit | undefined)?.body)),
     ).toMatchObject({
+      gameplay: {
+        neutronStars: {
+          count: 2,
+        },
+      },
       visuals: {
         background: {
           baseColor: CURRENT_GAME_TUNING.visuals.background.baseColor,
           nebulaStrength: CURRENT_GAME_TUNING.visuals.background.nebulaStrength,
           starsEnabled: CURRENT_GAME_TUNING.visuals.background.starsEnabled,
+        },
+      },
+    });
+  });
+
+  it("resets the selected neutron star scope back to defaults", async () => {
+    const customDocument = structuredClone(CURRENT_GAME_TUNING);
+    customDocument.gameplay.neutronStars.count = 3;
+    customDocument.gameplay.neutronStars.minMassKg = 240000;
+    customDocument.gameplay.neutronStars.maxSize = 144;
+    customDocument.gameplay.neutronStars.randomizePositionInsidePlayableCircle =
+      false;
+    customDocument.visuals.neutronStars.haloScale = 4.8;
+    customDocument.visuals.neutronStars.jetOpacity = 0.33;
+    mockTuningFetch(customDocument);
+
+    render(<EditPage />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Neutron Stars/i }));
+
+    expect(await screen.findByLabelText("Neutron star count")).toHaveValue(3);
+    expect(screen.getByLabelText("Randomize position inside playable circle")).not.toBeChecked();
+
+    fireEvent.click(screen.getByRole("button", { name: /Reset item/i }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    const saveCall = fetchMock.mock.calls[1];
+    expect(
+      JSON.parse(String((saveCall?.[1] as RequestInit | undefined)?.body)),
+    ).toMatchObject({
+      gameplay: {
+        neutronStars: {
+          count: CURRENT_GAME_TUNING.gameplay.neutronStars.count,
+          maxSize: CURRENT_GAME_TUNING.gameplay.neutronStars.maxSize,
+          minMassKg: CURRENT_GAME_TUNING.gameplay.neutronStars.minMassKg,
+          randomizePositionInsidePlayableCircle:
+            CURRENT_GAME_TUNING.gameplay.neutronStars
+              .randomizePositionInsidePlayableCircle,
+        },
+      },
+      visuals: {
+        neutronStars: {
+          haloScale: CURRENT_GAME_TUNING.visuals.neutronStars.haloScale,
+          jetOpacity: CURRENT_GAME_TUNING.visuals.neutronStars.jetOpacity,
         },
       },
     });
@@ -521,7 +1031,7 @@ describe("EditPage", () => {
     expect(savedDocument.gameplay.orbits.suns[0]!.mass).toBe(160000);
   });
 
-  it("saves the orbit planet circle radius", async () => {
+  it("saves uncapped orbit planet circle radius", async () => {
     mockTuningFetch();
 
     render(<EditPage />);
@@ -537,16 +1047,8 @@ describe("EditPage", () => {
     const circleRadiusInput = await screen.findByLabelText(
       "Planet Orbit Radius",
     );
-    expect(circleRadiusInput).toHaveAttribute(
-      "max",
-      String(
-        Math.max(
-          CURRENT_GAME_TUNING.gameplay.arena.radius,
-          CURRENT_GAME_TUNING.gameplay.orbits.planetCircleRadius,
-        ),
-      ),
-    );
-    fireEvent.change(circleRadiusInput, { target: { value: "2600" } });
+    expect(circleRadiusInput).not.toHaveAttribute("max");
+    fireEvent.change(circleRadiusInput, { target: { value: "7200" } });
     fireEvent.blur(circleRadiusInput);
 
     await waitFor(() => {
@@ -558,10 +1060,10 @@ describe("EditPage", () => {
       String((saveCall?.[1] as RequestInit | undefined)?.body),
     ) as typeof CURRENT_GAME_TUNING;
 
-    expect(savedDocument.gameplay.orbits.planetCircleRadius).toBe(2600);
+    expect(savedDocument.gameplay.orbits.planetCircleRadius).toBe(7200);
   });
 
-  it("saves the orbit sun start distance scale", async () => {
+  it("saves uncapped orbit sun start distance scale", async () => {
     mockTuningFetch();
 
     render(<EditPage />);
@@ -580,11 +1082,12 @@ describe("EditPage", () => {
     expect(distanceScaleInput).toHaveValue(
       CURRENT_GAME_TUNING.gameplay.orbits.sunStartDistanceScale,
     );
+    expect(distanceScaleInput).not.toHaveAttribute("max");
     expect(
       screen.queryByLabelText("Start velocity scale"),
     ).not.toBeInTheDocument();
 
-    fireEvent.change(distanceScaleInput, { target: { value: "1.5" } });
+    fireEvent.change(distanceScaleInput, { target: { value: "4.2" } });
     fireEvent.blur(distanceScaleInput);
 
     await waitFor(() => {
@@ -596,10 +1099,10 @@ describe("EditPage", () => {
       String((saveCall?.[1] as RequestInit | undefined)?.body),
     ) as typeof CURRENT_GAME_TUNING;
 
-    expect(savedDocument.gameplay.orbits.sunStartDistanceScale).toBe(1.5);
+    expect(savedDocument.gameplay.orbits.sunStartDistanceScale).toBe(4.2);
   });
 
-  it("saves the orbit system drift direction and speed", async () => {
+  it("saves uncapped orbit sun radius", async () => {
     mockTuningFetch();
 
     render(<EditPage />);
@@ -612,23 +1115,20 @@ describe("EditPage", () => {
       screen.getByRole("button", { name: /OrbitsOrbit seed tuning/i }),
     );
 
-    const directionInput = await screen.findByLabelText("Direction (deg)");
-    const speedInput = screen.getByLabelText("Drift speed");
+    const sunSection = await screen.findByText(FIRST_SUN_LABEL);
+    const sunFields = within(sunSection.closest("details")!);
+    const radiusInput = sunFields.getByLabelText("Radius");
 
-    expect(directionInput).toHaveValue(
-      CURRENT_GAME_TUNING.gameplay.orbits.systemDrift.directionDeg,
+    expect(radiusInput).toHaveValue(
+      CURRENT_GAME_TUNING.gameplay.orbits.suns[0]!.radius,
     );
-    expect(speedInput).toHaveValue(
-      CURRENT_GAME_TUNING.gameplay.orbits.systemDrift.speed,
-    );
+    expect(radiusInput).not.toHaveAttribute("max");
 
-    fireEvent.change(directionInput, { target: { value: "135" } });
-    fireEvent.blur(directionInput);
-    fireEvent.change(speedInput, { target: { value: "180" } });
-    fireEvent.blur(speedInput);
+    fireEvent.change(radiusInput, { target: { value: "1200" } });
+    fireEvent.blur(radiusInput);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 
     const saveCall = fetchMock.mock.calls.at(-1);
@@ -636,10 +1136,7 @@ describe("EditPage", () => {
       String((saveCall?.[1] as RequestInit | undefined)?.body),
     ) as typeof CURRENT_GAME_TUNING;
 
-    expect(savedDocument.gameplay.orbits.systemDrift).toEqual({
-      directionDeg: 135,
-      speed: 180,
-    });
+    expect(savedDocument.gameplay.orbits.suns[0]!.radius).toBe(1200);
   });
 
   it("saves uncapped orbit boundary debris controls", async () => {
@@ -784,6 +1281,37 @@ describe("EditPage", () => {
     );
   });
 
+  it("saves uncapped planet body scale", async () => {
+    mockTuningFetch();
+
+    render(<EditPage />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Planets/i }));
+
+    const terraDetails = screen.getByText("Terra").closest("details");
+    expect(terraDetails).not.toBeNull();
+    const terraScope = within(terraDetails as HTMLElement);
+    const bodyScaleInput = terraScope.getByLabelText("Body scale");
+
+    fireEvent.change(bodyScaleInput, { target: { value: "12.5" } });
+    fireEvent.blur(bodyScaleInput);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    const saveCall = fetchMock.mock.calls.at(-1);
+    const savedDocument = JSON.parse(
+      String((saveCall?.[1] as RequestInit | undefined)?.body),
+    ) as typeof CURRENT_GAME_TUNING;
+
+    expect(savedDocument.visuals.planets.archetypes.terra.bodyScale).toBe(12.5);
+  });
+
   it("renders arena controls and saves arena tuning changes", async () => {
     mockTuningFetch();
 
@@ -805,7 +1333,7 @@ describe("EditPage", () => {
     expect(arenaRadiusInput).toHaveValue(
       CURRENT_GAME_TUNING.gameplay.arena.radius,
     );
-    expect(arenaRadiusInput).toHaveAttribute("min", String(ARENA_RADIUS_MIN));
+    expect(arenaRadiusInput).not.toHaveAttribute("min");
     expect(arenaRadiusInput).not.toHaveAttribute("max");
     expect(instantDeathInput).toBeChecked();
 
@@ -879,7 +1407,8 @@ describe("EditPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /Foresight/i }));
 
     const showLineInput = await screen.findByLabelText("Show line");
-    expect(showLineInput).not.toBeChecked();
+    expect(showLineInput).toBeChecked();
+    expect(screen.getByLabelText("Show dots")).not.toBeChecked();
     expect(screen.getByLabelText("Dot size")).toHaveValue(
       CURRENT_GAME_TUNING.visuals.abilities.foresight.pointSize,
     );
@@ -897,14 +1426,51 @@ describe("EditPage", () => {
       visuals: {
         abilities: {
           foresight: {
-            showLine: true,
+            showLine: false,
           },
         },
       },
     });
   });
 
-  it("saves the overview gameplay camera size", async () => {
+  it("renders seeker lock controls and saves seeker lock seconds", async () => {
+    mockTuningFetch();
+
+    render(<EditPage />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /SeekerLock-on profile/i }));
+
+    const lockSecondsInput = await screen.findByLabelText("Lock seconds");
+    expect(lockSecondsInput).toHaveValue(
+      CURRENT_GAME_TUNING.gameplay.rockets.seeker.lockSec,
+    );
+
+    fireEvent.change(lockSecondsInput, { target: { value: "1.25" } });
+    fireEvent.blur(lockSecondsInput);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    const saveCall = fetchMock.mock.calls[1];
+    expect(
+      JSON.parse(String((saveCall?.[1] as RequestInit | undefined)?.body)),
+    ).toMatchObject({
+      gameplay: {
+        rockets: {
+          seeker: {
+            lockSec: 1.25,
+          },
+        },
+      },
+    });
+  });
+
+  it("saves the gameplay camera height", async () => {
     mockTuningFetch();
 
     render(<EditPage />);
@@ -914,11 +1480,13 @@ describe("EditPage", () => {
     });
 
     const cameraHeightInput = await screen.findByLabelText(
-      "Viewport world height",
+      "Gameplay camera height",
     );
     expect(cameraHeightInput).toHaveValue(
-      CURRENT_GAME_TUNING.gameplay.camera.viewportWorldHeight,
+      CURRENT_GAME_TUNING.gameplay.camera.gameplayCameraWorldHeight,
     );
+    expect(cameraHeightInput).not.toHaveAttribute("min");
+    expect(cameraHeightInput).not.toHaveAttribute("max");
 
     fireEvent.change(cameraHeightInput, { target: { value: "2400" } });
     fireEvent.blur(cameraHeightInput);
@@ -933,13 +1501,13 @@ describe("EditPage", () => {
     ).toMatchObject({
       gameplay: {
         camera: {
-          viewportWorldHeight: 2400,
+          gameplayCameraWorldHeight: 2400,
         },
       },
     });
   });
 
-  it("saves the overview read mode camera size", async () => {
+  it("shows a Sync action on overview and posts the current sync request", async () => {
     mockTuningFetch();
 
     render(<EditPage />);
@@ -948,15 +1516,42 @@ describe("EditPage", () => {
       expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
     });
 
-    const readModeCameraHeightInput = await screen.findByLabelText(
-      "Read mode world height",
-    );
-    expect(readModeCameraHeightInput).toHaveValue(
-      CURRENT_GAME_TUNING.gameplay.camera.readModeWorldHeight,
-    );
+    const syncButton = await screen.findByRole("button", { name: /^Sync$/i });
+    fireEvent.click(syncButton);
 
-    fireEvent.change(readModeCameraHeightInput, { target: { value: "8400" } });
-    fireEvent.blur(readModeCameraHeightInput);
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    const syncCall = fetchMock.mock.calls[1];
+    expect(syncCall?.[0]).toBe("/api/editor/tuning/sync-current");
+    expect(syncCall?.[1]).toMatchObject({
+      method: "POST",
+    });
+  });
+
+  it("saves the preview camera height", async () => {
+    mockTuningFetch();
+
+    render(<EditPage />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+    });
+
+    const inspectionCameraHeightInput = await screen.findByLabelText(
+      "Preview camera height",
+    );
+    expect(inspectionCameraHeightInput).toHaveValue(
+      CURRENT_GAME_TUNING.gameplay.camera.previewCameraWorldHeight,
+    );
+    expect(inspectionCameraHeightInput).not.toHaveAttribute("min");
+    expect(inspectionCameraHeightInput).not.toHaveAttribute("max");
+
+    fireEvent.change(inspectionCameraHeightInput, {
+      target: { value: "12000" },
+    });
+    fireEvent.blur(inspectionCameraHeightInput);
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -968,7 +1563,7 @@ describe("EditPage", () => {
     ).toMatchObject({
       gameplay: {
         camera: {
-          readModeWorldHeight: 8400,
+          previewCameraWorldHeight: 12000,
         },
       },
     });

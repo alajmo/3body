@@ -210,6 +210,8 @@ const describeEvent = (
           return `${victim} fell into the Black Hole`;
         case "boundary":
           return `${victim} breached the arena`;
+        case "neutronStar":
+          return `${victim} was crushed by a neutron star`;
         case "planetCollision":
           return `${victim} collided`;
         case "sun":
@@ -266,11 +268,6 @@ const buildShortcuts = (controlsEnabled: boolean): GameViewportShortcut[] =>
           label: "Fire",
         },
         {
-          id: "read",
-          keyLabel: "Shift",
-          label: "Read Mode",
-        },
-        {
           id: "zoom",
           keyLabel: "F",
           label: "Full View",
@@ -300,17 +297,17 @@ const buildContextualShortcuts = (
         },
         {
           id: "foresight",
-          keyLabel: "Q",
+          keyLabel: "E",
           label: "Foresight",
         },
         {
           id: "shield",
-          keyLabel: "W",
+          keyLabel: "Q",
           label: "Shield",
         },
         {
           id: "boost",
-          keyLabel: "E",
+          keyLabel: "W",
           label: "Boost",
         },
         {
@@ -392,7 +389,7 @@ export const buildAuthoritativeHudState = ({
       buildAbility({
         accent: tuning.visuals.abilities.foresightColor,
         id: "foresight",
-        keyLabel: "Q",
+        keyLabel: "E",
         label: "Foresight",
         mode:
           foresightActiveRemainingSec > 0
@@ -441,7 +438,7 @@ export const buildAuthoritativeHudState = ({
       buildAbility({
         accent: tuning.visuals.abilities.shieldColor,
         id: "shield",
-        keyLabel: "W",
+        keyLabel: "Q",
         label: "Shield",
         mode: shieldMode,
         fill: shieldLoadRatio,
@@ -464,7 +461,7 @@ export const buildAuthoritativeHudState = ({
       buildAbility({
         accent: tuning.visuals.abilities.boostColor,
         id: "boost",
-        keyLabel: "E",
+        keyLabel: "W",
         label: "Boost",
         mode:
           self.boostCharges > 0

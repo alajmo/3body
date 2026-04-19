@@ -2,6 +2,7 @@ import {
   ARENA_RADIUS_MIN,
   ARCHETYPE_IDS,
   ARCHETYPES,
+  type BotDifficulty,
   DEFAULT_GAME_TUNING,
   clamp,
   cloneGameTuningDocument,
@@ -18,8 +19,12 @@ import {
   useRef,
   useState,
 } from "react";
+import { EditGameViewportPanel } from "./EditGameViewportPanel";
 import { EditorPreviewStage } from "./EditorPreviewStage";
-import { getDefaultOrbitSunLabel } from "./game/orbitPresets";
+import {
+  DEFAULT_ORBIT_PRESET,
+  getDefaultOrbitSunLabel,
+} from "./game/orbitPresets";
 import {
   applyRuntimeTuningDocument,
   getRuntimeTuningDocument,
@@ -34,14 +39,20 @@ import {
   CACHE_ARENA_BADGE_SIZE_FACTOR,
   getCacheArenaBadgeSize,
 } from "./game/viewport/cacheVisuals";
+import {
+  createInitialHudState,
+  type GameViewportController,
+} from "./game/viewportHud";
 
 type EditorItemId =
   | "overview"
   | "hud"
   | "orbits"
+  | "aiGameplay"
   | "background"
   | "planets"
   | "suns"
+  | "neutronStars"
   | "blackHole"
   | "cannon"
   | "rocketLight"
@@ -66,6 +77,7 @@ const EDITOR_VIEW_ITEMS = [
   { id: "overview", label: "Overview", note: "Showcase + HUD" },
   { id: "hud", label: "HUD", note: "HUD only" },
   { id: "orbits", label: "Orbits", note: "Orbit seed tuning" },
+  { id: "aiGameplay", label: "AI Gameplay", note: "Local bot battle" },
 ] as const;
 
 const EDITOR_GROUPS = [
@@ -75,6 +87,11 @@ const EDITOR_GROUPS = [
       { id: "background", label: "Background", note: "Backdrop and starfield" },
       { id: "planets", label: "Planets", note: "Scale and archetype colors" },
       { id: "suns", label: "Suns", note: "Per-sun size and glow" },
+      {
+        id: "neutronStars",
+        label: "Neutron Stars",
+        note: "Planet-only gravity wells",
+      },
       { id: "blackHole", label: "Black Hole", note: "Gameplay and visuals" },
       { id: "cache", label: "Caches", note: "Spawn and badge size" },
     ],
@@ -266,14 +283,24 @@ const ORBIT_BOUNDARY_DEBRIS_SPEED_STEP = 0.05;
 const ORBIT_BOUNDARY_DEBRIS_THICKNESS_MIN = 24;
 const ORBIT_BOUNDARY_DEBRIS_THICKNESS_STEP = 2;
 const ORBIT_SUN_DISTANCE_SCALE_MIN = 0.5;
-const ORBIT_SUN_DISTANCE_SCALE_MAX = 2.5;
 const ORBIT_SUN_DISTANCE_SCALE_STEP = 0.05;
-const ORBIT_SYSTEM_DRIFT_DIRECTION_MAX = 360;
-const ORBIT_SYSTEM_DRIFT_DIRECTION_STEP = 1;
-const ORBIT_SYSTEM_DRIFT_SPEED_STEP = 10;
 const ORBIT_START_POSITION_MIN = -10000;
 const ORBIT_START_POSITION_MAX = 10000;
 const ORBIT_START_POSITION_STEP = 10;
+const AI_GAMEPLAY_MIN_PARTICIPANTS = 2;
+const AI_GAMEPLAY_MAX_PARTICIPANTS = DEFAULT_ORBIT_PRESET.planets.length;
+const BOT_DIFFICULTY_VALUES = ["easy", "normal", "hard"] as const;
+const AI_GAMEPLAY_DIFFICULTIES = [
+  { label: "Easy", value: "easy" },
+  { label: "Normal", value: "normal" },
+  { label: "Hard", value: "hard" },
+] as const satisfies readonly {
+  label: string;
+  value: BotDifficulty;
+}[];
+
+const formatBotDifficultyLabel = (difficulty: BotDifficulty): string =>
+  difficulty.charAt(0).toUpperCase() + difficulty.slice(1);
 
 type NumericFieldConfig<Key extends string> = {
   key: Key;
@@ -687,9 +714,11 @@ const EDITOR_ITEM_QUERY_VALUES = {
   overview: "overview",
   hud: "hud",
   orbits: "orbits",
+  aiGameplay: "ai-gameplay",
   background: "background",
   planets: "planets",
   suns: "suns",
+  neutronStars: "neutron",
   blackHole: "black-hole",
   cannon: "turret",
   rocketLight: "light",
@@ -713,6 +742,10 @@ const EDITOR_ITEM_ID_BY_QUERY_VALUE = new Map<string, EditorItemId>(
 );
 
 EDITOR_ITEM_ID_BY_QUERY_VALUE.set("blackhole", "blackHole");
+EDITOR_ITEM_ID_BY_QUERY_VALUE.set("neutronstar", "neutronStars");
+EDITOR_ITEM_ID_BY_QUERY_VALUE.set("neutronstars", "neutronStars");
+EDITOR_ITEM_ID_BY_QUERY_VALUE.set("neutron-star", "neutronStars");
+EDITOR_ITEM_ID_BY_QUERY_VALUE.set("neutron-stars", "neutronStars");
 EDITOR_ITEM_ID_BY_QUERY_VALUE.set("cannon", "cannon");
 EDITOR_ITEM_ID_BY_QUERY_VALUE.set("rocketlight", "rocketLight");
 EDITOR_ITEM_ID_BY_QUERY_VALUE.set("rocketheavy", "rocketHeavy");
@@ -721,6 +754,8 @@ EDITOR_ITEM_ID_BY_QUERY_VALUE.set("light-missile", "rocketLight");
 EDITOR_ITEM_ID_BY_QUERY_VALUE.set("heavy-missile", "rocketHeavy");
 EDITOR_ITEM_ID_BY_QUERY_VALUE.set("seeker-missile", "rocketSeeker");
 EDITOR_ITEM_ID_BY_QUERY_VALUE.set("gravitypulse", "gravityPulse");
+EDITOR_ITEM_ID_BY_QUERY_VALUE.set("aigameplay", "aiGameplay");
+EDITOR_ITEM_ID_BY_QUERY_VALUE.set("ai-gameplay", "aiGameplay");
 
 const DEFAULT_EDITOR_ITEM_ID: EditorItemId = "overview";
 
@@ -831,7 +866,8 @@ const resetObjectFields = <T extends object, K extends keyof T>(
   }
 };
 
-const canResetItem = (itemId: EditorItemId): boolean => itemId !== "cloak";
+const canResetItem = (itemId: EditorItemId): boolean =>
+  itemId !== "aiGameplay" && itemId !== "cloak";
 const canRestartPreview = (itemId: EditorItemId): boolean =>
   itemId === "orbits";
 
@@ -851,6 +887,8 @@ const resetItemToDefaults = (
     case "hud":
       draft.visuals.hud = defaults.visuals.hud;
       return;
+    case "aiGameplay":
+      return;
     case "background":
       draft.visuals.background = defaults.visuals.background;
       return;
@@ -859,6 +897,10 @@ const resetItemToDefaults = (
       return;
     case "suns":
       draft.visuals.suns = defaults.visuals.suns;
+      return;
+    case "neutronStars":
+      draft.gameplay.neutronStars = defaults.gameplay.neutronStars;
+      draft.visuals.neutronStars = defaults.visuals.neutronStars;
       return;
     case "blackHole":
       draft.gameplay.blackHole = defaults.gameplay.blackHole;
@@ -937,6 +979,7 @@ const getPreviewMode = (
         showHud: true,
       };
     case "orbits":
+    case "aiGameplay":
       return {
         showHud: false,
       };
@@ -949,6 +992,10 @@ const getPreviewMode = (
         showHud: false,
       };
     case "suns":
+      return {
+        showHud: false,
+      };
+    case "neutronStars":
       return {
         showHud: false,
       };
@@ -1012,6 +1059,13 @@ const describeSaveState = (
     default:
       return "Editing runtime tuning";
   }
+};
+
+const formatMatchClock = (valueSec: number): string => {
+  const totalSeconds = Math.max(0, Math.floor(valueSec));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 };
 
 const updateDocument = (
@@ -1097,15 +1151,7 @@ function InspectorSection({
   );
 }
 
-function NumberField({
-  label,
-  max,
-  min,
-  onCommit,
-  onPreviewChange,
-  step,
-  value,
-}: {
+function NumberField(props: {
   label: string;
   max?: number;
   min?: number;
@@ -1114,6 +1160,7 @@ function NumberField({
   step: number;
   value: number;
 }) {
+  const { label, onCommit, step, value } = props;
   const [draft, setDraft] = useState(value.toString());
 
   useEffect(() => {
@@ -1136,18 +1183,11 @@ function NumberField({
       <input
         type="number"
         className="edit-field__input"
-        min={min}
-        max={max}
         step={step}
         value={draft}
         onBlur={commit}
         onChange={(event) => {
-          const nextDraft = event.currentTarget.value;
-          setDraft(nextDraft);
-          const nextValue = Number(nextDraft);
-          if (Number.isFinite(nextValue)) {
-            onPreviewChange(nextValue);
-          }
+          setDraft(event.currentTarget.value);
         }}
         onKeyDown={(event) => {
           if (event.key === "Enter" && !event.nativeEvent.isComposing) {
@@ -1161,26 +1201,60 @@ function NumberField({
   );
 }
 
-function ColorField({
+function SelectField<TValue extends string>({
   label,
   onCommit,
-  onPreviewChange,
+  options,
   value,
 }: {
+  label: string;
+  onCommit: (value: TValue) => void;
+  options: readonly {
+    label: string;
+    value: TValue;
+  }[];
+  value: TValue;
+}) {
+  return (
+    <label className="edit-field">
+      <span className="edit-field__label">{label}</span>
+      <select
+        className="edit-field__input"
+        value={value}
+        onChange={(event) => onCommit(event.currentTarget.value as TValue)}
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function ColorField(props: {
   label: string;
   onCommit: (value: string) => void;
   onPreviewChange: (value: string) => void;
   value: string;
 }) {
+  const { label, onCommit, value } = props;
+  const [draft, setDraft] = useState(value);
+
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+
   return (
     <label className="edit-field">
       <span className="edit-field__label">{label}</span>
       <input
         type="color"
         className="edit-field__input edit-field__input--color"
-        value={value}
+        value={draft}
         onBlur={(event) => onCommit(event.currentTarget.value)}
-        onChange={(event) => onPreviewChange(event.currentTarget.value)}
+        onChange={(event) => setDraft(event.currentTarget.value)}
       />
     </label>
   );
@@ -1291,6 +1365,73 @@ function EditorItemPreview({
           <span className="edit-object-preview__orbit-sun edit-object-preview__orbit-sun--c" />
         </div>
       );
+    case "aiGameplay":
+      return (
+        <div className="edit-object-preview edit-object-preview--orbits">
+          <span className="edit-object-preview__orbit-ring" />
+          <span className="edit-object-preview__orbit-ring edit-object-preview__orbit-ring--inner" />
+          <span className="edit-object-preview__orbit-sun edit-object-preview__orbit-sun--a" />
+          <span className="edit-object-preview__orbit-sun edit-object-preview__orbit-sun--b" />
+          <span className="edit-object-preview__orbit-sun edit-object-preview__orbit-sun--c" />
+          <span
+            className="edit-object-preview__orbit-planet"
+            style={{
+              background: documentValue.visuals.planets.archetypes.terra.color,
+              top: "18%",
+              left: "62%",
+            }}
+          />
+          <span
+            className="edit-object-preview__orbit-planet"
+            style={{
+              background: documentValue.visuals.planets.archetypes.ignis.color,
+              top: "32%",
+              left: "79%",
+            }}
+          />
+          <span
+            className="edit-object-preview__orbit-planet"
+            style={{
+              background: documentValue.visuals.planets.archetypes.umbra.color,
+              top: "58%",
+              left: "76%",
+            }}
+          />
+          <span
+            className="edit-object-preview__orbit-planet"
+            style={{
+              background:
+                documentValue.visuals.planets.archetypes.glacius.color,
+              top: "76%",
+              left: "56%",
+            }}
+          />
+          <span
+            className="edit-object-preview__orbit-planet"
+            style={{
+              background: documentValue.visuals.planets.archetypes.terra.color,
+              top: "74%",
+              left: "28%",
+            }}
+          />
+          <span
+            className="edit-object-preview__orbit-planet"
+            style={{
+              background: documentValue.visuals.planets.archetypes.volans.color,
+              top: "46%",
+              left: "16%",
+            }}
+          />
+          <span
+            className="edit-object-preview__orbit-planet"
+            style={{
+              background: documentValue.visuals.planets.archetypes.oculus.color,
+              top: "22%",
+              left: "24%",
+            }}
+          />
+        </div>
+      );
     case "background": {
       const background = documentValue.visuals.background;
       const starOpacity = background.starsEnabled
@@ -1354,6 +1495,15 @@ function EditorItemPreview({
         </div>
       );
     }
+    case "neutronStars":
+      return (
+        <div className="edit-object-preview edit-object-preview--neutron-stars">
+          <span className="edit-object-preview__neutron-star-jet edit-object-preview__neutron-star-jet--a" />
+          <span className="edit-object-preview__neutron-star-jet edit-object-preview__neutron-star-jet--b" />
+          <span className="edit-object-preview__neutron-star-halo" />
+          <span className="edit-object-preview__neutron-star-core" />
+        </div>
+      );
     case "planets":
       return (
         <div className="edit-object-preview edit-object-preview--planets">
@@ -1538,7 +1688,19 @@ export function EditPage() {
   >("loading");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [previewResetRevision, setPreviewResetRevision] = useState(0);
+  const [aiGameplayParticipantCount, setAiGameplayParticipantCount] = useState(
+    AI_GAMEPLAY_MAX_PARTICIPANTS,
+  );
+  const [aiGameplayDifficulty, setAiGameplayDifficulty] =
+    useState<BotDifficulty>("normal");
+  const [aiGameplayController, setAiGameplayController] =
+    useState<GameViewportController | null>(null);
+  const [aiGameplayFullscreen, setAiGameplayFullscreen] = useState(false);
+  const [aiGameplayHudState, setAiGameplayHudState] = useState(() =>
+    createInitialHudState(),
+  );
   const documentRef = useRef(documentValue);
+  const aiGameplayPreviewRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     documentRef.current = documentValue;
@@ -1563,6 +1725,39 @@ export function EditPage() {
       window.removeEventListener("popstate", syncSelectedItemFromLocation);
     };
   }, []);
+
+  useEffect(() => {
+    const syncAiGameplayFullscreenState = () => {
+      setAiGameplayFullscreen(
+        document.fullscreenElement === aiGameplayPreviewRef.current,
+      );
+    };
+
+    syncAiGameplayFullscreenState();
+    document.addEventListener(
+      "fullscreenchange",
+      syncAiGameplayFullscreenState,
+    );
+    return () => {
+      document.removeEventListener(
+        "fullscreenchange",
+        syncAiGameplayFullscreenState,
+      );
+    };
+  }, []);
+
+  useEffect(() => {
+    if (selectedItemId === "aiGameplay") {
+      return;
+    }
+
+    if (document.fullscreenElement === aiGameplayPreviewRef.current) {
+      void document.exitFullscreen();
+      return;
+    }
+
+    setAiGameplayFullscreen(false);
+  }, [selectedItemId]);
 
   useEffect(() => {
     let active = true;
@@ -1658,6 +1853,40 @@ export function EditPage() {
     applyRuntimeTuningDocument(nextDocument);
     setDocumentValue(nextDocument);
     void saveDocument(nextDocument);
+  };
+
+  const syncCurrentTuning = async () => {
+    startTransition(() => {
+      setSaveStatus("saving");
+      setSaveError(null);
+    });
+
+    try {
+      const response = await fetch("/api/editor/tuning/sync-current", {
+        method: "POST",
+      });
+      if (!response.ok) {
+        throw new Error(`Request failed with ${response.status}`);
+      }
+
+      const syncedDocument = sanitizeGameTuning(await response.json());
+      applyRuntimeTuningDocument(syncedDocument);
+      documentRef.current = syncedDocument;
+      startTransition(() => {
+        setDocumentValue(syncedDocument);
+        setSaveStatus("saved");
+        setSaveError(null);
+      });
+    } catch (error) {
+      startTransition(() => {
+        setSaveStatus("error");
+        setSaveError(
+          error instanceof Error
+            ? error.message
+            : "Unable to sync current tuning.",
+        );
+      });
+    }
   };
 
   const resetSelectedItem = () => {
@@ -1840,11 +2069,30 @@ export function EditPage() {
               })
             }
           />
+          {rocketKind === "seeker" ? (
+            <NumberField
+              label="Lock seconds"
+              min={0}
+              max={120}
+              step={0.05}
+              value={rocket.lockSec}
+              onPreviewChange={(value) =>
+                applyPreviewChange((draft) => {
+                  draft.gameplay.rockets.seeker.lockSec = value;
+                })
+              }
+              onCommit={(value) =>
+                commitChange((draft) => {
+                  draft.gameplay.rockets.seeker.lockSec = value;
+                })
+              }
+            />
+          ) : null}
         </InspectorSection>
 
         <InspectorSection
           title="Visuals"
-          note="Mesh silhouette and HUD accent"
+          note="Mesh silhouette, overall scale, and HUD accent"
           resetDisabled={sectionResetDisabled}
           onReset={() =>
             resetInspectorSection((draft, defaults) => {
@@ -1892,6 +2140,23 @@ export function EditPage() {
             onCommit={(value) =>
               commitChange((draft) => {
                 draft.visuals.rockets[rocketKind].hudAccent = value;
+              })
+            }
+          />
+          <NumberField
+            label="Scale"
+            min={0.1}
+            max={32}
+            step={0.05}
+            value={visuals.scale}
+            onPreviewChange={(value) =>
+              applyPreviewChange((draft) => {
+                draft.visuals.rockets[rocketKind].scale = value;
+              })
+            }
+            onCommit={(value) =>
+              commitChange((draft) => {
+                draft.visuals.rockets[rocketKind].scale = value;
               })
             }
           />
@@ -2207,14 +2472,266 @@ export function EditPage() {
     );
   };
 
+  const renderNeutronStarInspector = () => (
+    <>
+      <InspectorSection
+        title="Gameplay"
+        note="Planet-only gravity wells with mass-scaled size and optional random placement"
+        resetDisabled={sectionResetDisabled}
+        onReset={() =>
+          resetInspectorSection((draft, defaults) => {
+            draft.gameplay.neutronStars = defaults.gameplay.neutronStars;
+          })
+        }
+      >
+        <NumberField
+          label="Neutron star count"
+          min={0}
+          max={12}
+          step={1}
+          value={documentValue.gameplay.neutronStars.count}
+          onPreviewChange={(value) =>
+            applyPreviewChange((draft) => {
+              draft.gameplay.neutronStars.count = value;
+            })
+          }
+          onCommit={(value) =>
+            commitChange((draft) => {
+              draft.gameplay.neutronStars.count = value;
+            })
+          }
+        />
+        <NumberField
+          label="Min mass (kg)"
+          step={1000}
+          value={documentValue.gameplay.neutronStars.minMassKg}
+          onPreviewChange={(value) =>
+            applyPreviewChange((draft) => {
+              draft.gameplay.neutronStars.minMassKg = value;
+            })
+          }
+          onCommit={(value) =>
+            commitChange((draft) => {
+              draft.gameplay.neutronStars.minMassKg = value;
+            })
+          }
+        />
+        <NumberField
+          label="Max mass (kg)"
+          step={1000}
+          value={documentValue.gameplay.neutronStars.maxMassKg}
+          onPreviewChange={(value) =>
+            applyPreviewChange((draft) => {
+              draft.gameplay.neutronStars.maxMassKg = value;
+            })
+          }
+          onCommit={(value) =>
+            commitChange((draft) => {
+              draft.gameplay.neutronStars.maxMassKg = value;
+            })
+          }
+        />
+        <NumberField
+          label="Min size"
+          min={12}
+          max={220}
+          step={1}
+          value={documentValue.gameplay.neutronStars.minSize}
+          onPreviewChange={(value) =>
+            applyPreviewChange((draft) => {
+              draft.gameplay.neutronStars.minSize = value;
+              if (draft.gameplay.neutronStars.maxSize < value) {
+                draft.gameplay.neutronStars.maxSize = value;
+              }
+            })
+          }
+          onCommit={(value) =>
+            commitChange((draft) => {
+              draft.gameplay.neutronStars.minSize = value;
+              if (draft.gameplay.neutronStars.maxSize < value) {
+                draft.gameplay.neutronStars.maxSize = value;
+              }
+            })
+          }
+        />
+        <NumberField
+          label="Max size"
+          min={documentValue.gameplay.neutronStars.minSize}
+          max={260}
+          step={1}
+          value={documentValue.gameplay.neutronStars.maxSize}
+          onPreviewChange={(value) =>
+            applyPreviewChange((draft) => {
+              draft.gameplay.neutronStars.maxSize = Math.max(
+                value,
+                draft.gameplay.neutronStars.minSize,
+              );
+            })
+          }
+          onCommit={(value) =>
+            commitChange((draft) => {
+              draft.gameplay.neutronStars.maxSize = Math.max(
+                value,
+                draft.gameplay.neutronStars.minSize,
+              );
+            })
+          }
+        />
+        <ToggleField
+          label="Randomize position inside playable circle"
+          value={
+            documentValue.gameplay.neutronStars
+              .randomizePositionInsidePlayableCircle
+          }
+          onCommit={(value) =>
+            commitChange((draft) => {
+              draft.gameplay.neutronStars.randomizePositionInsidePlayableCircle =
+                value;
+            })
+          }
+        />
+      </InspectorSection>
+      <InspectorSection
+        title="Visuals"
+        note="Control the neutron star halo, lensing disc, and polar jet silhouette"
+        resetDisabled={sectionResetDisabled}
+        onReset={() =>
+          resetInspectorSection((draft, defaults) => {
+            draft.visuals.neutronStars = defaults.visuals.neutronStars;
+          })
+        }
+      >
+        <NumberField
+          label="Halo scale"
+          min={0.25}
+          max={12}
+          step={0.05}
+          value={documentValue.visuals.neutronStars.haloScale}
+          onPreviewChange={(value) =>
+            applyPreviewChange((draft) => {
+              draft.visuals.neutronStars.haloScale = value;
+            })
+          }
+          onCommit={(value) =>
+            commitChange((draft) => {
+              draft.visuals.neutronStars.haloScale = value;
+            })
+          }
+        />
+        <NumberField
+          label="Halo opacity"
+          min={0}
+          max={1}
+          step={0.01}
+          value={documentValue.visuals.neutronStars.haloOpacity}
+          onPreviewChange={(value) =>
+            applyPreviewChange((draft) => {
+              draft.visuals.neutronStars.haloOpacity = value;
+            })
+          }
+          onCommit={(value) =>
+            commitChange((draft) => {
+              draft.visuals.neutronStars.haloOpacity = value;
+            })
+          }
+        />
+        <NumberField
+          label="Lens scale"
+          min={0.25}
+          max={16}
+          step={0.05}
+          value={documentValue.visuals.neutronStars.lensScale}
+          onPreviewChange={(value) =>
+            applyPreviewChange((draft) => {
+              draft.visuals.neutronStars.lensScale = value;
+            })
+          }
+          onCommit={(value) =>
+            commitChange((draft) => {
+              draft.visuals.neutronStars.lensScale = value;
+            })
+          }
+        />
+        <NumberField
+          label="Lens opacity"
+          min={0}
+          max={1}
+          step={0.01}
+          value={documentValue.visuals.neutronStars.lensOpacity}
+          onPreviewChange={(value) =>
+            applyPreviewChange((draft) => {
+              draft.visuals.neutronStars.lensOpacity = value;
+            })
+          }
+          onCommit={(value) =>
+            commitChange((draft) => {
+              draft.visuals.neutronStars.lensOpacity = value;
+            })
+          }
+        />
+        <NumberField
+          label="Jet length scale"
+          min={0.25}
+          max={16}
+          step={0.05}
+          value={documentValue.visuals.neutronStars.jetLengthScale}
+          onPreviewChange={(value) =>
+            applyPreviewChange((draft) => {
+              draft.visuals.neutronStars.jetLengthScale = value;
+            })
+          }
+          onCommit={(value) =>
+            commitChange((draft) => {
+              draft.visuals.neutronStars.jetLengthScale = value;
+            })
+          }
+        />
+        <NumberField
+          label="Jet width scale"
+          min={0.02}
+          max={4}
+          step={0.01}
+          value={documentValue.visuals.neutronStars.jetWidthScale}
+          onPreviewChange={(value) =>
+            applyPreviewChange((draft) => {
+              draft.visuals.neutronStars.jetWidthScale = value;
+            })
+          }
+          onCommit={(value) =>
+            commitChange((draft) => {
+              draft.visuals.neutronStars.jetWidthScale = value;
+            })
+          }
+        />
+        <NumberField
+          label="Jet opacity"
+          min={0}
+          max={1}
+          step={0.01}
+          value={documentValue.visuals.neutronStars.jetOpacity}
+          onPreviewChange={(value) =>
+            applyPreviewChange((draft) => {
+              draft.visuals.neutronStars.jetOpacity = value;
+            })
+          }
+          onCommit={(value) =>
+            commitChange((draft) => {
+              draft.visuals.neutronStars.jetOpacity = value;
+            })
+          }
+        />
+      </InspectorSection>
+    </>
+  );
+
   const renderInspector = () => {
     switch (selectedItemId) {
       case "overview":
         return (
           <>
             <InspectorSection
-              title="Gameplay camera"
-              note="Viewport world height drives the standard follow camera. Local sandbox uses read mode world height as its baseline view, and Shift no longer adds extra sandbox zoom."
+              title="Camera Modes"
+              note="Larger values zoom farther out. Sandbox uses the gameplay camera height."
               resetDisabled={sectionResetDisabled}
               onReset={() =>
                 resetInspectorSection((draft, defaults) => {
@@ -2223,36 +2740,32 @@ export function EditPage() {
               }
             >
               <NumberField
-                label="Viewport world height"
-                min={100}
-                max={10000}
+                label="Gameplay camera height"
                 step={10}
-                value={documentValue.gameplay.camera.viewportWorldHeight}
+                value={documentValue.gameplay.camera.gameplayCameraWorldHeight}
                 onPreviewChange={(value) =>
                   applyPreviewChange((draft) => {
-                    draft.gameplay.camera.viewportWorldHeight = value;
+                    draft.gameplay.camera.gameplayCameraWorldHeight = value;
                   })
                 }
                 onCommit={(value) =>
                   commitChange((draft) => {
-                    draft.gameplay.camera.viewportWorldHeight = value;
+                    draft.gameplay.camera.gameplayCameraWorldHeight = value;
                   })
                 }
               />
               <NumberField
-                label="Read mode world height"
-                min={100}
-                max={10000}
+                label="Preview camera height"
                 step={10}
-                value={documentValue.gameplay.camera.readModeWorldHeight}
+                value={documentValue.gameplay.camera.previewCameraWorldHeight}
                 onPreviewChange={(value) =>
                   applyPreviewChange((draft) => {
-                    draft.gameplay.camera.readModeWorldHeight = value;
+                    draft.gameplay.camera.previewCameraWorldHeight = value;
                   })
                 }
                 onCommit={(value) =>
                   commitChange((draft) => {
-                    draft.gameplay.camera.readModeWorldHeight = value;
+                    draft.gameplay.camera.previewCameraWorldHeight = value;
                   })
                 }
               />
@@ -2558,11 +3071,477 @@ export function EditPage() {
             </InspectorSection>
           </>
         );
-      case "orbits": {
-        const orbitPlanetCircleRadiusMax = Math.max(
-          documentValue.gameplay.arena.radius,
-          documentValue.gameplay.orbits.planetCircleRadius,
+      case "aiGameplay": {
+        const aiTuning = documentValue.gameplay.ai;
+        const previewMovementScalar = (
+          key: "candidateDirections" | "objectiveFanoutDeg",
+          value: number,
+        ) =>
+          applyPreviewChange((draft) => {
+            draft.gameplay.ai.movement[key] = value;
+          });
+        const commitMovementScalar = (
+          key: "candidateDirections" | "objectiveFanoutDeg",
+          value: number,
+        ) =>
+          commitChange((draft) => {
+            draft.gameplay.ai.movement[key] = value;
+          });
+        const previewMovementDifficulty = (
+          key: "evaluationHorizonSec" | "simulationSteps",
+          difficulty: BotDifficulty,
+          value: number,
+        ) =>
+          applyPreviewChange((draft) => {
+            draft.gameplay.ai.movement[key][difficulty] = value;
+          });
+        const commitMovementDifficulty = (
+          key: "evaluationHorizonSec" | "simulationSteps",
+          difficulty: BotDifficulty,
+          value: number,
+        ) =>
+          commitChange((draft) => {
+            draft.gameplay.ai.movement[key][difficulty] = value;
+          });
+        const previewThreatDifficulty = (
+          key: "lookaheadSec" | "simulationSteps",
+          difficulty: BotDifficulty,
+          value: number,
+        ) =>
+          applyPreviewChange((draft) => {
+            draft.gameplay.ai.threat[key][difficulty] = value;
+          });
+        const commitThreatDifficulty = (
+          key: "lookaheadSec" | "simulationSteps",
+          difficulty: BotDifficulty,
+          value: number,
+        ) =>
+          commitChange((draft) => {
+            draft.gameplay.ai.threat[key][difficulty] = value;
+          });
+        const previewShotDifficulty = (
+          key: "targetPredictionHorizonSec" | "targetPredictionSteps",
+          difficulty: BotDifficulty,
+          value: number,
+        ) =>
+          applyPreviewChange((draft) => {
+            draft.gameplay.ai.shots[key][difficulty] = value;
+          });
+        const commitShotDifficulty = (
+          key: "targetPredictionHorizonSec" | "targetPredictionSteps",
+          difficulty: BotDifficulty,
+          value: number,
+        ) =>
+          commitChange((draft) => {
+            draft.gameplay.ai.shots[key][difficulty] = value;
+          });
+        const previewExecutionNumber = (
+          key:
+            | "boostCommitScoreDelta"
+            | "cacheRunFireConfidence"
+            | "pressureLightOverrideConfidence"
+            | "pressureLightOverrideDamage"
+            | "pressureLightOverrideWaste"
+            | "repositionFireConfidence",
+          value: number,
+        ) =>
+          applyPreviewChange((draft) => {
+            draft.gameplay.ai.execution[key] = value;
+          });
+        const commitExecutionNumber = (
+          key:
+            | "boostCommitScoreDelta"
+            | "cacheRunFireConfidence"
+            | "pressureLightOverrideConfidence"
+            | "pressureLightOverrideDamage"
+            | "pressureLightOverrideWaste"
+            | "repositionFireConfidence",
+          value: number,
+        ) =>
+          commitChange((draft) => {
+            draft.gameplay.ai.execution[key] = value;
+          });
+
+        return (
+          <>
+            <InspectorSection
+              title="AI Setup"
+              note="Observer sandbox seeded from the current runtime tuning"
+            >
+              <NumberField
+                label="AI pilots"
+                min={AI_GAMEPLAY_MIN_PARTICIPANTS}
+                max={AI_GAMEPLAY_MAX_PARTICIPANTS}
+                step={1}
+                value={aiGameplayParticipantCount}
+                onPreviewChange={setClampedAiGameplayParticipantCount}
+                onCommit={setClampedAiGameplayParticipantCount}
+              />
+              <SelectField
+                label="Difficulty"
+                options={AI_GAMEPLAY_DIFFICULTIES}
+                value={aiGameplayDifficulty}
+                onCommit={setAiGameplayDifficulty}
+              />
+            </InspectorSection>
+            <InspectorSection
+              title="Navigation Search"
+              note="How aggressively the planner explores gravity-driven boost routes"
+              resetDisabled={sectionResetDisabled}
+              onReset={() =>
+                resetInspectorSection((draft, defaults) => {
+                  draft.gameplay.ai.movement = defaults.gameplay.ai.movement;
+                  draft.gameplay.ai.execution.boostCommitScoreDelta =
+                    defaults.gameplay.ai.execution.boostCommitScoreDelta;
+                })
+              }
+            >
+              <NumberField
+                label="Candidate directions"
+                min={4}
+                max={32}
+                step={1}
+                value={aiTuning.movement.candidateDirections}
+                onPreviewChange={(value) =>
+                  previewMovementScalar("candidateDirections", value)
+                }
+                onCommit={(value) =>
+                  commitMovementScalar("candidateDirections", value)
+                }
+              />
+              <NumberField
+                label="Objective fanout"
+                min={0}
+                max={90}
+                step={1}
+                value={aiTuning.movement.objectiveFanoutDeg}
+                onPreviewChange={(value) =>
+                  previewMovementScalar("objectiveFanoutDeg", value)
+                }
+                onCommit={(value) =>
+                  commitMovementScalar("objectiveFanoutDeg", value)
+                }
+              />
+              <NumberField
+                label="Boost commit delta"
+                min={0}
+                max={30}
+                step={0.5}
+                value={aiTuning.execution.boostCommitScoreDelta}
+                onPreviewChange={(value) =>
+                  previewExecutionNumber("boostCommitScoreDelta", value)
+                }
+                onCommit={(value) =>
+                  commitExecutionNumber("boostCommitScoreDelta", value)
+                }
+              />
+            </InspectorSection>
+            <InspectorSection
+              title="Movement Horizon"
+              note="Planet navigation lookahead under suns, arena edge, and black hole pressure"
+              resetDisabled={sectionResetDisabled}
+              onReset={() =>
+                resetInspectorSection((draft, defaults) => {
+                  draft.gameplay.ai.movement.evaluationHorizonSec =
+                    defaults.gameplay.ai.movement.evaluationHorizonSec;
+                  draft.gameplay.ai.movement.simulationSteps =
+                    defaults.gameplay.ai.movement.simulationSteps;
+                })
+              }
+            >
+              {BOT_DIFFICULTY_VALUES.map((difficulty) => (
+                <NumberField
+                  key={`movement-horizon-${difficulty}`}
+                  label={`Move horizon ${formatBotDifficultyLabel(difficulty)}`}
+                  min={0.4}
+                  max={8}
+                  step={0.05}
+                  value={aiTuning.movement.evaluationHorizonSec[difficulty]}
+                  onPreviewChange={(value) =>
+                    previewMovementDifficulty(
+                      "evaluationHorizonSec",
+                      difficulty,
+                      value,
+                    )
+                  }
+                  onCommit={(value) =>
+                    commitMovementDifficulty(
+                      "evaluationHorizonSec",
+                      difficulty,
+                      value,
+                    )
+                  }
+                />
+              ))}
+              {BOT_DIFFICULTY_VALUES.map((difficulty) => (
+                <NumberField
+                  key={`movement-steps-${difficulty}`}
+                  label={`Move steps ${formatBotDifficultyLabel(difficulty)}`}
+                  min={4}
+                  max={96}
+                  step={1}
+                  value={aiTuning.movement.simulationSteps[difficulty]}
+                  onPreviewChange={(value) =>
+                    previewMovementDifficulty(
+                      "simulationSteps",
+                      difficulty,
+                      value,
+                    )
+                  }
+                  onCommit={(value) =>
+                    commitMovementDifficulty(
+                      "simulationSteps",
+                      difficulty,
+                      value,
+                    )
+                  }
+                />
+              ))}
+            </InspectorSection>
+            <InspectorSection
+              title="Threat Lookahead"
+              note="How far ahead missile and hazard avoidance probes when choosing escape burns"
+              resetDisabled={sectionResetDisabled}
+              onReset={() =>
+                resetInspectorSection((draft, defaults) => {
+                  draft.gameplay.ai.threat = defaults.gameplay.ai.threat;
+                })
+              }
+            >
+              {BOT_DIFFICULTY_VALUES.map((difficulty) => (
+                <NumberField
+                  key={`threat-horizon-${difficulty}`}
+                  label={`Threat horizon ${formatBotDifficultyLabel(difficulty)}`}
+                  min={0.4}
+                  max={8}
+                  step={0.05}
+                  value={aiTuning.threat.lookaheadSec[difficulty]}
+                  onPreviewChange={(value) =>
+                    previewThreatDifficulty("lookaheadSec", difficulty, value)
+                  }
+                  onCommit={(value) =>
+                    commitThreatDifficulty("lookaheadSec", difficulty, value)
+                  }
+                />
+              ))}
+              {BOT_DIFFICULTY_VALUES.map((difficulty) => (
+                <NumberField
+                  key={`threat-steps-${difficulty}`}
+                  label={`Threat steps ${formatBotDifficultyLabel(difficulty)}`}
+                  min={4}
+                  max={96}
+                  step={1}
+                  value={aiTuning.threat.simulationSteps[difficulty]}
+                  onPreviewChange={(value) =>
+                    previewThreatDifficulty(
+                      "simulationSteps",
+                      difficulty,
+                      value,
+                    )
+                  }
+                  onCommit={(value) =>
+                    commitThreatDifficulty("simulationSteps", difficulty, value)
+                  }
+                />
+              ))}
+            </InspectorSection>
+            <InspectorSection
+              title="Shot Prediction"
+              note="Target lead horizon used when tracking moving planets for firing windows"
+              resetDisabled={sectionResetDisabled}
+              onReset={() =>
+                resetInspectorSection((draft, defaults) => {
+                  draft.gameplay.ai.shots.targetPredictionHorizonSec =
+                    defaults.gameplay.ai.shots.targetPredictionHorizonSec;
+                  draft.gameplay.ai.shots.targetPredictionSteps =
+                    defaults.gameplay.ai.shots.targetPredictionSteps;
+                })
+              }
+            >
+              {BOT_DIFFICULTY_VALUES.map((difficulty) => (
+                <NumberField
+                  key={`shot-horizon-${difficulty}`}
+                  label={`Shot horizon ${formatBotDifficultyLabel(difficulty)}`}
+                  min={0.2}
+                  max={8}
+                  step={0.05}
+                  value={aiTuning.shots.targetPredictionHorizonSec[difficulty]}
+                  onPreviewChange={(value) =>
+                    previewShotDifficulty(
+                      "targetPredictionHorizonSec",
+                      difficulty,
+                      value,
+                    )
+                  }
+                  onCommit={(value) =>
+                    commitShotDifficulty(
+                      "targetPredictionHorizonSec",
+                      difficulty,
+                      value,
+                    )
+                  }
+                />
+              ))}
+              {BOT_DIFFICULTY_VALUES.map((difficulty) => (
+                <NumberField
+                  key={`shot-steps-${difficulty}`}
+                  label={`Shot steps ${formatBotDifficultyLabel(difficulty)}`}
+                  min={4}
+                  max={96}
+                  step={1}
+                  value={aiTuning.shots.targetPredictionSteps[difficulty]}
+                  onPreviewChange={(value) =>
+                    previewShotDifficulty(
+                      "targetPredictionSteps",
+                      difficulty,
+                      value,
+                    )
+                  }
+                  onCommit={(value) =>
+                    commitShotDifficulty(
+                      "targetPredictionSteps",
+                      difficulty,
+                      value,
+                    )
+                  }
+                />
+              ))}
+            </InspectorSection>
+            <InspectorSection
+              title="Fire Gates"
+              note="Rules for when movement plans are allowed to convert into actual shots"
+              resetDisabled={sectionResetDisabled}
+              onReset={() =>
+                resetInspectorSection((draft, defaults) => {
+                  draft.gameplay.ai.execution.cacheRunFireConfidence =
+                    defaults.gameplay.ai.execution.cacheRunFireConfidence;
+                  draft.gameplay.ai.execution.pressureLightOverrideConfidence =
+                    defaults.gameplay.ai.execution.pressureLightOverrideConfidence;
+                  draft.gameplay.ai.execution.pressureLightOverrideDamage =
+                    defaults.gameplay.ai.execution.pressureLightOverrideDamage;
+                  draft.gameplay.ai.execution.pressureLightOverrideWaste =
+                    defaults.gameplay.ai.execution.pressureLightOverrideWaste;
+                  draft.gameplay.ai.execution.repositionFireConfidence =
+                    defaults.gameplay.ai.execution.repositionFireConfidence;
+                })
+              }
+            >
+              <NumberField
+                label="Cache run fire confidence"
+                min={0}
+                max={1}
+                step={0.01}
+                value={aiTuning.execution.cacheRunFireConfidence}
+                onPreviewChange={(value) =>
+                  previewExecutionNumber("cacheRunFireConfidence", value)
+                }
+                onCommit={(value) =>
+                  commitExecutionNumber("cacheRunFireConfidence", value)
+                }
+              />
+              <NumberField
+                label="Reposition fire confidence"
+                min={0}
+                max={1}
+                step={0.01}
+                value={aiTuning.execution.repositionFireConfidence}
+                onPreviewChange={(value) =>
+                  previewExecutionNumber("repositionFireConfidence", value)
+                }
+                onCommit={(value) =>
+                  commitExecutionNumber("repositionFireConfidence", value)
+                }
+              />
+              <NumberField
+                label="Pressure light confidence"
+                min={0}
+                max={1}
+                step={0.01}
+                value={aiTuning.execution.pressureLightOverrideConfidence}
+                onPreviewChange={(value) =>
+                  previewExecutionNumber(
+                    "pressureLightOverrideConfidence",
+                    value,
+                  )
+                }
+                onCommit={(value) =>
+                  commitExecutionNumber(
+                    "pressureLightOverrideConfidence",
+                    value,
+                  )
+                }
+              />
+              <NumberField
+                label="Pressure light damage"
+                min={0}
+                max={50}
+                step={0.5}
+                value={aiTuning.execution.pressureLightOverrideDamage}
+                onPreviewChange={(value) =>
+                  previewExecutionNumber("pressureLightOverrideDamage", value)
+                }
+                onCommit={(value) =>
+                  commitExecutionNumber("pressureLightOverrideDamage", value)
+                }
+              />
+              <NumberField
+                label="Pressure light waste"
+                min={0}
+                max={1}
+                step={0.01}
+                value={aiTuning.execution.pressureLightOverrideWaste}
+                onPreviewChange={(value) =>
+                  previewExecutionNumber("pressureLightOverrideWaste", value)
+                }
+                onCommit={(value) =>
+                  commitExecutionNumber("pressureLightOverrideWaste", value)
+                }
+              />
+            </InspectorSection>
+            <InspectorSection
+              title="Live Match"
+              note="Current status from the observer viewport"
+            >
+              <div className="edit-inspector__note-stack">
+                <article className="edit-inspector__note-card">
+                  <strong>Alive pilots</strong>
+                  <span>
+                    {aiGameplayHudState.alivePlayerCount} /{" "}
+                    {Math.max(
+                      aiGameplayHudState.totalPlayerCount,
+                      aiGameplayParticipantCount,
+                    )}
+                  </span>
+                </article>
+                <article className="edit-inspector__note-card">
+                  <strong>Match clock</strong>
+                  <span>
+                    {formatMatchClock(aiGameplayHudState.timerElapsedSec)}
+                  </span>
+                </article>
+                <article className="edit-inspector__note-card">
+                  <strong>Focused pilot</strong>
+                  <span>{aiGameplayHudState.playerLabel}</span>
+                </article>
+                <article className="edit-inspector__note-card">
+                  <strong>Playback</strong>
+                  <span>
+                    {aiGameplayHudState.sandboxPaused ? "Paused" : "Running"}
+                  </span>
+                </article>
+                <article className="edit-inspector__note-card">
+                  <strong>Preview wiring</strong>
+                  <span>
+                    Orbit, arena, weapon, ability, and AI movement edits now
+                    feed this live sandbox match as you tune them.
+                  </span>
+                </article>
+              </div>
+            </InspectorSection>
+          </>
         );
+      }
+      case "orbits": {
         const debrisVisuals = documentValue.visuals.orbits.boundaryDebris;
         const previewDebrisNumber = (
           key: OrbitBoundaryDebrisNumberKey,
@@ -2643,7 +3622,6 @@ export function EditPage() {
               <NumberField
                 label="Start distance scale"
                 min={ORBIT_SUN_DISTANCE_SCALE_MIN}
-                max={ORBIT_SUN_DISTANCE_SCALE_MAX}
                 step={ORBIT_SUN_DISTANCE_SCALE_STEP}
                 value={documentValue.gameplay.orbits.sunStartDistanceScale}
                 onPreviewChange={(value) =>
@@ -2654,51 +3632,6 @@ export function EditPage() {
                 onCommit={(value) =>
                   commitChange((draft) => {
                     draft.gameplay.orbits.sunStartDistanceScale = value;
-                  })
-                }
-              />
-            </InspectorSection>
-            <InspectorSection
-              title="System drift"
-              note="Applies to suns, caches, and debris. Planets keep their seeded motion. Direction is in deg: 0 east/right, 90 north/up, 180 west/left, 270 south/down."
-              resetDisabled={sectionResetDisabled}
-              onReset={() =>
-                resetInspectorSection((draft, defaults) => {
-                  draft.gameplay.orbits.systemDrift =
-                    defaults.gameplay.orbits.systemDrift;
-                })
-              }
-            >
-              <NumberField
-                label="Direction (deg)"
-                min={0}
-                max={ORBIT_SYSTEM_DRIFT_DIRECTION_MAX}
-                step={ORBIT_SYSTEM_DRIFT_DIRECTION_STEP}
-                value={documentValue.gameplay.orbits.systemDrift.directionDeg}
-                onPreviewChange={(value) =>
-                  applyPreviewChange((draft) => {
-                    draft.gameplay.orbits.systemDrift.directionDeg = value;
-                  })
-                }
-                onCommit={(value) =>
-                  commitChange((draft) => {
-                    draft.gameplay.orbits.systemDrift.directionDeg = value;
-                  })
-                }
-              />
-              <NumberField
-                label="Drift speed"
-                min={0}
-                step={ORBIT_SYSTEM_DRIFT_SPEED_STEP}
-                value={documentValue.gameplay.orbits.systemDrift.speed}
-                onPreviewChange={(value) =>
-                  applyPreviewChange((draft) => {
-                    draft.gameplay.orbits.systemDrift.speed = value;
-                  })
-                }
-                onCommit={(value) =>
-                  commitChange((draft) => {
-                    draft.gameplay.orbits.systemDrift.speed = value;
                   })
                 }
               />
@@ -2716,7 +3649,6 @@ export function EditPage() {
               <NumberField
                 label="Planet Orbit Radius"
                 min={ORBIT_PLANET_CIRCLE_RADIUS_MIN}
-                max={orbitPlanetCircleRadiusMax}
                 step={ORBIT_PLANET_CIRCLE_RADIUS_STEP}
                 value={documentValue.gameplay.orbits.planetCircleRadius}
                 onPreviewChange={(value) =>
@@ -2865,7 +3797,7 @@ export function EditPage() {
                   onReset={() =>
                     resetInspectorSection((draft, defaults) => {
                       draft.gameplay.orbits.suns[index] =
-                        defaults.gameplay.orbits.suns[index];
+                        defaults.gameplay.orbits.suns[index]!;
                     })
                   }
                 >
@@ -2883,7 +3815,6 @@ export function EditPage() {
                   <NumberField
                     label="Radius"
                     min={8}
-                    max={500}
                     step={1}
                     value={sunOrbit.radius}
                     onPreviewChange={(value) =>
@@ -3737,7 +4668,7 @@ export function EditPage() {
                   onReset={() =>
                     resetInspectorSection((draft, defaults) => {
                       draft.visuals.suns.profiles[index] =
-                        defaults.visuals.suns.profiles[index];
+                        defaults.visuals.suns.profiles[index]!;
                     })
                   }
                 >
@@ -3808,6 +4739,8 @@ export function EditPage() {
             })}
           </>
         );
+      case "neutronStars":
+        return renderNeutronStarInspector();
       case "blackHole":
         return (
           <>
@@ -4621,6 +5554,45 @@ export function EditPage() {
   };
 
   const previewMode = getPreviewMode(selectedItemId);
+  const aiGameplaySandboxConfig = {
+    botDifficulty: aiGameplayDifficulty,
+    participantCount: aiGameplayParticipantCount,
+    playerBehavior: "bot",
+  } as const;
+  const setClampedAiGameplayParticipantCount = (value: number) => {
+    setAiGameplayParticipantCount(
+      clamp(
+        Math.round(value),
+        AI_GAMEPLAY_MIN_PARTICIPANTS,
+        AI_GAMEPLAY_MAX_PARTICIPANTS,
+      ),
+    );
+  };
+  const toggleAiGameplayPlayback = () => {
+    if (aiGameplayController === null) {
+      return;
+    }
+
+    if (aiGameplayHudState.sandboxPaused) {
+      aiGameplayController.playSandbox();
+      return;
+    }
+
+    aiGameplayController.pauseSandbox();
+  };
+  const toggleAiGameplayFullscreen = () => {
+    const previewElement = aiGameplayPreviewRef.current;
+    if (previewElement === null) {
+      return;
+    }
+
+    if (document.fullscreenElement === previewElement) {
+      void document.exitFullscreen();
+      return;
+    }
+
+    void previewElement.requestFullscreen().catch(() => {});
+  };
   const selectItem = (itemId: EditorItemId) => {
     setSelectedItemId(itemId);
     syncEditorItemToLocation(itemId, "pushState");
@@ -4688,13 +5660,47 @@ export function EditPage() {
 
       <main className="edit-column edit-column--preview">
         <div className="edit-preview-frame">
-          <EditorPreviewStage
-            documentValue={documentValue}
-            externalRevision={previewResetRevision}
-            hudTuning={documentValue.visuals.hud}
-            itemId={selectedItemId}
-            showHud={previewMode.showHud}
-          />
+          {selectedItemId === "aiGameplay" ? (
+            <div
+              ref={aiGameplayPreviewRef}
+              className={`game-stage game-stage--editor edit-ai-gameplay-stage${
+                aiGameplayFullscreen
+                  ? " edit-ai-gameplay-stage--fullscreen"
+                  : ""
+              }`}
+              data-testid="ai-gameplay-preview-stage"
+            >
+              <EditGameViewportPanel
+                cameraWorldHeightOverride={
+                  documentValue.gameplay.camera.previewCameraWorldHeight
+                }
+                className="editor-preview-surface"
+                documentValue={documentValue}
+                hudTuning={documentValue.visuals.hud}
+                onControllerReady={setAiGameplayController}
+                onHudStateChange={setAiGameplayHudState}
+                sandboxSessionConfig={aiGameplaySandboxConfig}
+                showHud={false}
+              />
+              {aiGameplayFullscreen ? (
+                <button
+                  type="button"
+                  className="edit-action-button edit-preview-overlay-button"
+                  onClick={toggleAiGameplayFullscreen}
+                >
+                  Exit fullscreen
+                </button>
+              ) : null}
+            </div>
+          ) : (
+            <EditorPreviewStage
+              documentValue={documentValue}
+              externalRevision={previewResetRevision}
+              hudTuning={documentValue.visuals.hud}
+              itemId={selectedItemId}
+              showHud={previewMode.showHud}
+            />
+          )}
         </div>
       </main>
 
@@ -4707,26 +5713,72 @@ export function EditPage() {
               </div>
             </div>
             <div className="edit-panel__actions">
-              {canRestartPreview(selectedItemId) ? (
-                <button
-                  type="button"
-                  className="edit-action-button"
-                  disabled={saveStatus === "loading"}
-                  onClick={restartSelectedPreview}
-                >
-                  Restart sim
-                </button>
-              ) : null}
-              {canResetItem(selectedItemId) ? (
-                <button
-                  type="button"
-                  className="edit-action-button"
-                  disabled={saveStatus === "loading" || saveStatus === "saving"}
-                  onClick={resetSelectedItem}
-                >
-                  {getResetLabel(selectedItemId)}
-                </button>
-              ) : null}
+              {selectedItemId === "aiGameplay" ? (
+                <>
+                  <button
+                    type="button"
+                    className="edit-action-button"
+                    disabled={aiGameplayController === null}
+                    onClick={toggleAiGameplayPlayback}
+                  >
+                    {aiGameplayHudState.sandboxPaused ? "Play" : "Pause"}
+                  </button>
+                  <button
+                    type="button"
+                    className="edit-action-button"
+                    onClick={toggleAiGameplayFullscreen}
+                  >
+                    {aiGameplayFullscreen ? "Exit fullscreen" : "Fullscreen"}
+                  </button>
+                  <button
+                    type="button"
+                    className="edit-action-button"
+                    disabled={aiGameplayController === null}
+                    onClick={() => aiGameplayController?.resetSandbox()}
+                  >
+                    Restart
+                  </button>
+                </>
+              ) : (
+                <>
+                  {selectedItemId === "overview" ? (
+                    <button
+                      type="button"
+                      className="edit-action-button"
+                      disabled={
+                        saveStatus === "loading" || saveStatus === "saving"
+                      }
+                      onClick={() => {
+                        void syncCurrentTuning();
+                      }}
+                    >
+                      Sync
+                    </button>
+                  ) : null}
+                  {canRestartPreview(selectedItemId) ? (
+                    <button
+                      type="button"
+                      className="edit-action-button"
+                      disabled={saveStatus === "loading"}
+                      onClick={restartSelectedPreview}
+                    >
+                      Restart sim
+                    </button>
+                  ) : null}
+                  {canResetItem(selectedItemId) ? (
+                    <button
+                      type="button"
+                      className="edit-action-button"
+                      disabled={
+                        saveStatus === "loading" || saveStatus === "saving"
+                      }
+                      onClick={resetSelectedItem}
+                    >
+                      {getResetLabel(selectedItemId)}
+                    </button>
+                  ) : null}
+                </>
+              )}
             </div>
           </div>
         </div>

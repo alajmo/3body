@@ -1,8 +1,15 @@
-import type { RocketKind, WildcardKind } from "./entities";
+import type {
+  BlackHole,
+  EntityBase,
+  RocketKind,
+  WildcardKind,
+} from "./entities";
+import { applyCombatAiTuning } from "./ai/runtimeTuning";
 import { CURRENT_GAME_TUNING, type GameplayTuning } from "./tuning";
 
 export interface RocketSpec {
   damage: number;
+  lockSec: number;
   speed: number;
   reloadSec: number;
   ttlSec: number;
@@ -48,6 +55,20 @@ export interface BlackHoleSpec {
   mass: number;
   killRadius: number;
   rampSec: number;
+}
+
+export interface BlackHoleConsumable extends Pick<EntityBase, "radius"> {
+  kind: "planet" | "sun";
+  mass?: number;
+}
+
+export interface NeutronStarSpec {
+  count: number;
+  minMassKg: number;
+  maxMassKg: number;
+  minSize: number;
+  maxSize: number;
+  randomizePositionInsidePlayableCircle: boolean;
 }
 
 export interface MatchTimerSpec {
@@ -125,6 +146,64 @@ export const BLACK_HOLE_SPEC: BlackHoleSpec = {
   ...initialGameplay.blackHole,
 };
 
+export const getBlackHoleCollapseAlpha = (
+  elapsedSec: number,
+  spec: BlackHoleSpec = BLACK_HOLE_SPEC,
+): number =>
+  Math.min(
+    1,
+    Math.max(0, (elapsedSec - spec.spawnSec) / Math.max(spec.rampSec, 0.0001)),
+  );
+
+export const getBlackHoleMassAtElapsedSec = (
+  elapsedSec: number,
+  spec: BlackHoleSpec = BLACK_HOLE_SPEC,
+): number => spec.mass * getBlackHoleCollapseAlpha(elapsedSec, spec);
+
+export const getBlackHoleMassAtTick = (
+  tick: number,
+  tickHz: number,
+  spec: BlackHoleSpec = BLACK_HOLE_SPEC,
+): number => getBlackHoleMassAtElapsedSec(tick / tickHz, spec);
+
+export const getBlackHoleConsumptionMassGain = (
+  body: BlackHoleConsumable,
+): number => (body.kind === "sun" ? Math.max(0, body.mass ?? 0) : PLANET_MASS);
+
+export const getBlackHoleKillRadiusAfterConsumption = (
+  currentKillRadius: number,
+  consumedRadius: number,
+): number => Math.hypot(currentKillRadius, Math.max(0, consumedRadius));
+
+export const consumeBlackHoleBodies = <
+  T extends Pick<BlackHole, "killRadius" | "mass" | "radius">,
+>(
+  blackHole: T,
+  bodies: readonly BlackHoleConsumable[],
+): T => {
+  let nextMass = blackHole.mass;
+  let nextKillRadius = blackHole.killRadius;
+
+  for (const body of bodies) {
+    nextMass += getBlackHoleConsumptionMassGain(body);
+    nextKillRadius = getBlackHoleKillRadiusAfterConsumption(
+      nextKillRadius,
+      body.radius,
+    );
+  }
+
+  return {
+    ...blackHole,
+    killRadius: nextKillRadius,
+    mass: nextMass,
+    radius: nextKillRadius,
+  } as T;
+};
+
+export const NEUTRON_STAR_SPEC: NeutronStarSpec = {
+  ...initialGameplay.neutronStars,
+};
+
 export const MATCH_TIMERS: MatchTimerSpec = {
   ...initialGameplay.timers,
 };
@@ -152,12 +231,16 @@ export let GRAVITY_PULSE_IMPULSE = GRAVITY_PULSE_SPEC.force;
 
 export const DEBRIS_TTL_SEC = 1.35;
 
+export const getSeekerLockTicks = (): number =>
+  Math.max(0, Math.round(ROCKET_SPECS.seeker.lockSec / FIXED_STEP_SEC));
+
 export const WILDCARD_KINDS = [
   "gravityPulse",
   "cloak",
 ] as const satisfies readonly WildcardKind[];
 
 export const applyGameplayTuning = (gameplay: GameplayTuning) => {
+  applyCombatAiTuning(gameplay.ai);
   Object.assign(ROCKET_SPECS.light, gameplay.rockets.light);
   Object.assign(ROCKET_SPECS.heavy, gameplay.rockets.heavy);
   Object.assign(ROCKET_SPECS.seeker, gameplay.rockets.seeker);
@@ -170,6 +253,7 @@ export const applyGameplayTuning = (gameplay: GameplayTuning) => {
   Object.assign(DRONE_SPEC, gameplay.drone);
   Object.assign(CACHE_SPEC, gameplay.cache);
   Object.assign(BLACK_HOLE_SPEC, gameplay.blackHole);
+  Object.assign(NEUTRON_STAR_SPEC, gameplay.neutronStars);
   Object.assign(MATCH_TIMERS, gameplay.timers);
   DRONE_LAUNCH_SPEED = DRONE_SPEC.speed * 0.48;
   GRAVITY_PULSE_RADIUS = GRAVITY_PULSE_SPEC.radius;

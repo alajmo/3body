@@ -100,6 +100,11 @@ export const applyDeltaSnapshotToWorld = (
     deltaSnapshot.changed.suns,
     deltaSnapshot.removed.suns,
   ),
+  neutronStars: mergeEntityCollection(
+    baseWorld.neutronStars,
+    deltaSnapshot.changed.neutronStars,
+    deltaSnapshot.removed.neutronStars,
+  ),
   planets: mergeEntityCollection(
     baseWorld.planets,
     deltaSnapshot.changed.planets,

@@ -14,6 +14,7 @@ import {
   type LocalViewportCameraState,
   applyLocalViewportCameraFrame,
 } from "./localViewportCamera";
+import { registerViewportDisposables } from "./disposables";
 import { createCompatibleScenePass } from "./postProcessingCompat";
 
 interface StarfieldLayerVisual {
@@ -40,20 +41,6 @@ interface StarfieldLayerConfig {
   warmColor: string;
   z: number;
 }
-
-const registerDisposables = (
-  disposables: Array<{ dispose: () => void }>,
-  ...items: Array<{ dispose: () => void } | Array<{ dispose: () => void }>>
-) => {
-  for (const item of items) {
-    if (Array.isArray(item)) {
-      disposables.push(...item);
-      continue;
-    }
-
-    disposables.push(item);
-  }
-};
 
 export const createLocalViewportRenderShell = ({
   bloomRadius,
@@ -101,7 +88,7 @@ export const createLocalViewportRenderShell = ({
   const shellBackgroundLayers = backgroundLayers.map((layerConfig) => {
     const layer = createBackgroundLayer(layerConfig);
     scene.add(layer.group);
-    registerDisposables(disposables, layer.geometry, layer.material);
+    registerViewportDisposables(disposables, layer.geometry, layer.material);
     return layer;
   });
 
@@ -111,7 +98,12 @@ export const createLocalViewportRenderShell = ({
     camera,
     currentSsaaLevel,
   );
-  const bloomNode = bloom(scenePass, bloomStrength, bloomRadius, bloomThreshold);
+  const bloomNode = bloom(
+    scenePass,
+    bloomStrength,
+    bloomRadius,
+    bloomThreshold,
+  );
   const chromaticAberrationNode = rgbShift(scenePass.add(bloomNode), 0, 0);
   const outputFrame = renderOutput(
     chromaticAberrationNode,
@@ -120,7 +112,13 @@ export const createLocalViewportRenderShell = ({
   );
   const postProcessing = new RenderPipeline(renderer, outputFrame);
   postProcessing.outputColorTransform = false;
-  registerDisposables(disposables, backdropGeometry, backdropMaterial, scenePass, bloomNode);
+  registerViewportDisposables(
+    disposables,
+    backdropGeometry,
+    backdropMaterial,
+    scenePass,
+    bloomNode,
+  );
 
   return {
     backdropMesh,

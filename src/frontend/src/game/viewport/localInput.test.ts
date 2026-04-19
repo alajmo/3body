@@ -137,4 +137,113 @@ describe("createGameViewportInputController", () => {
 
     controller.dispose();
   });
+
+  it("ignores Shift entirely", () => {
+    const canvasElement = document.createElement("canvas");
+    const controller = createGameViewportInputController({
+      canvasElement,
+      getPlayerControlState: () => ({
+        activeDroneId: null,
+        controlMode: "planet",
+      }),
+      isShieldActive: () => false,
+      initialPlayer: {
+        aimWorld: { x: 0, y: 0 },
+        selectedRocketKind: "light",
+      },
+      isSandboxPaused: () => false,
+      sandboxControlsEnabled: () => true,
+      syncAimWorldToPointer: () => {},
+      windowTarget: window,
+    });
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "ShiftLeft" }));
+    window.dispatchEvent(new KeyboardEvent("keyup", { code: "ShiftLeft" }));
+
+    expect(controller.state.pendingShots).toBe(0);
+    expect(controller.state.pendingAbilityRequests).toEqual({
+      boost: false,
+      cloak: false,
+      foresight: false,
+      gravityPulse: false,
+      shield: false,
+    });
+    expect(controller.state.inputState.selectedRocketKind).toBe("light");
+
+    controller.dispose();
+  });
+
+  it("maps shield to Q, boost to W, and foresight to E", () => {
+    const canvasElement = document.createElement("canvas");
+    const controller = createGameViewportInputController({
+      canvasElement,
+      getPlayerControlState: () => ({
+        activeDroneId: null,
+        controlMode: "planet",
+      }),
+      isShieldActive: () => false,
+      initialPlayer: {
+        aimWorld: { x: 0, y: 0 },
+        selectedRocketKind: "light",
+      },
+      isSandboxPaused: () => false,
+      sandboxControlsEnabled: () => true,
+      syncAimWorldToPointer: () => {},
+      windowTarget: window,
+    });
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyQ" }));
+    expect(controller.state.pendingAbilityRequests.shield).toBe(true);
+    expect(controller.state.pendingAbilityRequests.boost).toBe(false);
+    expect(controller.state.pendingAbilityRequests.foresight).toBe(false);
+
+    controller.clearStepScopedRequests();
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyW" }));
+    expect(controller.state.pendingAbilityRequests.shield).toBe(false);
+    expect(controller.state.pendingAbilityRequests.boost).toBe(true);
+    expect(controller.state.pendingAbilityRequests.foresight).toBe(false);
+
+    window.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyW" }));
+    controller.clearStepScopedRequests();
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyE" }));
+    expect(controller.state.pendingAbilityRequests.shield).toBe(false);
+    expect(controller.state.pendingAbilityRequests.boost).toBe(false);
+    expect(controller.state.pendingAbilityRequests.foresight).toBe(true);
+
+    controller.dispose();
+  });
+
+  it("keeps boost queued while W is held and releases it on keyup", () => {
+    const canvasElement = document.createElement("canvas");
+    const controller = createGameViewportInputController({
+      canvasElement,
+      getPlayerControlState: () => ({
+        activeDroneId: null,
+        controlMode: "planet",
+      }),
+      isShieldActive: () => false,
+      initialPlayer: {
+        aimWorld: { x: 0, y: 0 },
+        selectedRocketKind: "light",
+      },
+      isSandboxPaused: () => false,
+      sandboxControlsEnabled: () => true,
+      syncAimWorldToPointer: () => {},
+      windowTarget: window,
+    });
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyW" }));
+    expect(controller.state.pendingAbilityRequests.boost).toBe(true);
+
+    controller.clearStepScopedRequests();
+    expect(controller.state.pendingAbilityRequests.boost).toBe(true);
+
+    window.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyW" }));
+    expect(controller.state.pendingAbilityRequests.boost).toBe(true);
+
+    controller.clearStepScopedRequests();
+    expect(controller.state.pendingAbilityRequests.boost).toBe(false);
+
+    controller.dispose();
+  });
 });

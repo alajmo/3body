@@ -4,6 +4,7 @@ import {
   CURRENT_GAME_TUNING,
   FORESIGHT_SPEC,
   len,
+  type BotDifficulty,
   type AbilitySpec,
   type BlackHole,
   type BlackHoleSpec,
@@ -190,11 +191,19 @@ export interface GameViewportController {
   setOrbitPreset: (presetId: string) => void;
 }
 
+export interface GameViewportSandboxSessionConfig {
+  botDifficulty?: BotDifficulty;
+  participantCount?: number;
+  playerBehavior?: "bot" | "human";
+}
+
 export interface CreateGameViewportOptions {
+  cameraWorldHeightOverride?: number;
   defaultBotsEnabled?: boolean;
   enableSandboxStorage?: boolean;
   onControllerReady?: (controller: GameViewportController | null) => void;
   onHudStateChange?: (state: GameViewportHudState) => void;
+  sandboxSessionConfig?: GameViewportSandboxSessionConfig;
 }
 
 const PLAYER_HEADING_SPEED_EPSILON = 1;

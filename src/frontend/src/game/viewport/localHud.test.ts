@@ -102,8 +102,6 @@ const createHudParams = (controlsEnabled: boolean) => {
     playerLabel: "Player",
     profilingEnabled: true,
     profilerSnapshot: PROFILER_SNAPSHOT,
-    readModeHeld: false,
-    readModeHudOpacity: 0.2,
     runtimeStats: {
       fps: 60,
       frameTimeMs: 16.7,
@@ -139,6 +137,15 @@ describe("buildLocalSandboxHudState", () => {
       "shield",
       "boost",
     ]);
+    expect(
+      Object.fromEntries(
+        hud.abilities.map((ability) => [ability.id, ability.keyLabel]),
+      ),
+    ).toEqual({
+      boost: "W",
+      foresight: "E",
+      shield: "Q",
+    });
     expect(hud.weapons.map((weapon) => weapon.kind)).toEqual([
       "light",
       "heavy",
@@ -146,9 +153,6 @@ describe("buildLocalSandboxHudState", () => {
     ]);
     expect(hud.sandboxControlsEnabled).toBe(true);
     expect(hud.botsEnabled).toBe(true);
-    expect(
-      hud.primaryShortcuts.some((shortcut) => shortcut.id === "read-mode"),
-    ).toBe(true);
     expect(
       hud.primaryShortcuts.some((shortcut) => shortcut.id === "full-view"),
     ).toBe(false);

@@ -84,8 +84,6 @@ export interface BuildLocalSandboxHudStateParams {
   playerLabel: string;
   profilingEnabled: boolean;
   profilerSnapshot: ViewportPerformanceSnapshot | null;
-  readModeHeld: boolean;
-  readModeHudOpacity: number;
   runtimeStats: {
     fps: number;
     frameTimeMs: number;
@@ -176,6 +174,7 @@ const buildProfilerDebugItems = ({
   currentMaxPixelRatio,
   currentSsaaLevel,
   currentState,
+  debug,
   profilerSnapshot,
   profilingEnabled,
 }: Pick<
@@ -184,83 +183,110 @@ const buildProfilerDebugItems = ({
   | "currentMaxPixelRatio"
   | "currentSsaaLevel"
   | "currentState"
+  | "debug"
   | "profilerSnapshot"
   | "profilingEnabled"
 >): GameViewportDebugItem[] => {
-  if (
+  const profilerItems =
     !profilingEnabled ||
     profilerSnapshot === null ||
     profilerSnapshot.frames <= 0
-  ) {
-    return [];
-  }
+      ? []
+      : [
+          {
+            label: "Sample",
+            value: `${profilerSnapshot.frames}f · ${profilerSnapshot.sampledDurationSec.toFixed(1)}s`,
+          },
+          {
+            label: "Frame CPU",
+            value: formatProfilerTiming(
+              profilerSnapshot.frameCpu.latestMs,
+              profilerSnapshot.frameCpu.averageMs,
+              profilerSnapshot.frameCpu.maxMs,
+            ),
+          },
+          {
+            label: "Sim CPU",
+            value: formatProfilerTiming(
+              profilerSnapshot.simulation.latestMs,
+              profilerSnapshot.simulation.averageMs,
+              profilerSnapshot.simulation.maxMs,
+            ),
+          },
+          {
+            label: "Lerp CPU",
+            value: formatProfilerTiming(
+              profilerSnapshot.interpolation.latestMs,
+              profilerSnapshot.interpolation.averageMs,
+              profilerSnapshot.interpolation.maxMs,
+            ),
+          },
+          {
+            label: "Scene CPU",
+            value: formatProfilerTiming(
+              profilerSnapshot.renderCpu.latestMs,
+              profilerSnapshot.renderCpu.averageMs,
+              profilerSnapshot.renderCpu.maxMs,
+            ),
+          },
+          {
+            label: "Submit CPU",
+            value: formatProfilerTiming(
+              profilerSnapshot.submit.latestMs,
+              profilerSnapshot.submit.averageMs,
+              profilerSnapshot.submit.maxMs,
+            ),
+          },
+          {
+            label: "Steps / frame",
+            value: formatProfilerScalar(
+              profilerSnapshot.steps.latest,
+              profilerSnapshot.steps.average,
+              profilerSnapshot.steps.max,
+            ),
+          },
+          {
+            label: "Quality",
+            value: `PR ${currentMaxPixelRatio.toFixed(1)} · SSAA ${currentSsaaLevel} · FX ${currentEffectsQuality}`,
+          },
+          {
+            label: "Entities",
+            value: `P ${currentState.planets.length} · R ${currentState.rockets.length} · D ${currentState.drones.length} · C ${currentState.caches.length}`,
+          },
+          {
+            label: "FX",
+            value: `Debris ${currentState.debris.length} · Impacts ${currentState.impactBursts.length}`,
+          },
+        ];
+  const focusedAiItems =
+    debug.aiFocused === null
+      ? []
+      : [
+          {
+            label: "AI Intent",
+            value: `${debug.aiFocused.intent} · ${debug.aiFocused.executionState}`,
+          },
+          {
+            label: "AI Reason",
+            value: debug.aiFocused.reason,
+          },
+          ...(debug.aiFocused.shotSummary === null
+            ? []
+            : [
+                {
+                  label: "AI Shot",
+                  value: debug.aiFocused.shotSummary,
+                },
+              ]),
+        ];
+  const botSummaryItems = debug.aiFocused
+    ? []
+    : debug.aiSummaries.slice(0, 2).map((summary, index) => ({
+        label: `AI ${index + 1}`,
+        value: `${summary.label}: ${summary.intent} -> ${summary.targetLabel ?? "--"}`,
+      }));
 
-  return [
-    {
-      label: "Sample",
-      value: `${profilerSnapshot.frames}f · ${profilerSnapshot.sampledDurationSec.toFixed(1)}s`,
-    },
-    {
-      label: "Frame CPU",
-      value: formatProfilerTiming(
-        profilerSnapshot.frameCpu.latestMs,
-        profilerSnapshot.frameCpu.averageMs,
-        profilerSnapshot.frameCpu.maxMs,
-      ),
-    },
-    {
-      label: "Sim CPU",
-      value: formatProfilerTiming(
-        profilerSnapshot.simulation.latestMs,
-        profilerSnapshot.simulation.averageMs,
-        profilerSnapshot.simulation.maxMs,
-      ),
-    },
-    {
-      label: "Lerp CPU",
-      value: formatProfilerTiming(
-        profilerSnapshot.interpolation.latestMs,
-        profilerSnapshot.interpolation.averageMs,
-        profilerSnapshot.interpolation.maxMs,
-      ),
-    },
-    {
-      label: "Scene CPU",
-      value: formatProfilerTiming(
-        profilerSnapshot.renderCpu.latestMs,
-        profilerSnapshot.renderCpu.averageMs,
-        profilerSnapshot.renderCpu.maxMs,
-      ),
-    },
-    {
-      label: "Submit CPU",
-      value: formatProfilerTiming(
-        profilerSnapshot.submit.latestMs,
-        profilerSnapshot.submit.averageMs,
-        profilerSnapshot.submit.maxMs,
-      ),
-    },
-    {
-      label: "Steps / frame",
-      value: formatProfilerScalar(
-        profilerSnapshot.steps.latest,
-        profilerSnapshot.steps.average,
-        profilerSnapshot.steps.max,
-      ),
-    },
-    {
-      label: "Quality",
-      value: `PR ${currentMaxPixelRatio.toFixed(1)} · SSAA ${currentSsaaLevel} · FX ${currentEffectsQuality}`,
-    },
-    {
-      label: "Entities",
-      value: `P ${currentState.planets.length} · R ${currentState.rockets.length} · D ${currentState.drones.length} · C ${currentState.caches.length}`,
-    },
-    {
-      label: "FX",
-      value: `Debris ${currentState.debris.length} · Impacts ${currentState.impactBursts.length}`,
-    },
-  ];
+  return [...profilerItems, ...focusedAiItems, ...botSummaryItems];
 };
 
 const buildPrimaryShortcuts = (
@@ -300,14 +326,14 @@ const buildPrimaryShortcuts = (
                     : params.foresightCooldownRemainingSec,
                 ),
           id: "foresight",
-          keyLabel: "Q",
+          keyLabel: "E",
           label: "Foresight",
         },
         {
           active: params.shieldMode === "active",
           detail: `${Math.round(getShieldLoadRatio(params) * 100)}%`,
           id: "shield",
-          keyLabel: "W",
+          keyLabel: "Q",
           label: "Shield",
         },
         {
@@ -317,7 +343,7 @@ const buildPrimaryShortcuts = (
               ? "ready"
               : formatSeconds(params.boostRecoveryRemainingSec),
           id: "boost",
-          keyLabel: "E",
+          keyLabel: "W",
           label: "Boost",
         },
         ...(params.debug.gravityPulseHeld
@@ -340,12 +366,6 @@ const buildPrimaryShortcuts = (
               },
             ]
           : []),
-        {
-          active: params.readModeHeld,
-          id: "read-mode",
-          keyLabel: "Shift",
-          label: "Read mode",
-        },
       ]
     : [];
 
@@ -361,7 +381,7 @@ const buildAbilities = (
         {
           accent: params.colors.foresight,
           id: "foresight",
-          keyLabel: "Q",
+          keyLabel: "E",
           label: "Foresight",
           mode: params.foresightMode,
           progress: getForesightMeterProgress({
@@ -384,7 +404,7 @@ const buildAbilities = (
         {
           accent: params.colors.shield,
           id: "shield",
-          keyLabel: "W",
+          keyLabel: "Q",
           label: "Shield",
           mode: params.shieldMode,
           progress: getShieldLoadRatio(params),
@@ -399,7 +419,7 @@ const buildAbilities = (
         {
           accent: params.colors.boost,
           id: "boost",
-          keyLabel: "E",
+          keyLabel: "W",
           label: "Boost",
           mode: params.boostMode,
           progress:
@@ -518,7 +538,7 @@ export const buildLocalSandboxHudState = (
     damageFlash: params.playerDamageFlash,
     debugItems: buildProfilerDebugItems(params),
     foresightSettings: { ...params.foresightSettings },
-    hudOpacity: params.readModeHeld ? params.readModeHudOpacity : 1,
+    hudOpacity: 1,
     killFeed: params.killFeed,
     minimap: createHudMinimapState({
       arenaRadius: ARENA_RADIUS,

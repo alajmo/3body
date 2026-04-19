@@ -8,6 +8,7 @@ import {
 type ShowcaseViewportPanelProps = {
   className?: string;
   focus?: ModelShowcaseViewportOptions["focus"];
+  minimumWorldHeight?: number;
   rocketKind?: RocketKind;
   revision?: number;
 };
@@ -15,6 +16,7 @@ type ShowcaseViewportPanelProps = {
 export function ShowcaseViewportPanel({
   className = "app-shell",
   focus = "all",
+  minimumWorldHeight,
   rocketKind,
   revision = 0,
 }: ShowcaseViewportPanelProps) {
@@ -26,8 +28,12 @@ export function ShowcaseViewportPanel({
       return;
     }
 
-    return createModelShowcaseViewport(viewportElement, { focus, rocketKind });
-  }, [focus, revision, rocketKind]);
+    return createModelShowcaseViewport(viewportElement, {
+      focus,
+      minimumWorldHeight,
+      rocketKind,
+    });
+  }, [focus, minimumWorldHeight, revision, rocketKind]);
 
   return (
     <div className={className}>

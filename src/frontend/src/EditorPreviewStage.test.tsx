@@ -23,10 +23,15 @@ vi.mock("./EditorItemViewportPanel", () => ({
 }));
 
 vi.mock("./ShowcaseViewportPanel", () => ({
-  ShowcaseViewportPanel: (props: { focus: string; revision?: number }) => (
+  ShowcaseViewportPanel: (props: {
+    focus: string;
+    minimumWorldHeight?: number;
+    revision?: number;
+  }) => (
     <div
       data-testid="showcase-viewport"
       data-focus={props.focus}
+      data-minimum-world-height={String(props.minimumWorldHeight ?? "")}
       data-revision={String(props.revision ?? 0)}
     />
   ),
@@ -76,10 +81,14 @@ describe("EditorPreviewStage", () => {
       "data-focus",
       "all",
     );
+    expect(screen.getByTestId("showcase-viewport")).toHaveAttribute(
+      "data-minimum-world-height",
+      String(CURRENT_GAME_TUNING.gameplay.camera.previewCameraWorldHeight),
+    );
     expect(screen.getByTestId("combat-hud")).toBeInTheDocument();
   });
 
-  it("renders the HUD page on top of the background preview", () => {
+  it("renders the HUD page on top of the HUD interaction preview", () => {
     render(
       <EditorPreviewStage
         documentValue={CURRENT_GAME_TUNING}
@@ -91,7 +100,7 @@ describe("EditorPreviewStage", () => {
 
     expect(screen.getByTestId("editor-item-viewport")).toHaveAttribute(
       "data-item-id",
-      "background",
+      "hud",
     );
     expect(screen.getByTestId("editor-item-viewport")).toHaveAttribute(
       "data-presentation",

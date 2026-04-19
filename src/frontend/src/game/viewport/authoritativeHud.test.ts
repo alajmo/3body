@@ -39,6 +39,7 @@ const createWorld = (): World =>
         vel: { x: 0, y: 0 },
       },
     ],
+    neutronStars: [],
     planets: [
       {
         id: 1,
@@ -206,6 +207,15 @@ describe("buildAuthoritativeHudState", () => {
     });
 
     expect(hud.profilingEnabled).toBe(true);
+    expect(
+      Object.fromEntries(
+        hud.abilities.map((ability) => [ability.id, ability.keyLabel]),
+      ),
+    ).toEqual({
+      boost: "W",
+      foresight: "E",
+      shield: "Q",
+    });
     expect(hud.debugItems).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ label: "Frame CPU" }),
@@ -497,6 +507,58 @@ describe("buildAuthoritativeHudState", () => {
     expect(hud.killFeed.map((entry) => entry.text)).toEqual([
       "Pilot One collected Wildcard: Cloak",
       "Pilot One used Gravity Pulse",
+    ]);
+  });
+
+  it("describes neutron star kills in the event feed", () => {
+    const hud = buildAuthoritativeHudState({
+      activeDrone: null,
+      connection: {
+        extrapolating: false,
+        fps: 58,
+        frameTimeMs: 16.4,
+        label: "room-1 · combat",
+        rttMs: 24,
+        state: "connected",
+      },
+      controlsEnabled: true,
+      currentEffectsQuality: "high",
+      currentMaxPixelRatio: 1.5,
+      currentTick: 120,
+      eventLog: [
+        {
+          event: {
+            kind: "kill",
+            tick: 119,
+            victimPlayerId: "pilot-2",
+            victimPlanetId: 2,
+            cause: "neutronStar",
+          },
+          id: 1,
+          receivedAtMs: 1_750,
+        },
+      ],
+      extrapolating: false,
+      playerId: "pilot-1",
+      playerPlanet: createPlayerPlanet(),
+      profilerSnapshot: null,
+      profilingEnabled: false,
+      recentEventsNowMs: 2_000,
+      rosterNameByPlayerId: new Map([
+        ["pilot-1", "Pilot One"],
+        ["pilot-2", "Pilot Two"],
+      ]),
+      runtimeStats: {
+        fps: 58,
+        frameTimeMs: 16.4,
+      },
+      selectedWeapon: "light",
+      self: createSelf(),
+      world: createWorld(),
+    });
+
+    expect(hud.killFeed.map((entry) => entry.text)).toEqual([
+      "Pilot Two was crushed by a neutron star",
     ]);
   });
 });

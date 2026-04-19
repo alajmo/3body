@@ -4,7 +4,12 @@ import type {
   RocketKind,
   Vec2,
 } from "@3body/shared";
-import { SHIELD_SPEC, getSunVisualProfile, mulberry32 } from "@3body/shared";
+import {
+  ROOM_CAPACITY,
+  SHIELD_SPEC,
+  getSunVisualProfile,
+  mulberry32,
+} from "@3body/shared";
 import { getRuntimeTuningDocument } from "../runtimeTuning";
 import {
   attribute,
@@ -88,6 +93,17 @@ interface SunVisual {
   warpMesh: Mesh;
 }
 
+interface NeutronStarVisual {
+  coreMesh: Mesh;
+  group: Group;
+  haloMesh: Mesh;
+  jetMeshA: Mesh;
+  jetMeshB: Mesh;
+  lensMesh: Mesh;
+  phase: number;
+  spinSpeed: number;
+}
+
 interface PlanetVisual {
   glowContactStartNode: ReturnType<typeof uniform>;
   glowFadeStartNode: ReturnType<typeof uniform>;
@@ -148,8 +164,10 @@ interface BoostBurstVisual {
   opacityAttribute: Float32BufferAttribute;
   points: Points;
   positionAttribute: Float32BufferAttribute;
-  wakeMaterial: MeshBasicMaterial;
-  wakeMesh: Mesh;
+  wakeVisuals: readonly {
+    material: MeshBasicMaterial;
+    mesh: Mesh;
+  }[];
 }
 
 interface GravityPulseVisual {
@@ -275,6 +293,10 @@ export const createLocalViewportVisualResources = ({
   createBlackHoleLensMaterial,
   createBlackHoleRingMaterial,
   createBoostWakeMaterial,
+  createNeutronStarCoreMaterial,
+  createNeutronStarHaloMaterial,
+  createNeutronStarJetMaterial,
+  createNeutronStarLensMaterial,
   createPlanetExplosionVisual,
   createPlanetGlowMaterial,
   createPlanetMaterial,
@@ -323,6 +345,10 @@ export const createLocalViewportVisualResources = ({
   createBlackHoleLensMaterial: () => MeshBasicNodeMaterial;
   createBlackHoleRingMaterial: () => MeshBasicNodeMaterial;
   createBoostWakeMaterial: () => BoostWakeResult;
+  createNeutronStarCoreMaterial: (seed: number) => MeshBasicNodeMaterial;
+  createNeutronStarHaloMaterial: (seed: number) => MeshBasicNodeMaterial;
+  createNeutronStarJetMaterial: (seed: number) => MeshBasicNodeMaterial;
+  createNeutronStarLensMaterial: (seed: number) => MeshBasicNodeMaterial;
   createPlanetExplosionVisual: (
     scene: Scene,
     flashGeometry: CircleGeometry,
@@ -419,6 +445,7 @@ export const createLocalViewportVisualResources = ({
   );
   const glowGeometry = new CircleGeometry(1, glowGeometrySegments);
   const warpGeometry = new RingGeometry(0.55, 1, warpGeometrySegments);
+  const neutronStarJetGeometry = new PlaneGeometry(1, 1);
   const planetGeometry = new SphereGeometry(
     1,
     planetGeometrySegments,
@@ -457,6 +484,60 @@ export const createLocalViewportVisualResources = ({
       rotationSpeed: 0.12 + index * 0.05,
       warpMesh,
     } satisfies SunVisual;
+  });
+
+  const neutronStarVisuals = initialState.neutronStars.map((star, index) => {
+    const group = new Group();
+    const coreMesh = new Mesh(
+      sunGeometry,
+      createNeutronStarCoreMaterial(star.id),
+    );
+    const haloMesh = new Mesh(
+      glowGeometry,
+      createNeutronStarHaloMaterial(star.id),
+    );
+    const lensMesh = new Mesh(
+      glowGeometry,
+      createNeutronStarLensMaterial(star.id),
+    );
+    const jetMeshA = new Mesh(
+      neutronStarJetGeometry,
+      createNeutronStarJetMaterial(star.id),
+    );
+    const jetMeshB = new Mesh(
+      neutronStarJetGeometry,
+      createNeutronStarJetMaterial(star.id + 0.37),
+    );
+
+    coreMesh.renderOrder = -6;
+    haloMesh.renderOrder = -7;
+    lensMesh.renderOrder = -8;
+    jetMeshA.renderOrder = -7;
+    jetMeshB.renderOrder = -7;
+    haloMesh.position.z = -1.6;
+    lensMesh.position.z = -2.4;
+    jetMeshA.position.z = -1.2;
+    jetMeshB.position.z = -1.2;
+    group.add(lensMesh, haloMesh, jetMeshA, jetMeshB, coreMesh);
+    scene.add(group);
+    disposables.push(
+      coreMesh.material as { dispose: () => void },
+      haloMesh.material as { dispose: () => void },
+      lensMesh.material as { dispose: () => void },
+      jetMeshA.material as { dispose: () => void },
+      jetMeshB.material as { dispose: () => void },
+    );
+
+    return {
+      coreMesh,
+      group,
+      haloMesh,
+      jetMeshA,
+      jetMeshB,
+      lensMesh,
+      phase: index * 0.91 + star.id * 0.0008,
+      spinSpeed: 0.22 + index * 0.04,
+    } satisfies NeutronStarVisual;
   });
 
   const planetVisuals = initialState.planets.map((planet, index) => {
@@ -1148,22 +1229,31 @@ export const createLocalViewportVisualResources = ({
   boostBurstPoints.visible = false;
   scene.add(boostBurstPoints);
 
-  const boostWake = createBoostWakeMaterial();
   const boostWakeGeometry = new PlaneGeometry(1, 1);
   boostWakeGeometry.translate(0.5, 0, 0);
-  const boostWakeMesh = new Mesh(boostWakeGeometry, boostWake.material);
-  boostWakeMesh.frustumCulled = false;
-  boostWakeMesh.renderOrder = 11.8;
-  boostWakeMesh.position.z = 2.26;
-  boostWakeMesh.visible = false;
-  scene.add(boostWakeMesh);
+  const boostWakeTemplate = createBoostWakeMaterial();
+  const boostWakeVisuals = Array.from({ length: ROOM_CAPACITY }, (_, index) => {
+    const material =
+      index === 0
+        ? boostWakeTemplate.material
+        : boostWakeTemplate.material.clone();
+    const mesh = new Mesh(boostWakeGeometry, material);
+    mesh.frustumCulled = false;
+    mesh.renderOrder = 11.8;
+    mesh.position.z = 2.26;
+    mesh.visible = false;
+    scene.add(mesh);
+    return {
+      material,
+      mesh,
+    };
+  });
   const boostBurstVisual = {
     geometry: boostBurstGeometry,
     opacityAttribute: boostBurstOpacityAttribute,
     points: boostBurstPoints,
     positionAttribute: boostBurstPositionAttribute,
-    wakeMaterial: boostWake.material,
-    wakeMesh: boostWakeMesh,
+    wakeVisuals: boostWakeVisuals,
   } satisfies BoostBurstVisual;
 
   const impactFlashGeometry = new CircleGeometry(1, 48);
@@ -1310,7 +1400,10 @@ export const createLocalViewportVisualResources = ({
     disposables,
     cloakVeilGeometry,
     cloakRingGeometry,
-    cloakVisuals.flatMap((visual) => [visual.veilMaterial, visual.ringMaterial]),
+    cloakVisuals.flatMap((visual) => [
+      visual.veilMaterial,
+      visual.ringMaterial,
+    ]),
   );
 
   const planetExplosionFragmentGeometries = [
@@ -1387,6 +1480,7 @@ export const createLocalViewportVisualResources = ({
     sunGeometry,
     glowGeometry,
     warpGeometry,
+    neutronStarJetGeometry,
     planetGeometry,
     droneGlowGeometry,
     droneHullGeometry,
@@ -1421,9 +1515,9 @@ export const createLocalViewportVisualResources = ({
     shieldCrestMaterial,
     boostBurstGeometry,
     boostBurstMaterial,
-    boostWakeMesh.geometry,
-    boostWake.material,
-    ...(boostWake.texture === null ? [] : [boostWake.texture]),
+    boostWakeGeometry,
+    ...boostWakeVisuals.map((visual) => visual.material),
+    ...(boostWakeTemplate.texture === null ? [] : [boostWakeTemplate.texture]),
     blackHoleLens.geometry,
     blackHoleLens.material,
     blackHoleRing.geometry,
@@ -1471,6 +1565,7 @@ export const createLocalViewportVisualResources = ({
     shieldGlowOpacityUniform,
     shieldGroup,
     sunVisuals,
+    neutronStarVisuals,
     trailVisuals,
     cloakVisuals,
   };

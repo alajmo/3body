@@ -37,7 +37,7 @@ const createPreviewHudState = (
       {
         accent: documentValue.visuals.abilities.foresightColor,
         id: "foresight",
-        keyLabel: "Q",
+        keyLabel: "E",
         label: "Foresight",
         mode: "cooldown",
         progress: 0.42,
@@ -46,7 +46,7 @@ const createPreviewHudState = (
       {
         accent: documentValue.visuals.abilities.shieldColor,
         id: "shield",
-        keyLabel: "E",
+        keyLabel: "Q",
         label: "Shield",
         mode: "active",
         progress: 0.58,
@@ -55,7 +55,7 @@ const createPreviewHudState = (
       {
         accent: documentValue.visuals.abilities.boostColor,
         id: "boost",
-        keyLabel: "Space",
+        keyLabel: "W",
         label: "Boost",
         mode: "ready",
         progress: 1,
@@ -205,12 +205,15 @@ export function EditorPreviewStage({
         <ShowcaseViewportPanel
           className="editor-preview-surface"
           focus="all"
+          minimumWorldHeight={
+            documentValue.gameplay.camera.previewCameraWorldHeight
+          }
           revision={resolvedRevision}
         />
       ) : useHudBackgroundSurface ? (
         <EditorItemViewportPanel
           className="editor-preview-surface"
-          itemId="background"
+          itemId="hud"
           presentation="stage"
           revision={resolvedRevision}
         />

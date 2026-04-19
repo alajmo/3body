@@ -17,6 +17,7 @@ import {
   GRAVITY_PULSE_IMPULSE,
   GRAVITY_PULSE_RADIUS,
   getBaseShieldLoad,
+  getBlackHoleMassAtTick,
   getOuterRingMax,
   getOuterRingMin,
   PLANET_HP,
@@ -28,6 +29,7 @@ import {
   clamp,
   clampLen,
   cloneCacheContents,
+  consumeBlackHoleBodies,
   dist,
   dot,
   fromAngle,
@@ -179,15 +181,14 @@ const rocketTtlTicks = (rocketKind: RocketKind, tickHz: number): number =>
 const blackHoleSpawnTick = (tickHz: number): number =>
   Math.max(1, Math.round(BLACK_HOLE_SPEC.spawnSec * tickHz));
 
-const blackHoleMassForTick = (tick: number, tickHz: number): number => {
-  const elapsedSec = tick / tickHz;
-  const alpha = clamp(
-    (elapsedSec - BLACK_HOLE_SPEC.spawnSec) / BLACK_HOLE_SPEC.rampSec,
-    0,
-    1,
-  );
-  return BLACK_HOLE_SPEC.mass * alpha;
-};
+const getBlackHoleBonusMass = (
+  blackHole: BlackHole,
+  tick: number,
+  tickHz: number,
+): number => Math.max(0, blackHole.mass - getBlackHoleMassAtTick(tick, tickHz));
+
+const getBlackHoleBonusKillRadius = (blackHole: BlackHole): number =>
+  Math.max(0, blackHole.killRadius - BLACK_HOLE_SPEC.killRadius);
 
 const lagCompMaxRewindTicks = (tickHz: number): number =>
   Math.max(0, Math.floor((LAG_COMP_MAX_REWIND_MS * tickHz) / 1000));
@@ -850,14 +851,7 @@ const applyAbilityMessage = (
         return;
       }
 
-      if (
-        activateWildcard(
-          room,
-          playerId,
-          "gravityPulse",
-          tickHz,
-        )
-      ) {
+      if (activateWildcard(room, playerId, "gravityPulse", tickHz)) {
         room.queueEvent({
           kind: "wildcardUse",
           tick: room.tick,
@@ -992,7 +986,7 @@ const syncBlackHole = (room: Room, nextTick: number, tickHz: number): void => {
     return;
   }
 
-  const mass = blackHoleMassForTick(nextTick, tickHz);
+  const mass = getBlackHoleMassAtTick(nextTick, tickHz);
   const previousBlackHole = room.world.blackHole;
 
   if (!previousBlackHole) {
@@ -1014,11 +1008,14 @@ const syncBlackHole = (room: Room, nextTick: number, tickHz: number): void => {
     return;
   }
 
+  const bonusMass = getBlackHoleBonusMass(previousBlackHole, room.tick, tickHz);
+  const bonusKillRadius = getBlackHoleBonusKillRadius(previousBlackHole);
+
   room.world.blackHole = {
     ...previousBlackHole,
-    mass,
-    radius: BLACK_HOLE_SPEC.killRadius,
-    killRadius: BLACK_HOLE_SPEC.killRadius,
+    mass: mass + bonusMass,
+    radius: BLACK_HOLE_SPEC.killRadius + bonusKillRadius,
+    killRadius: BLACK_HOLE_SPEC.killRadius + bonusKillRadius,
   };
 };
 
@@ -1084,6 +1081,18 @@ const applyQueuedCombatMessages = (room: Room, config: AppConfig): void => {
           config.tickHz,
         );
         break;
+
+      case "droneLaunch":
+        launchDrone(room, message.playerId, message.aimDir, config.tickHz);
+        break;
+
+      case "droneSteer":
+        if (runtime.controlMode !== "drone") {
+          continue;
+        }
+        runtime.droneTurnLeft = message.turn > 0;
+        runtime.droneTurnRight = message.turn < 0;
+        break;
     }
   }
 };
@@ -1134,6 +1143,7 @@ const stepPlanets = (
     return [];
   }
 
+  const neutronStars = room.world.neutronStars;
   return room.world.planets.map((planet) => {
     const dragActive =
       planet.debuffs.dragUntilTick !== undefined &&
@@ -1151,6 +1161,7 @@ const stepPlanets = (
       nextSuns,
       1 / config.tickHz,
       blackHole,
+      neutronStars,
     );
 
     return dragActive
@@ -1169,15 +1180,32 @@ const applyPlanetCollisions = (
   blackHole: BlackHole | undefined,
   nextTick: number,
   debrisSink: Debris[],
-): PlanetPublic[] => {
+): {
+  planets: PlanetPublic[];
+  swallowedPlanets: PlanetPublic[];
+} => {
   const deadPlayerIds = new Set<PlayerId>();
+  const swallowedPlanets: PlanetPublic[] = [];
+  const neutronStars = room.world?.neutronStars ?? [];
 
   for (let index = 0; index < planets.length; index += 1) {
     const planet = planets[index]!;
 
     if (isInsideBlackHole(planet, blackHole)) {
       deadPlayerIds.add(planet.playerId);
+      swallowedPlanets.push(planet);
       queueKillEvent(room, nextTick, planet, "blackHole");
+      continue;
+    }
+
+    for (const neutronStar of neutronStars) {
+      if (dist(planet.pos, neutronStar.pos) <= planet.radius + neutronStar.radius) {
+        deadPlayerIds.add(planet.playerId);
+        queueKillEvent(room, nextTick, planet, "neutronStar");
+        break;
+      }
+    }
+    if (deadPlayerIds.has(planet.playerId)) {
       continue;
     }
 
@@ -1219,7 +1247,7 @@ const applyPlanetCollisions = (
   }
 
   if (deadPlayerIds.size === 0) {
-    return planets;
+    return { planets, swallowedPlanets };
   }
 
   const survivors: PlanetPublic[] = [];
@@ -1243,7 +1271,10 @@ const applyPlanetCollisions = (
     markPlayerDeath(room, planet.playerId, nextTick);
   }
 
-  return survivors;
+  return {
+    planets: survivors,
+    swallowedPlanets,
+  };
 };
 
 const applyBoundaryEffects = (
@@ -1956,17 +1987,27 @@ const updateWorld = (room: Room, config: AppConfig): void => {
   syncBlackHole(room, nextTick, config.tickHz);
 
   const dtSec = 1 / config.tickHz;
-  const blackHole = room.world.blackHole;
-  const nextSuns = stepSuns(room.world.suns, dtSec, blackHole).filter(
+  let blackHole = room.world.blackHole;
+  const steppedSuns = stepSuns(room.world.suns, dtSec, blackHole);
+  const swallowedSuns =
+    blackHole === undefined
+      ? []
+      : steppedSuns.filter((sun) => isInsideBlackHole(sun, blackHole));
+  const nextSuns = steppedSuns.filter(
     (sun) => !isInsideBlackHole(sun, blackHole),
   );
+
+  if (blackHole !== undefined && swallowedSuns.length > 0) {
+    blackHole = consumeBlackHoleBodies(blackHole, swallowedSuns);
+    room.world.blackHole = blackHole;
+  }
 
   let nextPlanets = stepPlanets(room, nextSuns, blackHole, nextTick, config);
   ensurePlanetPointers(room, nextPlanets);
 
   const debris: Debris[] = [];
 
-  nextPlanets = applyPlanetCollisions(
+  const planetCollisionState = applyPlanetCollisions(
     room,
     nextPlanets,
     nextSuns,
@@ -1974,6 +2015,17 @@ const updateWorld = (room: Room, config: AppConfig): void => {
     nextTick,
     debris,
   );
+  nextPlanets = planetCollisionState.planets;
+  if (
+    blackHole !== undefined &&
+    planetCollisionState.swallowedPlanets.length > 0
+  ) {
+    blackHole = consumeBlackHoleBodies(
+      blackHole,
+      planetCollisionState.swallowedPlanets,
+    );
+    room.world.blackHole = blackHole;
+  }
   nextPlanets = applyBoundaryEffects(
     room,
     nextPlanets,
@@ -2021,6 +2073,7 @@ const updateWorld = (room: Room, config: AppConfig): void => {
 
   room.world = {
     ...room.world,
+    blackHole,
     suns: nextSuns,
     planets: rocketCollisionState.planets,
     rockets: rocketCollisionState.rockets,
@@ -2057,6 +2110,10 @@ export const buildRoomDeltaSnapshot = (
   }
 
   const suns = diffEntityCollection(baseState.world.suns, room.world.suns);
+  const neutronStars = diffEntityCollection(
+    baseState.world.neutronStars,
+    room.world.neutronStars,
+  );
   const planets = diffEntityCollection(
     baseState.world.planets,
     room.world.planets,
@@ -2086,6 +2143,7 @@ export const buildRoomDeltaSnapshot = (
     baseTick,
     changed: {
       ...(suns.changed ? { suns: suns.changed } : {}),
+      ...(neutronStars.changed ? { neutronStars: neutronStars.changed } : {}),
       ...(planets.changed ? { planets: planets.changed } : {}),
       ...(rockets.changed ? { rockets: rockets.changed } : {}),
       ...(drones.changed ? { drones: drones.changed } : {}),
@@ -2098,6 +2156,7 @@ export const buildRoomDeltaSnapshot = (
     },
     removed: {
       ...(suns.removed ? { suns: suns.removed } : {}),
+      ...(neutronStars.removed ? { neutronStars: neutronStars.removed } : {}),
       ...(planets.removed ? { planets: planets.removed } : {}),
       ...(rockets.removed ? { rockets: rockets.removed } : {}),
       ...(drones.removed ? { drones: drones.removed } : {}),

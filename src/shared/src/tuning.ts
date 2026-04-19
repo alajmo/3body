@@ -8,9 +8,11 @@ import type {
   DroneSpec,
   GravityPulseSpec,
   MatchTimerSpec,
+  NeutronStarSpec,
   RocketSpec,
 } from "./constants";
 import type { ArchetypeId, RocketKind } from "./entities";
+import type { BotDifficulty } from "./protocol";
 import { type Vec2 } from "./vec2";
 
 export interface ShieldSpec extends AbilitySpec {
@@ -166,6 +168,16 @@ export interface BlackHoleVisualTuning {
   ringRadius: number;
 }
 
+export interface NeutronStarVisualTuning {
+  haloOpacity: number;
+  haloScale: number;
+  jetLengthScale: number;
+  jetOpacity: number;
+  jetWidthScale: number;
+  lensOpacity: number;
+  lensScale: number;
+}
+
 export interface BackgroundVisualTuning {
   baseColor: string;
   distantBodiesColor: string;
@@ -205,6 +217,7 @@ export interface RocketVisualTuning {
   core: string;
   flameScale: Vec2;
   hudAccent: string;
+  scale: number;
   trail: string;
   trailScale: Vec2;
 }
@@ -297,6 +310,7 @@ export interface VisualTuning {
   cannon: CannonVisualTuning;
   drone: DroneVisualTuning;
   hud: HudVisualTuning;
+  neutronStars: NeutronStarVisualTuning;
   orbits: OrbitVisualTuning;
   planets: PlanetVisualTuning;
   rockets: Record<RocketKind, RocketVisualTuning>;
@@ -304,8 +318,8 @@ export interface VisualTuning {
 }
 
 export interface GameplayCameraTuning {
-  readModeWorldHeight: number;
-  viewportWorldHeight: number;
+  gameplayCameraWorldHeight: number;
+  previewCameraWorldHeight: number;
 }
 
 export interface ArenaGameplayTuning {
@@ -345,7 +359,51 @@ export interface OrbitGameplayTuning {
   ];
 }
 
+export type DifficultyNumberTuning = Record<BotDifficulty, number>;
+
+export type DifficultyRocketNumberTuning = Record<
+  BotDifficulty,
+  Record<RocketKind, number>
+>;
+
+export interface GameplayAiMovementTuning {
+  candidateDirections: number;
+  evaluationHorizonSec: DifficultyNumberTuning;
+  objectiveFanoutDeg: number;
+  simulationSteps: DifficultyNumberTuning;
+}
+
+export interface GameplayAiThreatTuning {
+  lookaheadSec: DifficultyNumberTuning;
+  simulationSteps: DifficultyNumberTuning;
+}
+
+export interface GameplayAiShotTuning {
+  confidenceThresholds: DifficultyRocketNumberTuning;
+  targetPredictionHorizonSec: DifficultyNumberTuning;
+  targetPredictionSteps: DifficultyNumberTuning;
+}
+
+export interface GameplayAiExecutionTuning {
+  boostCommitScoreDelta: number;
+  boostPenaltyMultipleCharges: number;
+  boostPenaltySingleCharge: number;
+  cacheRunFireConfidence: number;
+  pressureLightOverrideConfidence: number;
+  pressureLightOverrideDamage: number;
+  pressureLightOverrideWaste: number;
+  repositionFireConfidence: number;
+}
+
+export interface GameplayAiTuning {
+  execution: GameplayAiExecutionTuning;
+  movement: GameplayAiMovementTuning;
+  shots: GameplayAiShotTuning;
+  threat: GameplayAiThreatTuning;
+}
+
 export interface GameplayTuning {
+  ai: GameplayAiTuning;
   abilities: {
     boost: BoostSpec;
     foresight: AbilitySpec;
@@ -357,6 +415,7 @@ export interface GameplayTuning {
   cache: CacheSpec;
   camera: GameplayCameraTuning;
   drone: DroneSpec;
+  neutronStars: NeutronStarSpec;
   orbits: OrbitGameplayTuning;
   rockets: Record<RocketKind, RocketSpec>;
   timers: MatchTimerSpec;
@@ -541,7 +600,12 @@ const sanitizeOrbitSunGameplayTuning = (
   return {
     mass: sanitizeNumber(source.mass, fallback.mass, 1_000, 5_000_000),
     pos: sanitizeOrbitVec2(source.pos, fallback.pos, -10_000, 10_000),
-    radius: sanitizeNumber(source.radius, fallback.radius, 8, 500),
+    radius: sanitizeNumber(
+      source.radius,
+      fallback.radius,
+      8,
+      Number.POSITIVE_INFINITY,
+    ),
     vel: sanitizeOrbitVec2(source.vel, fallback.vel, -2_000, 2_000),
   };
 };
@@ -559,28 +623,6 @@ const sanitizeOrbitPlanetGameplayTuning = (
     pos: sanitizeOrbitVec2(source.pos, fallback.pos, -10_000, 10_000),
     radius: sanitizeNumber(source.radius, fallback.radius, 8, 500),
     vel: sanitizeOrbitVec2(source.vel, fallback.vel, -2_000, 2_000),
-  };
-};
-
-const sanitizeOrbitSystemDriftGameplayTuning = (
-  value: unknown,
-  fallback: OrbitSystemDriftGameplayTuning,
-): OrbitSystemDriftGameplayTuning => {
-  const source =
-    value !== null && typeof value === "object"
-      ? (value as Partial<
-          Record<keyof OrbitSystemDriftGameplayTuning, unknown>
-        >)
-      : {};
-
-  return {
-    directionDeg: sanitizeNumber(
-      source.directionDeg,
-      fallback.directionDeg,
-      0,
-      360,
-    ),
-    speed: sanitizeNumber(source.speed, fallback.speed, 0, 2_000),
   };
 };
 
@@ -1400,6 +1442,15 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
       ringRadius: 205,
       lensRadius: 330,
     },
+    neutronStars: {
+      haloScale: 2.1,
+      haloOpacity: 0.94,
+      lensScale: 2.8,
+      lensOpacity: 0.8,
+      jetLengthScale: 4.2,
+      jetWidthScale: 0.3,
+      jetOpacity: 0.86,
+    },
     cannon: {
       barrelLength: 26,
       barrelWidth: 9,
@@ -1420,6 +1471,7 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
         core: "#f4f9ff",
         trail: "#b7e6ff",
         hudAccent: "#f5fbff",
+        scale: 1,
         bodyScale: { x: 24, y: 4.8 },
         flameScale: { x: 22, y: 9 },
         trailScale: { x: 30, y: 6 },
@@ -1428,6 +1480,7 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
         core: "#ff8d4a",
         trail: "#ff6130",
         hudAccent: "#ff7a3d",
+        scale: 1,
         bodyScale: { x: 31, y: 7.8 },
         flameScale: { x: 28, y: 14 },
         trailScale: { x: 36, y: 9 },
@@ -1436,6 +1489,7 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
         core: "#f564ff",
         trail: "#ff4dd4",
         hudAccent: "#ff61eb",
+        scale: 1,
         bodyScale: { x: 27, y: 6.2 },
         flameScale: { x: 25, y: 11 },
         trailScale: { x: 33, y: 7.5 },
@@ -1453,8 +1507,8 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
         midStride: 4,
         nearStride: 3,
         pointSize: 9,
-        showDots: true,
-        showLine: false,
+        showDots: false,
+        showLine: true,
       },
       shieldColor: "#86ecff",
       boostColor: "#8bc6ff",
@@ -1498,6 +1552,73 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
     },
   },
   gameplay: {
+    ai: {
+      execution: {
+        boostCommitScoreDelta: 7.5,
+        boostPenaltyMultipleCharges: 0.08,
+        boostPenaltySingleCharge: 0.22,
+        cacheRunFireConfidence: 0.74,
+        pressureLightOverrideConfidence: 0.44,
+        pressureLightOverrideDamage: 6,
+        pressureLightOverrideWaste: 0.24,
+        repositionFireConfidence: 0.7,
+      },
+      movement: {
+        candidateDirections: 8,
+        evaluationHorizonSec: {
+          easy: 1.6,
+          normal: 2.4,
+          hard: 3.1,
+        },
+        objectiveFanoutDeg: 28,
+        simulationSteps: {
+          easy: 16,
+          normal: 24,
+          hard: 30,
+        },
+      },
+      shots: {
+        confidenceThresholds: {
+          easy: {
+            light: 0.34,
+            heavy: 0.42,
+            seeker: 0.4,
+          },
+          normal: {
+            light: 0.48,
+            heavy: 0.58,
+            seeker: 0.52,
+          },
+          hard: {
+            light: 0.58,
+            heavy: 0.67,
+            seeker: 0.6,
+          },
+        },
+        targetPredictionHorizonSec: {
+          easy: 1.35,
+          normal: 2.15,
+          hard: 2.75,
+        },
+        targetPredictionSteps: {
+          easy: 18,
+          normal: 28,
+          hard: 34,
+        },
+      },
+      threat: {
+        lookaheadSec: {
+          easy: 1.5,
+          normal: 2.1,
+          hard: 2.8,
+        },
+        simulationSteps: {
+          easy: 18,
+          normal: 24,
+          hard: 30,
+        },
+      },
+    },
     arena: {
       instantDeath: true,
       radius: 2_000,
@@ -1509,16 +1630,12 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
       rampSec: 30,
     },
     camera: {
-      readModeWorldHeight: 7_600,
-      viewportWorldHeight: 4600,
+      gameplayCameraWorldHeight: 4600,
+      previewCameraWorldHeight: 7600,
     },
     orbits: {
       sunStartDistanceScale: 1,
       planetCircleRadius: 2_200,
-      systemDrift: {
-        directionDeg: 0,
-        speed: 0,
-      },
       suns: [
         {
           mass: 140_000,
@@ -1580,6 +1697,7 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
     rockets: {
       light: {
         damage: 15,
+        lockSec: 0,
         speed: 950,
         reloadSec: 1.5,
         ttlSec: 8,
@@ -1590,6 +1708,7 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
       },
       heavy: {
         damage: 70,
+        lockSec: 0,
         speed: 560,
         reloadSec: 6,
         ttlSec: 8,
@@ -1600,6 +1719,7 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
       },
       seeker: {
         damage: 35,
+        lockSec: 3,
         speed: 760,
         reloadSec: 4,
         ttlSec: 8,
@@ -1642,6 +1762,14 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
       respawnSec: 15,
       wildcardChance: 0.1,
     },
+    neutronStars: {
+      count: 0,
+      minMassKg: 700_000,
+      maxMassKg: 1_100_000,
+      minSize: 42,
+      maxSize: 78,
+      randomizePositionInsidePlayableCircle: true,
+    },
     timers: {
       lobbySec: 30,
       pickSec: 30,
@@ -1663,6 +1791,7 @@ const sanitizeRocketSpec = (
 
   return {
     damage: sanitizeNumber(source.damage, fallback.damage, 0, 500),
+    lockSec: sanitizeNumber(source.lockSec, fallback.lockSec, 0, 120),
     maxAmmo,
     radius: sanitizeNumber(source.radius, fallback.radius, 1, 128),
     reloadSec: sanitizeNumber(source.reloadSec, fallback.reloadSec, 0.05, 120),
@@ -1800,6 +1929,52 @@ const sanitizeCacheSpec = (value: unknown, fallback: CacheSpec): CacheSpec => {
   };
 };
 
+const sanitizeNeutronStarSpec = (
+  value: unknown,
+  fallback: NeutronStarSpec,
+): NeutronStarSpec => {
+  const source =
+    value !== null && typeof value === "object"
+      ? (value as Partial<Record<keyof NeutronStarSpec, unknown>>)
+      : {};
+  const minMassKg = sanitizeNumber(
+    source.minMassKg,
+    fallback.minMassKg,
+    0,
+    Number.POSITIVE_INFINITY,
+  );
+  const maxMassKg = sanitizeNumber(
+    source.maxMassKg,
+    fallback.maxMassKg,
+    0,
+    Number.POSITIVE_INFINITY,
+  );
+  const minSize = sanitizeNumber(
+    source.minSize,
+    fallback.minSize,
+    12,
+    Number.POSITIVE_INFINITY,
+  );
+  const maxSize = sanitizeNumber(
+    source.maxSize,
+    fallback.maxSize,
+    minSize,
+    Number.POSITIVE_INFINITY,
+  );
+
+  return {
+    count: sanitizeInteger(source.count, fallback.count, 0, 12),
+    minMassKg,
+    maxMassKg,
+    minSize,
+    maxSize,
+    randomizePositionInsidePlayableCircle: sanitizeBoolean(
+      source.randomizePositionInsidePlayableCircle,
+      fallback.randomizePositionInsidePlayableCircle,
+    ),
+  };
+};
+
 const sanitizeGameplayCameraTuning = (
   value: unknown,
   fallback: GameplayCameraTuning,
@@ -1810,18 +1985,102 @@ const sanitizeGameplayCameraTuning = (
       : {};
 
   return {
-    readModeWorldHeight: sanitizeNumber(
-      source.readModeWorldHeight,
-      fallback.readModeWorldHeight,
-      100,
-      10_000,
+    gameplayCameraWorldHeight: sanitizeNumber(
+      source.gameplayCameraWorldHeight,
+      fallback.gameplayCameraWorldHeight,
+      Number.NEGATIVE_INFINITY,
+      Number.POSITIVE_INFINITY,
     ),
-    viewportWorldHeight: sanitizeNumber(
-      source.viewportWorldHeight,
-      fallback.viewportWorldHeight,
-      100,
-      10_000,
+    previewCameraWorldHeight: sanitizeNumber(
+      source.previewCameraWorldHeight,
+      fallback.previewCameraWorldHeight,
+      Number.NEGATIVE_INFINITY,
+      Number.POSITIVE_INFINITY,
     ),
+  };
+};
+
+const sanitizeDifficultyNumberTuning = (
+  value: unknown,
+  fallback: DifficultyNumberTuning,
+  min: number,
+  max: number,
+): DifficultyNumberTuning => {
+  const source =
+    value !== null && typeof value === "object"
+      ? (value as Partial<Record<BotDifficulty, unknown>>)
+      : {};
+
+  return {
+    easy: sanitizeNumber(source.easy, fallback.easy, min, max),
+    normal: sanitizeNumber(source.normal, fallback.normal, min, max),
+    hard: sanitizeNumber(source.hard, fallback.hard, min, max),
+  };
+};
+
+const sanitizeDifficultyIntegerTuning = (
+  value: unknown,
+  fallback: DifficultyNumberTuning,
+  min: number,
+  max: number,
+): DifficultyNumberTuning => {
+  const source =
+    value !== null && typeof value === "object"
+      ? (value as Partial<Record<BotDifficulty, unknown>>)
+      : {};
+
+  return {
+    easy: sanitizeInteger(source.easy, fallback.easy, min, max),
+    normal: sanitizeInteger(source.normal, fallback.normal, min, max),
+    hard: sanitizeInteger(source.hard, fallback.hard, min, max),
+  };
+};
+
+const sanitizeDifficultyRocketNumberTuning = (
+  value: unknown,
+  fallback: DifficultyRocketNumberTuning,
+  min: number,
+  max: number,
+): DifficultyRocketNumberTuning => {
+  const source =
+    value !== null && typeof value === "object"
+      ? (value as Partial<Record<BotDifficulty, unknown>>)
+      : {};
+  const sanitizeRocketThresholds = (
+    candidate: unknown,
+    candidateFallback: Record<RocketKind, number>,
+  ): Record<RocketKind, number> => {
+    const rocketSource =
+      candidate !== null && typeof candidate === "object"
+        ? (candidate as Partial<Record<RocketKind, unknown>>)
+        : {};
+
+    return {
+      light: sanitizeNumber(
+        rocketSource.light,
+        candidateFallback.light,
+        min,
+        max,
+      ),
+      heavy: sanitizeNumber(
+        rocketSource.heavy,
+        candidateFallback.heavy,
+        min,
+        max,
+      ),
+      seeker: sanitizeNumber(
+        rocketSource.seeker,
+        candidateFallback.seeker,
+        min,
+        max,
+      ),
+    };
+  };
+
+  return {
+    easy: sanitizeRocketThresholds(source.easy, fallback.easy),
+    normal: sanitizeRocketThresholds(source.normal, fallback.normal),
+    hard: sanitizeRocketThresholds(source.hard, fallback.hard),
   };
 };
 
@@ -1842,6 +2101,183 @@ const sanitizeArenaGameplayTuning = (
       1_400,
       Number.POSITIVE_INFINITY,
     ),
+  };
+};
+
+const sanitizeGameplayAiMovementTuning = (
+  value: unknown,
+  fallback: GameplayAiMovementTuning,
+): GameplayAiMovementTuning => {
+  const source =
+    value !== null && typeof value === "object"
+      ? (value as Partial<Record<keyof GameplayAiMovementTuning, unknown>>)
+      : {};
+
+  return {
+    candidateDirections: sanitizeInteger(
+      source.candidateDirections,
+      fallback.candidateDirections,
+      4,
+      32,
+    ),
+    evaluationHorizonSec: sanitizeDifficultyNumberTuning(
+      source.evaluationHorizonSec,
+      fallback.evaluationHorizonSec,
+      0.4,
+      8,
+    ),
+    objectiveFanoutDeg: sanitizeNumber(
+      source.objectiveFanoutDeg,
+      fallback.objectiveFanoutDeg,
+      0,
+      90,
+    ),
+    simulationSteps: sanitizeDifficultyIntegerTuning(
+      source.simulationSteps,
+      fallback.simulationSteps,
+      4,
+      96,
+    ),
+  };
+};
+
+const sanitizeGameplayAiThreatTuning = (
+  value: unknown,
+  fallback: GameplayAiThreatTuning,
+): GameplayAiThreatTuning => {
+  const source =
+    value !== null && typeof value === "object"
+      ? (value as Partial<Record<keyof GameplayAiThreatTuning, unknown>>)
+      : {};
+
+  return {
+    lookaheadSec: sanitizeDifficultyNumberTuning(
+      source.lookaheadSec,
+      fallback.lookaheadSec,
+      0.4,
+      8,
+    ),
+    simulationSteps: sanitizeDifficultyIntegerTuning(
+      source.simulationSteps,
+      fallback.simulationSteps,
+      4,
+      96,
+    ),
+  };
+};
+
+const sanitizeGameplayAiShotTuning = (
+  value: unknown,
+  fallback: GameplayAiShotTuning,
+): GameplayAiShotTuning => {
+  const source =
+    value !== null && typeof value === "object"
+      ? (value as Partial<Record<keyof GameplayAiShotTuning, unknown>>)
+      : {};
+
+  return {
+    confidenceThresholds: sanitizeDifficultyRocketNumberTuning(
+      source.confidenceThresholds,
+      fallback.confidenceThresholds,
+      0,
+      1,
+    ),
+    targetPredictionHorizonSec: sanitizeDifficultyNumberTuning(
+      source.targetPredictionHorizonSec,
+      fallback.targetPredictionHorizonSec,
+      0.2,
+      8,
+    ),
+    targetPredictionSteps: sanitizeDifficultyIntegerTuning(
+      source.targetPredictionSteps,
+      fallback.targetPredictionSteps,
+      4,
+      96,
+    ),
+  };
+};
+
+const sanitizeGameplayAiExecutionTuning = (
+  value: unknown,
+  fallback: GameplayAiExecutionTuning,
+): GameplayAiExecutionTuning => {
+  const source =
+    value !== null && typeof value === "object"
+      ? (value as Partial<Record<keyof GameplayAiExecutionTuning, unknown>>)
+      : {};
+
+  return {
+    boostCommitScoreDelta: sanitizeNumber(
+      source.boostCommitScoreDelta,
+      fallback.boostCommitScoreDelta,
+      0,
+      60,
+    ),
+    boostPenaltyMultipleCharges: sanitizeNumber(
+      source.boostPenaltyMultipleCharges,
+      fallback.boostPenaltyMultipleCharges,
+      0,
+      1,
+    ),
+    boostPenaltySingleCharge: sanitizeNumber(
+      source.boostPenaltySingleCharge,
+      fallback.boostPenaltySingleCharge,
+      0,
+      1,
+    ),
+    cacheRunFireConfidence: sanitizeNumber(
+      source.cacheRunFireConfidence,
+      fallback.cacheRunFireConfidence,
+      0,
+      1,
+    ),
+    pressureLightOverrideConfidence: sanitizeNumber(
+      source.pressureLightOverrideConfidence,
+      fallback.pressureLightOverrideConfidence,
+      0,
+      1,
+    ),
+    pressureLightOverrideDamage: sanitizeNumber(
+      source.pressureLightOverrideDamage,
+      fallback.pressureLightOverrideDamage,
+      0,
+      1_000,
+    ),
+    pressureLightOverrideWaste: sanitizeNumber(
+      source.pressureLightOverrideWaste,
+      fallback.pressureLightOverrideWaste,
+      0,
+      1,
+    ),
+    repositionFireConfidence: sanitizeNumber(
+      source.repositionFireConfidence,
+      fallback.repositionFireConfidence,
+      0,
+      1,
+    ),
+  };
+};
+
+const sanitizeGameplayAiTuning = (
+  value: unknown,
+  fallback: GameplayAiTuning,
+): GameplayAiTuning => {
+  const source =
+    value !== null && typeof value === "object"
+      ? (value as Partial<Record<keyof GameplayAiTuning, unknown>>)
+      : {};
+
+  return {
+    execution: sanitizeGameplayAiExecutionTuning(
+      source.execution,
+      fallback.execution,
+    ),
+    movement: sanitizeGameplayAiMovementTuning(
+      source.movement,
+      fallback.movement,
+    ),
+    shots: sanitizeGameplayAiShotTuning(source.shots, fallback.shots),
+    threat: sanitizeGameplayAiThreatTuning(source.threat, fallback.threat),
   };
 };
 
@@ -1908,6 +2344,12 @@ const sanitizeRocketVisualSpec = (
     core: sanitizeHexColor(source.core, fallback.core),
     flameScale: sanitizeVec2(source.flameScale, fallback.flameScale),
     hudAccent: sanitizeHexColor(source.hudAccent, fallback.hudAccent),
+    scale: sanitizeNumber(
+      source.scale,
+      fallback.scale,
+      0.1,
+      Number.POSITIVE_INFINITY,
+    ),
     trail: sanitizeHexColor(source.trail, fallback.trail),
     trailScale: sanitizeVec2(source.trailScale, fallback.trailScale),
   };
@@ -1984,6 +2426,36 @@ const sanitizeCannonVisualTuning = (
   };
 };
 
+const sanitizeNeutronStarVisualTuning = (
+  value: unknown,
+  fallback: NeutronStarVisualTuning,
+): NeutronStarVisualTuning => {
+  const source =
+    value !== null && typeof value === "object"
+      ? (value as Partial<Record<keyof NeutronStarVisualTuning, unknown>>)
+      : {};
+
+  return {
+    haloOpacity: sanitizeNumber(source.haloOpacity, fallback.haloOpacity, 0, 1),
+    haloScale: sanitizeNumber(source.haloScale, fallback.haloScale, 0.25, 12),
+    jetLengthScale: sanitizeNumber(
+      source.jetLengthScale,
+      fallback.jetLengthScale,
+      0.25,
+      16,
+    ),
+    jetOpacity: sanitizeNumber(source.jetOpacity, fallback.jetOpacity, 0, 1),
+    jetWidthScale: sanitizeNumber(
+      source.jetWidthScale,
+      fallback.jetWidthScale,
+      0.02,
+      4,
+    ),
+    lensOpacity: sanitizeNumber(source.lensOpacity, fallback.lensOpacity, 0, 1),
+    lensScale: sanitizeNumber(source.lensScale, fallback.lensScale, 0.25, 16),
+  };
+};
+
 const sanitizePlanetArchetypeVisualSpec = (
   value: unknown,
   fallback: PlanetArchetypeVisualSpec,
@@ -1999,8 +2471,18 @@ const sanitizePlanetArchetypeVisualSpec = (
 
   return {
     auraGap: sanitizeNumber(source.auraGap, fallback.auraGap, 0, 10),
-    auraScale: sanitizeNumber(source.auraScale, fallback.auraScale, 0.5, 10),
-    bodyScale: sanitizeNumber(source.bodyScale, fallback.bodyScale, 0.5, 10),
+    auraScale: sanitizeNumber(
+      source.auraScale,
+      fallback.auraScale,
+      0.5,
+      Number.POSITIVE_INFINITY,
+    ),
+    bodyScale: sanitizeNumber(
+      source.bodyScale,
+      fallback.bodyScale,
+      0.5,
+      Number.POSITIVE_INFINITY,
+    ),
     color: sanitizeHexColor(source.color, fallback.color),
     continentsScale: sanitizeNumber(
       source.continentsScale,
@@ -2311,6 +2793,10 @@ export const sanitizeGameTuning = (value: unknown): GameTuningDocument => {
           2_000,
         ),
       },
+      neutronStars: sanitizeNeutronStarVisualTuning(
+        visuals.neutronStars,
+        fallback.visuals.neutronStars,
+      ),
       cannon: sanitizeCannonVisualTuning(
         visuals.cannon,
         fallback.visuals.cannon,
@@ -2471,6 +2957,7 @@ export const sanitizeGameTuning = (value: unknown): GameTuningDocument => {
       },
     },
     gameplay: {
+      ai: sanitizeGameplayAiTuning(gameplay.ai, fallback.gameplay.ai),
       arena: sanitizeArenaGameplayTuning(
         gameplay.arena,
         fallback.gameplay.arena,
@@ -2483,22 +2970,22 @@ export const sanitizeGameTuning = (value: unknown): GameTuningDocument => {
         gameplay.camera,
         fallback.gameplay.camera,
       ),
+      neutronStars: sanitizeNeutronStarSpec(
+        gameplay.neutronStars,
+        fallback.gameplay.neutronStars,
+      ),
       orbits: {
         sunStartDistanceScale: sanitizeNumber(
           gameplay.orbits?.sunStartDistanceScale,
           fallback.gameplay.orbits.sunStartDistanceScale,
           0.5,
-          2.5,
+          Number.POSITIVE_INFINITY,
         ),
         planetCircleRadius: sanitizeNumber(
           gameplay.orbits?.planetCircleRadius,
           fallback.gameplay.orbits.planetCircleRadius,
           400,
-          6_000,
-        ),
-        systemDrift: sanitizeOrbitSystemDriftGameplayTuning(
-          gameplay.orbits?.systemDrift,
-          fallback.gameplay.orbits.systemDrift,
+          Number.POSITIVE_INFINITY,
         ),
         suns: fallback.gameplay.orbits.suns.map((sun, index) =>
           sanitizeOrbitSunGameplayTuning(gameplay.orbits?.suns?.[index], sun),

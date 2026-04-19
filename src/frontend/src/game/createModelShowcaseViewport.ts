@@ -41,13 +41,23 @@ import {
   wrapCentered,
   type CacheIconKey,
 } from "./showcaseVisuals";
+import { getScaledRocketVisuals } from "./rocketVisualTuning";
 import { getRuntimeTuningDocument } from "./runtimeTuning";
+import {
+  disposeViewportDisposables,
+  registerViewportDisposables,
+} from "./viewport/disposables";
 import {
   disposeViewportRendererSession,
   initializeViewportRendererSession,
   reportViewportRendererFailure,
   type ViewportRendererBootstrap,
 } from "./viewport/rendererBootstrap";
+import {
+  createViewportRendererSizeState,
+  getViewportHostSize,
+  syncViewportRendererSize,
+} from "./viewport/rendererSizing";
 import { createCompatibleScenePass } from "./viewport/postProcessingCompat";
 import { createViewportAnimationLoopController } from "./viewport/animationLoopController";
 import { getCacheArenaBadgeSize } from "./viewport/cacheVisuals";
@@ -74,6 +84,7 @@ const SHOWCASE_ROCKET_KINDS = [
 
 export interface ModelShowcaseViewportOptions {
   focus?: "all" | "caches" | "planets" | "rockets" | "suns";
+  minimumWorldHeight?: number;
   rocketKind?: RocketKind;
 }
 
@@ -125,13 +136,6 @@ interface ShowcaseCache {
   pulseRate: number;
   wobbleRate: number;
 }
-
-const registerDisposables = (
-  disposables: Array<{ dispose: () => void }>,
-  ...items: Array<{ dispose: () => void }>
-) => {
-  disposables.push(...items);
-};
 
 const createInitialBounds = (): Bounds => ({
   maxX: -Infinity,
@@ -200,13 +204,14 @@ export function createModelShowcaseViewport(
     cacheVisuals.badgeBaseSize,
     cacheVisuals.badgeScale,
   );
-  const rocketVisuals = runtimeTuning.visuals.rockets;
+  const rocketVisuals = getScaledRocketVisuals(runtimeTuning.visuals.rockets);
   const focus = options.focus ?? (options.rocketKind ? "rockets" : "all");
   const showPlanets = focus === "all" || focus === "planets";
   const showSuns = focus === "all" || focus === "suns";
   const showRockets = focus === "all" || focus === "rockets";
   const showCaches = focus === "all" || focus === "caches";
   let hasLayoutContent = false;
+  const rendererSizeState = createViewportRendererSizeState();
   let rendererSessionToken = 0;
 
   const applyCameraFrame = () => {
@@ -214,17 +219,20 @@ export function createModelShowcaseViewport(
       return;
     }
 
-    const width = Math.max(1, hostElement.clientWidth);
-    const height = Math.max(1, hostElement.clientHeight);
-    const aspect = width / height;
+    const { aspect } = getViewportHostSize(hostElement);
     const layoutHalfWidth =
       (layoutBounds.maxX - layoutBounds.minX) / 2 + SECTION_PADDING;
     const layoutHalfHeight =
       (layoutBounds.maxY - layoutBounds.minY) / 2 + SECTION_PADDING;
+    const minimumHalfHeight = Math.max(1, (options.minimumWorldHeight ?? 0) / 2);
 
     sceneCenterX = (layoutBounds.minX + layoutBounds.maxX) / 2;
     sceneCenterY = (layoutBounds.minY + layoutBounds.maxY) / 2;
-    sceneHalfHeight = Math.max(layoutHalfHeight, layoutHalfWidth / aspect);
+    sceneHalfHeight = Math.max(
+      minimumHalfHeight,
+      layoutHalfHeight,
+      layoutHalfWidth / aspect,
+    );
 
     const worldHalfWidth = sceneHalfHeight * aspect;
     camera.left = -worldHalfWidth;
@@ -249,14 +257,12 @@ export function createModelShowcaseViewport(
       return;
     }
 
-    renderer.setPixelRatio(
-      Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO),
-    );
-    renderer.setSize(
-      Math.max(1, hostElement.clientWidth),
-      Math.max(1, hostElement.clientHeight),
-      false,
-    );
+    syncViewportRendererSize({
+      hostElement,
+      maxPixelRatio: MAX_PIXEL_RATIO,
+      renderer,
+      sizeState: rendererSizeState,
+    });
     applyCameraFrame();
   };
 
@@ -264,14 +270,7 @@ export function createModelShowcaseViewport(
     rendererSessionToken += 1;
     window.removeEventListener("resize", resizeViewport);
 
-    for (let index = disposables.length - 1; index >= 0; index -= 1) {
-      try {
-        disposables[index]!.dispose();
-      } catch (error) {
-        console.warn("[frontend] Failed to dispose showcase resource.", error);
-      }
-    }
-    disposables.length = 0;
+    disposeViewportDisposables(disposables, "showcase resource");
 
     disposeViewportRendererSession({
       animationLoopController,
@@ -334,14 +333,22 @@ export function createModelShowcaseViewport(
       backdropMesh.frustumCulled = false;
       backdropMesh.renderOrder = -40;
       scene.add(backdropMesh);
-      registerDisposables(disposables, backdropGeometry, backdropMaterial);
+      registerViewportDisposables(
+        disposables,
+        backdropGeometry,
+        backdropMaterial,
+      );
 
       const backgroundLayers = createBackgroundLayerConfigs(
         backgroundVisuals,
       ).map((layerConfig) => {
         const layer = createBackgroundLayer(layerConfig);
         scene.add(layer.group);
-        registerDisposables(disposables, layer.geometry, layer.material);
+        registerViewportDisposables(
+          disposables,
+          layer.geometry,
+          layer.material,
+        );
         return layer;
       });
 
@@ -352,7 +359,7 @@ export function createModelShowcaseViewport(
       const rocketGeometry = new CylinderGeometry(0.58, 1, 1, 18, 1);
       const ribbonGeometry = new PlaneGeometry(1, 1);
       rocketGeometry.rotateZ(-Math.PI / 2);
-      registerDisposables(
+      registerViewportDisposables(
         disposables,
         planetGeometry,
         sunGeometry,
@@ -405,7 +412,11 @@ export function createModelShowcaseViewport(
             glowMesh.position.z = 0.16;
             glowMesh.renderOrder = -1;
             scene.add(mesh, glowMesh);
-            registerDisposables(disposables, material, glowMaterial.material);
+            registerViewportDisposables(
+              disposables,
+              material,
+              glowMaterial.material,
+            );
             expandBounds(
               layoutBounds,
               basePosition.x,
@@ -461,7 +472,7 @@ export function createModelShowcaseViewport(
             glowMesh.position.z = -2;
             warpMesh.position.z = -4;
             scene.add(warpMesh, glowMesh, coreMesh);
-            registerDisposables(
+            registerViewportDisposables(
               disposables,
               coreMaterial,
               glowMaterial,
@@ -520,7 +531,7 @@ export function createModelShowcaseViewport(
         flameMesh.renderOrder = 6;
         mesh.renderOrder = 7;
         scene.add(trailMesh, flameMesh, mesh);
-        registerDisposables(
+        registerViewportDisposables(
           disposables,
           mesh.material as { dispose: () => void },
           trailMesh.material as { dispose: () => void },
@@ -565,7 +576,7 @@ export function createModelShowcaseViewport(
             badgeSprite.renderOrder = 7;
             group.add(badgeSprite);
             scene.add(group);
-            registerDisposables(disposables, map, material);
+            registerViewportDisposables(disposables, map, material);
             expandBounds(
               layoutBounds,
               basePosition.x,
@@ -615,7 +626,7 @@ export function createModelShowcaseViewport(
       );
       const postProcessing = new RenderPipeline(nextRenderer, outputFrame);
       postProcessing.outputColorTransform = false;
-      registerDisposables(disposables, scenePass, bloomNode);
+      registerViewportDisposables(disposables, scenePass, bloomNode);
 
       animationLoopController = createViewportAnimationLoopController({
         hostElement,

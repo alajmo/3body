@@ -1124,6 +1124,171 @@ export const createBlackHoleLensMaterial = (): MeshBasicNodeMaterial => {
   return material;
 };
 
+export const createNeutronStarCoreMaterial = (
+  seed: number,
+): MeshBasicNodeMaterial => {
+  const material = new MeshBasicNodeMaterial({
+    transparent: true,
+    depthWrite: false,
+  });
+  const deep = color("#16325d");
+  const cool = color("#63cfff");
+  const hot = color("#f7fcff");
+  const seedNode = uniform(seed);
+  const spherePos = normalize(positionLocal);
+  const timeNode = time.mul(0.42).add(seedNode.mul(3.1));
+  const turbulence = mx_fractal_noise_float(
+    spherePos
+      .mul(7.2)
+      .add(vec3(seedNode.mul(5.2), timeNode.mul(0.88), timeNode.mul(-0.64))),
+    5,
+    2.2,
+    0.56,
+    1,
+  )
+    .mul(0.5)
+    .add(0.5);
+  const magneticBands = sin(
+    spherePos.y.mul(36).add(turbulence.mul(10.2)).add(timeNode.mul(1.8)),
+  )
+    .mul(0.5)
+    .add(0.5);
+  const hotspot = smoothstep(
+    0.52,
+    0.98,
+    turbulence.add(magneticBands.mul(0.38)),
+  );
+  const rim = pow(
+    max(float(1).sub(dot(spherePos, vec3(0, 0, 1))), 0),
+    1.75,
+  ).mul(0.78);
+  const pulse = sin(timeNode.mul(2.8)).mul(0.12).add(0.94);
+
+  material.colorNode = mix(mix(deep, cool, turbulence), hot, hotspot)
+    .mul(pulse.add(rim))
+    .mul(1.9);
+
+  return material;
+};
+
+export const createNeutronStarHaloMaterial = (
+  seed: number,
+): MeshBasicNodeMaterial => {
+  const material = new MeshBasicNodeMaterial({
+    transparent: true,
+    depthWrite: false,
+    blending: AdditiveBlending,
+  });
+  const localPos = positionLocal.xy;
+  const radial = length(localPos);
+  const seedNode = uniform(seed);
+  const timeNode = time.mul(0.34).add(seedNode.mul(2.1));
+  const turbulence = mx_fractal_noise_float(
+    localPos
+      .mul(4.8)
+      .toVar()
+      .add(vec2(seedNode.mul(2.4), timeNode.mul(0.68))),
+    4,
+    2.05,
+    0.58,
+    1,
+  )
+    .mul(0.5)
+    .add(0.5);
+  const innerFade = smoothstep(0.08, 0.48, radial);
+  const outerFade = float(1).sub(smoothstep(0.56, 1, radial));
+  const halo = innerFade.mul(outerFade).mul(turbulence.mul(0.62).add(0.38));
+
+  material.fragmentNode = vec4(
+    mix(color("#56c8ff"), color("#c9f4ff"), turbulence).mul(halo.mul(2.6)),
+    halo.mul(0.82),
+  );
+
+  return material;
+};
+
+export const createNeutronStarJetMaterial = (
+  seed: number,
+): MeshBasicNodeMaterial => {
+  const material = new MeshBasicNodeMaterial({
+    transparent: true,
+    depthWrite: false,
+    blending: AdditiveBlending,
+  });
+  const localPos = positionLocal.xy;
+  const seedNode = uniform(seed);
+  const timeNode = time.mul(0.52).add(seedNode.mul(1.7));
+  const axial = abs(localPos.y).mul(2);
+  const width = abs(localPos.x).mul(2);
+  const turbulence = mx_fractal_noise_float(
+    vec2(localPos.y.mul(12).add(timeNode), localPos.x.mul(8).add(seedNode)),
+    3,
+    2.1,
+    0.55,
+    1,
+  )
+    .mul(0.5)
+    .add(0.5);
+  const widthLimit = mix(0.42, 0.08, smoothstep(0, 1, axial));
+  const beam = float(1)
+    .sub(smoothstep(widthLimit.mul(0.24), widthLimit, width))
+    .mul(float(1).sub(smoothstep(0.04, 1, axial)))
+    .mul(turbulence.mul(0.46).add(0.54));
+
+  material.fragmentNode = vec4(
+    mix(color("#5fd0ff"), color("#f8ffff"), float(1).sub(width.mul(0.8))).mul(
+      beam.mul(2.4),
+    ),
+    beam.mul(0.78),
+  );
+
+  return material;
+};
+
+export const createNeutronStarLensMaterial = (
+  seed: number,
+): MeshBasicNodeMaterial => {
+  const material = new MeshBasicNodeMaterial({
+    transparent: true,
+    depthWrite: false,
+  });
+  const localPos = positionLocal.xy;
+  const radial = max(length(localPos), 0.001);
+  const seedNode = uniform(seed);
+  const timeNode = time.mul(0.24).add(seedNode.mul(1.1));
+  const ringMask = smoothstep(0.18, 0.52, radial).mul(
+    float(1).sub(smoothstep(0.88, 1, radial)),
+  );
+  const turbulence = mx_fractal_noise_float(
+    localPos
+      .mul(5.4)
+      .toVar()
+      .add(vec2(seedNode.mul(1.8), timeNode.mul(-0.42))),
+    3,
+    2,
+    0.56,
+    1,
+  )
+    .mul(0.5)
+    .add(0.5);
+  const warpStrength = ringMask
+    .mul(0.022)
+    .mul(turbulence.mul(0.72).add(0.4))
+    .div(radial.mul(radial).add(0.09));
+  const sampledScene = viewportSharedTexture(
+    screenUV
+      .add(normalize(localPos).mul(warpStrength))
+      .clamp(vec2(0.001, 0.001), vec2(0.999, 0.999)),
+  );
+
+  material.fragmentNode = vec4(
+    mix(sampledScene.rgb, color("#6ad3ff"), ringMask.mul(turbulence).mul(0.18)),
+    ringMask.mul(turbulence.mul(0.58).add(0.24)).mul(0.34),
+  );
+
+  return material;
+};
+
 export const createStarfieldLayer = (
   count: number,
   size: number,

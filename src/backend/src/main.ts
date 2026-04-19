@@ -3,6 +3,7 @@ import type { ConnectionWebSocketData } from "./connection";
 import {
   loadEditorTuningIntoRuntime,
   readEditorTuningDocument,
+  syncEditorTuningDocumentToCurrent,
   writeEditorTuningDocument,
 } from "./editor-tuning";
 import { log } from "./log";
@@ -106,6 +107,17 @@ const server: Bun.Server<ConnectionWebSocketData> = Bun.serve({
         return Response.json(await writeEditorTuningDocument(body));
       } catch {
         return jsonError(400, "Invalid tuning document");
+      }
+    }
+
+    if (
+      request.method === "POST" &&
+      url.pathname === "/api/editor/tuning/sync-current"
+    ) {
+      try {
+        return Response.json(await syncEditorTuningDocumentToCurrent());
+      } catch {
+        return jsonError(500, "Unable to sync editor tuning to current.json");
       }
     }
 

@@ -2,10 +2,13 @@ import {
   ARCHETYPES,
   ARCHETYPE_IDS,
   clamp,
+  createNeutronStars,
+  getNeutronStarMassAlpha,
   getSunVisualProfile,
   lerp,
-  type GameTuningDocument,
+  mulberry32,
   predictPath,
+  type GameTuningDocument,
   type PlanetArchetypeVisualSpec,
   type RocketKind,
   type SunVisualProfile,
@@ -47,8 +50,20 @@ import {
   WebGPURenderer,
 } from "three/webgpu";
 import { DEFAULT_ORBIT_PRESET, getDefaultOrbitSunLabel } from "./orbitPresets";
+import { getEditorPreviewCameraHalfHeight } from "./editorPreviewCamera";
+import {
+  getNeutronStarVisualShape,
+  NEUTRON_STAR_JET_SECONDARY_LENGTH_FACTOR,
+  NEUTRON_STAR_JET_SECONDARY_OPACITY_FACTOR,
+  NEUTRON_STAR_JET_SECONDARY_WIDTH_FACTOR,
+} from "./neutronStarVisuals";
 import { ROCKET_MESH_SILHOUETTES } from "./rocketMeshSilhouette";
-import { getCannonWorldLayout } from "./rocketVisibility";
+import { getScaledRocketVisualTuning } from "./rocketVisualTuning";
+import {
+  getCannonWorldLayout,
+  getMinScreenAxisScale,
+  ROCKET_MIN_SCREEN_WIDTH_PX,
+} from "./rocketVisibility";
 import {
   CACHE_ICON_KEYS,
   createBackgroundLayer,
@@ -73,19 +88,30 @@ import { getRuntimeTuningDocument } from "./runtimeTuning";
 import { createViewportAnimationLoopController } from "./viewport/animationLoopController";
 import { getCacheArenaBadgeSize } from "./viewport/cacheVisuals";
 import {
+  disposeViewportDisposables,
+  registerViewportDisposables,
+} from "./viewport/disposables";
+import {
   createBlackHoleCoreMaterial,
   createBlackHoleLensMaterial,
   createBlackHoleRingMaterial,
   createBoostWakeMaterial,
   createForesightVisual,
+  createNeutronStarCoreMaterial,
+  createNeutronStarHaloMaterial,
+  createNeutronStarJetMaterial,
+  createNeutronStarLensMaterial,
 } from "./viewport/localViewportVisualFactories";
 import { CLOAK_PLANET_TARGET_OPACITY } from "./viewport/cloakVisual";
 import { createCompatibleScenePass } from "./viewport/postProcessingCompat";
 import {
   clipForesightPathAtDistance,
+  FORESIGHT_DISPLAY_SAMPLE_COUNT,
   FORESIGHT_STEP_SEC,
+  FORESIGHT_TARGET_DISTANCE,
   FORESIGHT_WINDOW_SEC,
-  getForesightPointOpacity,
+  resampleForesightPath,
+  trimForesightPathToDistance,
 } from "./viewport/foresightShared";
 import { createShieldVisual } from "./shieldVisuals";
 import {
@@ -94,6 +120,10 @@ import {
   reportViewportRendererFailure,
   type ViewportRendererBootstrap,
 } from "./viewport/rendererBootstrap";
+import {
+  createViewportRendererSizeState,
+  syncViewportRendererSize,
+} from "./viewport/rendererSizing";
 
 const CAMERA_DISTANCE = 100;
 const CARD_MAX_PIXEL_RATIO = 1.25;
@@ -110,7 +140,6 @@ const BLACK_HOLE_STAGE_RADIUS = 150;
 const PLANET_CARD_RADIUS = 11;
 const PLANET_STAGE_RADIUS = 72;
 const PLANETS_STAGE_RADIUS = 34;
-const CANNON_STAGE_PLANET_RADIUS = 38;
 const SUN_CARD_RADIUS = 10;
 const SUN_STAGE_RADIUS = 74;
 const SUNS_STAGE_RADIUS = 52;
@@ -154,7 +183,6 @@ const PLANET_LABEL_SCREEN_BORDER_SCALE = 0.03;
 const PLANET_LABEL_MIN_WORLD_GAP = 4;
 const PLANET_LABEL_MAX_WORLD_GAP = 7;
 const PLANET_LABEL_WORLD_GAP_RATIO = 0.22;
-const CANNON_STAGE_WORLD_UNITS_PER_PIXEL = 1.02;
 const FORESIGHT_CARD_SPAN = 40;
 const BOOST_PREVIEW_ACTIVE_SEC = 0.48;
 const BOOST_PREVIEW_IDLE_SEC = 0.9;
@@ -162,13 +190,20 @@ const BOOST_PREVIEW_CYCLE_SEC =
   BOOST_PREVIEW_ACTIVE_SEC + BOOST_PREVIEW_IDLE_SEC;
 const GRAVITY_PULSE_PREVIEW_CYCLE_SEC = 1.6;
 const ROCKET_CARD_SCALE = 0.34;
-const ROCKET_STAGE_SCALE = 1.3;
+export const getEditorPreviewGameplayPlanetRadius = (
+  tuning: GameTuningDocument,
+) =>
+  (tuning.gameplay.orbits.planets[0]?.radius ??
+    DEFAULT_ORBIT_PRESET.planets[0]!.radius) *
+  tuning.visuals.planets.archetypes.terra.bodyScale;
+
 export type EditorPreviewViewportItemId =
   | "overview"
   | "hud"
   | "background"
   | "planets"
   | "suns"
+  | "neutronStars"
   | "blackHole"
   | "cannon"
   | "rocketLight"
@@ -223,7 +258,7 @@ const registerDisposables = (
   disposables: Array<{ dispose: () => void }>,
   ...items: Array<{ dispose: () => void }>
 ) => {
-  disposables.push(...items);
+  registerViewportDisposables(disposables, ...items);
 };
 
 const getRocketKindFromItemId = (
@@ -250,6 +285,56 @@ const isAbilityPreviewItem = (
   itemId === "gravityPulse" ||
   itemId === "cloak";
 
+const usesPlayerCameraStageView = (itemId: EditorPreviewViewportItemId) =>
+  isAbilityPreviewItem(itemId) ||
+  itemId === "cache" ||
+  itemId === "blackHole" ||
+  itemId === "neutronStars" ||
+  itemId === "cannon" ||
+  itemId === "rocketLight" ||
+  itemId === "rocketHeavy" ||
+  itemId === "rocketSeeker";
+
+const usesGameplayPlanetPreview = (
+  itemId: EditorPreviewViewportItemId,
+) => itemId === "cannon" || isAbilityPreviewItem(itemId);
+
+export const getEditorPreviewPlayerCameraHalfHeight = ({
+  itemId,
+  tuning,
+}: {
+  itemId: EditorPreviewViewportItemId;
+  tuning: GameTuningDocument;
+}): number | null => {
+  if (!usesPlayerCameraStageView(itemId)) {
+    return null;
+  }
+
+  return getEditorPreviewCameraHalfHeight({ itemId, tuning });
+};
+
+export const getEditorPreviewStageWorldUnitsPerPixel = ({
+  itemId,
+  tuning,
+  viewportHeight,
+}: {
+  itemId: EditorPreviewViewportItemId;
+  tuning: GameTuningDocument;
+  viewportHeight: number;
+}): number => {
+  const visibleWorldHeight =
+    (getEditorPreviewPlayerCameraHalfHeight({
+      itemId,
+      tuning,
+    }) ??
+      getCameraHalfHeight({
+        itemId,
+        presentation: "stage",
+      })) * 2;
+
+  return visibleWorldHeight / Math.max(1, viewportHeight);
+};
+
 const getPresentationScale = (presentation: "card" | "stage") =>
   presentation === "card" ? 1 : 1.7;
 
@@ -263,6 +348,7 @@ const getCameraHalfHeight = ({
       case "overview":
       case "hud":
         return 46;
+      case "neutronStars":
       case "blackHole":
         return 52;
       default:
@@ -271,6 +357,8 @@ const getCameraHalfHeight = ({
   }
 
   switch (itemId) {
+    case "neutronStars":
+      return 260;
     case "blackHole":
       return 220;
     case "planets":
@@ -302,13 +390,10 @@ const getPreviewPlanetRadius = (
       ? PLANET_CARD_RADIUS
       : itemId === "planets"
         ? PLANETS_STAGE_RADIUS
-        : itemId === "cannon"
-          ? CANNON_STAGE_PLANET_RADIUS
-          : isAbilityPreviewItem(itemId)
-            ? (tuning.gameplay.orbits.planets[0]?.radius ??
-              DEFAULT_ORBIT_PRESET.planets[0]!.radius)
+        : isAbilityPreviewItem(itemId)
+            ? getEditorPreviewGameplayPlanetRadius(tuning)
             : PLANET_STAGE_RADIUS;
-  return targetRadius * (itemId === "cannon" ? 1.04 : 1);
+  return targetRadius;
 };
 
 const getPreviewSunRadius = (
@@ -790,8 +875,108 @@ const createPreviewSun = ({
   };
 };
 
+const createPreviewNeutronStar = ({
+  hostScene,
+  jetGeometry,
+  lensGeometry,
+  massAlpha,
+  radius,
+  seed,
+  sphereGeometry,
+  tuning,
+}: {
+  hostScene: Scene;
+  jetGeometry: PlaneGeometry;
+  lensGeometry: CircleGeometry;
+  massAlpha: number;
+  radius: number;
+  seed: number;
+  sphereGeometry: SphereGeometry;
+  tuning: GameTuningDocument["visuals"]["neutronStars"];
+}) => {
+  const group = new Group();
+  const coreMesh = new Mesh(
+    sphereGeometry,
+    createNeutronStarCoreMaterial(seed),
+  );
+  const haloMesh = new Mesh(lensGeometry, createNeutronStarHaloMaterial(seed));
+  const lensMesh = new Mesh(lensGeometry, createNeutronStarLensMaterial(seed));
+  const jetMeshA = new Mesh(jetGeometry, createNeutronStarJetMaterial(seed));
+  const jetMeshB = new Mesh(
+    jetGeometry,
+    createNeutronStarJetMaterial(seed + 0.37),
+  );
+
+  coreMesh.renderOrder = -6;
+  haloMesh.renderOrder = -7;
+  lensMesh.renderOrder = -8;
+  jetMeshA.renderOrder = -7;
+  jetMeshB.renderOrder = -7;
+  haloMesh.position.z = -1.6;
+  lensMesh.position.z = -2.4;
+  jetMeshA.position.z = -1.2;
+  jetMeshB.position.z = -1.2;
+  group.add(lensMesh, haloMesh, jetMeshA, jetMeshB, coreMesh);
+  hostScene.add(group);
+
+  return {
+    dispose: () => {
+      (coreMesh.material as { dispose: () => void }).dispose();
+      (haloMesh.material as { dispose: () => void }).dispose();
+      (lensMesh.material as { dispose: () => void }).dispose();
+      (jetMeshA.material as { dispose: () => void }).dispose();
+      (jetMeshB.material as { dispose: () => void }).dispose();
+    },
+    update(nowSec: number, position: Vec2) {
+      const pulse = 1 + Math.sin(nowSec * 6.4 + seed * 0.0007) * 0.04;
+      const haloPulse =
+        1 + Math.sin(nowSec * 4.8 + seed * 0.0011 + massAlpha) * 0.08;
+      const { coreRadius, haloRadius, lensRadius, jetLength, jetWidth } =
+        getNeutronStarVisualShape({
+          haloPulse,
+          massAlpha,
+          pulse,
+          radius,
+          tuning,
+        });
+
+      group.position.set(position.x, position.y, -1);
+      group.rotation.z = nowSec * 0.06 + seed * 0.0004;
+      coreMesh.scale.set(coreRadius, coreRadius, coreRadius);
+      haloMesh.scale.set(haloRadius, haloRadius, 1);
+      lensMesh.scale.set(lensRadius, lensRadius, 1);
+      jetMeshA.scale.set(jetWidth, jetLength, 1);
+      jetMeshB.scale.set(
+        jetWidth * NEUTRON_STAR_JET_SECONDARY_WIDTH_FACTOR,
+        jetLength * NEUTRON_STAR_JET_SECONDARY_LENGTH_FACTOR,
+        1,
+      );
+      jetMeshA.rotation.z =
+        seed * 0.0003 + Math.sin(nowSec * 0.4 + seed * 0.0006) * 0.08;
+      jetMeshB.rotation.z =
+        seed * 0.0003 +
+        Math.PI / 2 -
+        Math.sin(nowSec * 0.36 + seed * 0.0005) * 0.06;
+      haloMesh.rotation.z = nowSec * 0.18 + seed * 0.0004;
+      lensMesh.rotation.z = -nowSec * 0.12 - seed * 0.0003;
+      coreMesh.rotation.x = 0.44;
+      coreMesh.rotation.y = nowSec * (0.24 + massAlpha * 0.08);
+      const haloMaterial = haloMesh.material as MeshBasicNodeMaterial;
+      const lensMaterial = lensMesh.material as MeshBasicNodeMaterial;
+      const jetMaterialA = jetMeshA.material as MeshBasicNodeMaterial;
+      const jetMaterialB = jetMeshB.material as MeshBasicNodeMaterial;
+      haloMaterial.opacity = tuning.haloOpacity;
+      lensMaterial.opacity = tuning.lensOpacity;
+      jetMaterialA.opacity = tuning.jetOpacity;
+      jetMaterialB.opacity =
+        tuning.jetOpacity * NEUTRON_STAR_JET_SECONDARY_OPACITY_FACTOR;
+    },
+  };
+};
+
 const createPreviewRocket = ({
   hostScene,
+  hostElement,
   itemId,
   planeGeometry,
   presentation,
@@ -803,6 +988,7 @@ const createPreviewRocket = ({
   rocketSensorGeometry,
 }: {
   hostScene: Scene;
+  hostElement: HTMLDivElement;
   itemId: EditorPreviewViewportItemId;
   planeGeometry: PlaneGeometry;
   presentation: "card" | "stage";
@@ -815,10 +1001,8 @@ const createPreviewRocket = ({
 }) => {
   const tuning = getRuntimeTuningDocument();
   const rocketKind = getRocketKindFromItemId(itemId) ?? "light";
-  const profile = tuning.visuals.rockets[rocketKind];
+  const profile = getScaledRocketVisualTuning(tuning.visuals.rockets[rocketKind]);
   const silhouette = ROCKET_MESH_SILHOUETTES[rocketKind];
-  const scale =
-    presentation === "card" ? ROCKET_CARD_SCALE : ROCKET_STAGE_SCALE;
   const bodyMaterial = createRocketMaterial(profile.core, profile.trail);
   const trailMaterial = createRocketTrailMaterial(profile.core, profile.trail);
   const flameMaterial = createRocketFlameMaterial(profile.core, profile.trail);
@@ -885,8 +1069,49 @@ const createPreviewRocket = ({
     update(nowSec: number, position: Vec2) {
       const bob = Math.sin(nowSec * 1.5) * (presentation === "card" ? 1.2 : 5);
       const flicker = 0.9 + Math.sin(nowSec * 22) * 0.1;
-      const length = profile.bodyScale.x * scale;
-      const radius = profile.bodyScale.y * scale;
+      const stageWorldUnitsPerPixel =
+        presentation === "stage"
+          ? getEditorPreviewStageWorldUnitsPerPixel({
+              itemId,
+              tuning,
+              viewportHeight: hostElement.clientHeight,
+            })
+          : null;
+      const renderBodyScale =
+        presentation === "card"
+          ? {
+              x: profile.bodyScale.x * ROCKET_CARD_SCALE,
+              y: profile.bodyScale.y * ROCKET_CARD_SCALE,
+            }
+          : getMinScreenAxisScale(
+              profile.bodyScale,
+              ROCKET_MIN_SCREEN_WIDTH_PX.body,
+              stageWorldUnitsPerPixel ?? 0,
+            );
+      const renderTrailScale =
+        presentation === "card"
+          ? {
+              x: profile.trailScale.x * ROCKET_CARD_SCALE,
+              y: profile.trailScale.y * ROCKET_CARD_SCALE * 0.84,
+            }
+          : getMinScreenAxisScale(
+              profile.trailScale,
+              ROCKET_MIN_SCREEN_WIDTH_PX.trail,
+              stageWorldUnitsPerPixel ?? 0,
+            );
+      const renderFlameScale =
+        presentation === "card"
+          ? {
+              x: profile.flameScale.x * ROCKET_CARD_SCALE,
+              y: profile.flameScale.y * ROCKET_CARD_SCALE * 0.9,
+            }
+          : getMinScreenAxisScale(
+              profile.flameScale,
+              ROCKET_MIN_SCREEN_WIDTH_PX.flame,
+              stageWorldUnitsPerPixel ?? 0,
+            );
+      const length = renderBodyScale.x;
+      const radius = renderBodyScale.y;
       const x = position.x;
       const y = position.y + bob;
       const finYOffset = radius * 0.72;
@@ -957,14 +1182,14 @@ const createPreviewRocket = ({
 
       trailMesh.position.set(-length * silhouette.trailOffset, 0, 0.18);
       trailMesh.scale.set(
-        profile.trailScale.x * scale,
-        profile.trailScale.y * scale * 0.84,
+        renderTrailScale.x,
+        renderTrailScale.y,
         1,
       );
       flameMesh.position.set(-length * silhouette.flameOffset, 0, 0.24);
       flameMesh.scale.set(
-        profile.flameScale.x * scale * flicker,
-        profile.flameScale.y * scale * flicker * 0.9,
+        renderFlameScale.x * flicker,
+        renderFlameScale.y * flicker,
         1,
       );
     },
@@ -1053,8 +1278,16 @@ const createPreviewForesightPath = ({
     steps,
     FORESIGHT_STEP_SEC,
   );
-  const start = worldPath[0]!;
-  const relativePath = worldPath.map((point) => ({
+  const trimmedWorldPath = trimForesightPathToDistance(
+    worldPath,
+    FORESIGHT_TARGET_DISTANCE,
+  );
+  const displayPath = resampleForesightPath(
+    trimmedWorldPath,
+    FORESIGHT_DISPLAY_SAMPLE_COUNT,
+  );
+  const start = displayPath[0]!;
+  const relativePath = displayPath.map((point) => ({
     x: point.x - start.x,
     y: point.y - start.y,
   }));
@@ -1066,10 +1299,10 @@ const createPreviewForesightPath = ({
     };
   }
 
-  const minX = Math.min(...worldPath.map((point) => point.x));
-  const maxX = Math.max(...worldPath.map((point) => point.x));
-  const minY = Math.min(...worldPath.map((point) => point.y));
-  const maxY = Math.max(...worldPath.map((point) => point.y));
+  const minX = Math.min(...displayPath.map((point) => point.x));
+  const maxX = Math.max(...displayPath.map((point) => point.x));
+  const minY = Math.min(...displayPath.map((point) => point.y));
+  const maxY = Math.max(...displayPath.map((point) => point.y));
   const span = Math.max(maxX - minX, maxY - minY, 1);
   const scale = targetSpan / span;
 
@@ -1090,55 +1323,32 @@ const updatePreviewForesightVisual = (
   foresightVisual.lineMaterial.color.set(tuning.lineColor);
   foresightVisual.lineMaterial.opacity = tuning.lineOpacity;
   foresightVisual.pointColorUniform.value.set(tuning.dotColor);
-  foresightVisual.pointOpacityUniform.value = tuning.dotOpacity;
+  foresightVisual.pointOpacityUniform.value = 0;
   foresightVisual.pointMaterial.size = tuning.pointSize;
 
   const lineArray = foresightVisual.linePositionAttribute.array as Float32Array;
-  const pointArray = foresightVisual.pointPositionAttribute
-    .array as Float32Array;
-  const opacityArray = foresightVisual.pointOpacityAttribute
-    .array as Float32Array;
   const pointCount = Math.min(
     pathPoints.length,
-    foresightVisual.pointPositionAttribute.count,
+    foresightVisual.linePositionAttribute.count,
   );
-  let visiblePointCount = 0;
 
   for (let index = 0; index < pointCount; index += 1) {
     const point = pathPoints[index]!;
     const offset = index * 3;
-    const opacity = getForesightPointOpacity({
-      index,
-      pointCount,
-      tuning,
-    });
     lineArray[offset] = point.x;
     lineArray[offset + 1] = point.y;
     lineArray[offset + 2] = 0;
-    pointArray[offset] = point.x;
-    pointArray[offset + 1] = point.y;
-    pointArray[offset + 2] = 0;
-    opacityArray[index] = opacity;
-    if (opacity > 0.01) {
-      visiblePointCount += 1;
-    }
   }
 
   foresightVisual.lineGeometry.setDrawRange(
     0,
-    tuning.showLine ? pointCount : 0,
+    pointCount,
   );
-  foresightVisual.pointGeometry.setDrawRange(0, pointCount);
+  foresightVisual.pointGeometry.setDrawRange(0, 0);
   foresightVisual.linePositionAttribute.needsUpdate = true;
-  foresightVisual.pointPositionAttribute.needsUpdate = true;
-  foresightVisual.pointOpacityAttribute.needsUpdate = true;
   foresightVisual.line.visible =
-    tuning.showLine && tuning.lineOpacity > 0.01 && pointCount > 1;
-  foresightVisual.points.visible =
-    tuning.showDots &&
-    tuning.dotOpacity > 0.01 &&
-    pointCount > 0 &&
-    visiblePointCount > 0;
+    tuning.lineOpacity > 0.01 && pointCount > 1;
+  foresightVisual.points.visible = false;
 };
 
 export function createEditorItemPreviewViewport(
@@ -1146,7 +1356,9 @@ export function createEditorItemPreviewViewport(
   options: EditorItemPreviewViewportOptions,
 ): () => void {
   const presentation = options.presentation ?? "card";
+  let tuning = getRuntimeTuningDocument();
   let disposed = false;
+
   let renderer: WebGPURenderer | null = null;
   let rendererBootstrap: ViewportRendererBootstrap | null = null;
   let animationLoopController: ReturnType<
@@ -1160,6 +1372,7 @@ export function createEditorItemPreviewViewport(
   let requiredCameraHalfWidth = 0;
   const disposables: Array<{ dispose: () => void }> = [];
   let cleanupComplete = false;
+  const rendererSizeState = createViewportRendererSizeState();
   let rendererSessionToken = 0;
 
   const resizeViewport = () => {
@@ -1169,25 +1382,24 @@ export function createEditorItemPreviewViewport(
 
     const maxPixelRatio =
       presentation === "card" ? CARD_MAX_PIXEL_RATIO : STAGE_MAX_PIXEL_RATIO;
-    renderer.setPixelRatio(
-      Math.min(
-        hostElement.ownerDocument.defaultView?.devicePixelRatio || 1,
-        maxPixelRatio,
-      ),
-    );
-    renderer.setSize(
-      Math.max(1, hostElement.clientWidth),
-      Math.max(1, hostElement.clientHeight),
-      false,
-    );
-    const aspect =
-      Math.max(1, hostElement.clientWidth) /
-      Math.max(1, hostElement.clientHeight);
+    const { aspect } = syncViewportRendererSize({
+      hostElement,
+      maxPixelRatio,
+      renderer,
+      sizeState: rendererSizeState,
+    });
+    const baseHalfHeight =
+      presentation === "stage"
+        ? getEditorPreviewCameraHalfHeight({
+            itemId: options.itemId,
+            tuning,
+          })
+        : getCameraHalfHeight({
+            itemId: options.itemId,
+            presentation,
+          });
     const halfHeight = Math.max(
-      getCameraHalfHeight({
-        itemId: options.itemId,
-        presentation,
-      }),
+      baseHalfHeight,
       requiredCameraHalfHeight,
       requiredCameraHalfWidth / Math.max(aspect, 0.001),
     );
@@ -1213,17 +1425,7 @@ export function createEditorItemPreviewViewport(
   const disposeViewportSession = () => {
     rendererSessionToken += 1;
     window.removeEventListener("resize", resizeViewport);
-    for (let index = disposables.length - 1; index >= 0; index -= 1) {
-      try {
-        disposables[index]!.dispose();
-      } catch (error) {
-        console.warn(
-          "[frontend] Failed to dispose editor preview resource.",
-          error,
-        );
-      }
-    }
-    disposables.length = 0;
+    disposeViewportDisposables(disposables, "editor preview resource");
     disposeViewportRendererSession({
       animationLoopController,
       bootstrap: rendererBootstrap,
@@ -1273,7 +1475,7 @@ export function createEditorItemPreviewViewport(
       rendererBootstrap = bootstrap;
       renderer = nextRenderer;
 
-      const tuning = getRuntimeTuningDocument();
+      tuning = getRuntimeTuningDocument();
       const scene = new Scene();
       scene.background = createSceneBackgroundColor(tuning.visuals.background);
       const nextCamera = new OrthographicCamera(-1, 1, 1, -1, -2000, 2000);
@@ -1385,16 +1587,31 @@ export function createEditorItemPreviewViewport(
       const sunRadius = getPreviewSunRadius(options.itemId, presentation);
       const focusScale = getPresentationScale(presentation);
       const terraVisuals = tuning.visuals.planets.archetypes.terra;
-      const terraPlanetRadius = planetRadius * terraVisuals.bodyScale;
+      const stageWorldUnitsPerPixel =
+        presentation === "stage"
+          ? getEditorPreviewStageWorldUnitsPerPixel({
+              itemId: options.itemId,
+              tuning,
+              viewportHeight: hostElement.clientHeight,
+            })
+          : null;
+      const terraPlanetRadius = usesGameplayPlanetPreview(options.itemId)
+        ? getEditorPreviewGameplayPlanetRadius(tuning)
+        : planetRadius * terraVisuals.bodyScale;
       const overviewSunProfile = getSunVisualProfile(tuning.visuals.suns, 0);
 
-      if (
-        presentation === "stage" &&
-        (isAbilityPreviewItem(options.itemId) || options.itemId === "cache")
-      ) {
+      const playerCameraHalfHeight =
+        presentation === "stage"
+          ? getEditorPreviewPlayerCameraHalfHeight({
+              itemId: options.itemId,
+              tuning,
+            })
+          : null;
+
+      if (playerCameraHalfHeight !== null) {
         requiredCameraHalfHeight = Math.max(
           requiredCameraHalfHeight,
-          tuning.gameplay.camera.viewportWorldHeight / 2,
+          playerCameraHalfHeight,
         );
       }
 
@@ -1423,6 +1640,7 @@ export function createEditorItemPreviewViewport(
         });
         const rocket = createPreviewRocket({
           hostScene: scene,
+          hostElement,
           itemId: "rocketLight",
           planeGeometry,
           presentation,
@@ -1444,7 +1662,144 @@ export function createEditorItemPreviewViewport(
       }
 
       if (options.itemId === "background") {
-        // Background layers are already the preview content.
+        const previewCount = Math.min(
+          tuning.gameplay.neutronStars.count,
+          presentation === "stage" ? 4 : 2,
+        );
+        const previewRadiusScale = presentation === "stage" ? 0.12 : 0.085;
+        const orbitRadius = (presentation === "stage" ? 28 : 16) * focusScale;
+        const neutronStars = Array.from({ length: previewCount }, (_, index) => {
+          const alpha =
+            previewCount <= 1 ? 0.5 : index / Math.max(1, previewCount - 1);
+          const mass = lerp(
+            tuning.gameplay.neutronStars.minMassKg,
+            tuning.gameplay.neutronStars.maxMassKg,
+            alpha,
+          );
+          const massAlpha = getNeutronStarMassAlpha(
+            mass,
+            tuning.gameplay.neutronStars,
+          );
+          const radius =
+            lerp(
+              tuning.gameplay.neutronStars.minSize,
+              tuning.gameplay.neutronStars.maxSize,
+              massAlpha,
+            ) *
+            previewRadiusScale *
+            focusScale;
+          const angle =
+            (-0.95 + alpha * 1.9) * Math.PI * 0.42 + (index % 2 === 0 ? 0 : 0.18);
+          const distance = orbitRadius * (0.82 + alpha * 0.24);
+
+          return {
+            position: {
+              x: Math.cos(angle) * distance,
+              y: Math.sin(angle) * distance * 0.68,
+            },
+            visual: createPreviewNeutronStar({
+              hostScene: scene,
+              jetGeometry: planeGeometry,
+              lensGeometry: circleGeometry,
+              massAlpha,
+              radius,
+              seed: 50_000 + index * 97,
+              sphereGeometry,
+              tuning: tuning.visuals.neutronStars,
+            }),
+          };
+        });
+        registerDisposables(
+          disposables,
+          ...neutronStars.map((entry) => entry.visual),
+        );
+        updates.push((nowSec) => {
+          for (const neutronStar of neutronStars) {
+            neutronStar.visual.update(nowSec, neutronStar.position);
+          }
+        });
+      }
+
+      if (options.itemId === "neutronStars") {
+        const previewCount = Math.max(1, tuning.gameplay.neutronStars.count);
+        const previewScale = presentation === "stage" ? 1 : 0.14;
+        const previewArenaRadius = Math.max(
+          presentation === "stage" ? 360 : 140,
+          tuning.gameplay.neutronStars.maxSize *
+            (presentation === "stage" ? 4.5 : 1.45) +
+            previewCount * (presentation === "stage" ? 28 : 8),
+        );
+        let nextPreviewId = 1;
+        const previewStars = createNeutronStars({
+          arenaRadius: previewArenaRadius,
+          createId: () => nextPreviewId++,
+          rng: mulberry32(0x3b0d1e5),
+          spec: {
+            ...tuning.gameplay.neutronStars,
+            count: previewCount,
+          },
+        });
+        const previewCenter =
+          previewStars.length === 0
+            ? { x: 0, y: 0 }
+            : previewStars.reduce(
+                (center, star) => ({
+                  x: center.x + star.pos.x / previewStars.length,
+                  y: center.y + star.pos.y / previewStars.length,
+                }),
+                { x: 0, y: 0 },
+              );
+        const neutronStars = previewStars.map((star, index) => {
+          const massAlpha = getNeutronStarMassAlpha(
+            star.mass,
+            tuning.gameplay.neutronStars,
+          );
+          const radius = star.radius * previewScale;
+          const effectiveRadius = radius * (4.4 + massAlpha * 2.5);
+          const position = {
+            x: (star.pos.x - previewCenter.x) * previewScale,
+            y: (star.pos.y - previewCenter.y) * previewScale,
+          };
+
+          requiredCameraHalfWidth = Math.max(
+            requiredCameraHalfWidth,
+            Math.abs(position.x) + effectiveRadius,
+          );
+          requiredCameraHalfHeight = Math.max(
+            requiredCameraHalfHeight,
+            Math.abs(position.y) + effectiveRadius,
+          );
+
+          return {
+            phase: index * 0.37,
+            position,
+            visual: createPreviewNeutronStar({
+              hostScene: scene,
+              jetGeometry: planeGeometry,
+              lensGeometry: circleGeometry,
+              massAlpha,
+              radius,
+              seed: 80_000 + star.id * 137,
+              sphereGeometry,
+              tuning: tuning.visuals.neutronStars,
+            }),
+          };
+        });
+        const cameraPadding = presentation === "stage" ? 44 : 12;
+        requiredCameraHalfWidth += cameraPadding;
+        requiredCameraHalfHeight += cameraPadding;
+        registerDisposables(
+          disposables,
+          ...neutronStars.map((entry) => entry.visual),
+        );
+        updates.push((nowSec) => {
+          for (const neutronStar of neutronStars) {
+            neutronStar.visual.update(
+              nowSec + neutronStar.phase,
+              neutronStar.position,
+            );
+          }
+        });
       }
 
       if (options.itemId === "planets") {
@@ -1571,7 +1926,9 @@ export function createEditorItemPreviewViewport(
 
       if (options.itemId === "cache") {
         const stageLayout =
-          presentation === "stage" ? createCacheStagePreviewLayout(tuning) : null;
+          presentation === "stage"
+            ? createCacheStagePreviewLayout(tuning)
+            : null;
         if (stageLayout !== null) {
           requiredCameraHalfHeight = Math.max(
             requiredCameraHalfHeight,
@@ -1582,31 +1939,30 @@ export function createEditorItemPreviewViewport(
             stageLayout.requiredHalfWidth,
           );
         }
-        const cacheEntries =
-          stageLayout?.entries.map((entry, index) => {
-            const cache = createPreviewCache({
+        const cacheEntries = stageLayout?.entries.map((entry, index) => {
+          const cache = createPreviewCache({
+            hostElement,
+            hostScene: scene,
+            iconKey: entry.iconKey,
+            presentation,
+          });
+          registerDisposables(disposables, cache);
+          return {
+            cache,
+            phase: index * 0.37,
+            position: entry.position,
+          };
+        }) ?? [
+          {
+            cache: createPreviewCache({
               hostElement,
               hostScene: scene,
-              iconKey: entry.iconKey,
               presentation,
-            });
-            registerDisposables(disposables, cache);
-            return {
-              cache,
-              phase: index * 0.37,
-              position: entry.position,
-            };
-          }) ?? [
-            {
-              cache: createPreviewCache({
-                hostElement,
-                hostScene: scene,
-                presentation,
-              }),
-              phase: 0,
-              position: { x: 0, y: 0 } satisfies Vec2,
-            },
-          ];
+            }),
+            phase: 0,
+            position: { x: 0, y: 0 } satisfies Vec2,
+          },
+        ];
         if (stageLayout === null) {
           registerDisposables(disposables, cacheEntries[0]!.cache);
         }
@@ -1621,6 +1977,7 @@ export function createEditorItemPreviewViewport(
       if (rocketKind !== null) {
         const rocket = createPreviewRocket({
           hostScene: scene,
+          hostElement,
           itemId: options.itemId,
           planeGeometry,
           presentation,
@@ -1782,19 +2139,17 @@ export function createEditorItemPreviewViewport(
           accentMaterial,
           flashMaterial,
         );
-        const worldUnitsPerPixel =
-          presentation === "card"
-            ? 0.38 * focusScale
-            : CANNON_STAGE_WORLD_UNITS_PER_PIXEL;
-        const layout = getCannonWorldLayout(
-          tuning.visuals.cannon,
-          worldUnitsPerPixel,
-        );
         const stemStart = terraPlanetRadius;
-        const breechStart = stemStart + layout.stemLenWorld;
-        const barrelStart = breechStart + layout.breechLenWorld;
-        const barrelEnd = barrelStart + layout.barrelLenWorld;
         updates.push((nowSec) => {
+          const layout = getCannonWorldLayout(
+            tuning.visuals.cannon,
+            presentation === "card"
+              ? 0.38 * focusScale
+              : (stageWorldUnitsPerPixel ?? 1),
+          );
+          const breechStart = stemStart + layout.stemLenWorld;
+          const barrelStart = breechStart + layout.breechLenWorld;
+          const barrelEnd = barrelStart + layout.barrelLenWorld;
           planet.update(nowSec);
           stemMesh.position.set(stemStart + layout.stemLenWorld * 0.5, 0, 0);
           stemMesh.scale.set(
@@ -1940,12 +2295,9 @@ export function createEditorItemPreviewViewport(
             1,
           );
           shieldGroup.rotation.z = Math.sin(nowSec * 0.7) * 0.22;
-          shieldGlowOpacityUniform.value =
-            0.14 + Math.sin(nowSec * 9.4) * 0.03;
-          shieldArcOpacityUniform.value =
-            0.4 + Math.sin(nowSec * 7.6) * 0.05;
-          shieldPanelOpacityUniform.value =
-            0.5 + Math.sin(nowSec * 9.8) * 0.06;
+          shieldGlowOpacityUniform.value = 0.14 + Math.sin(nowSec * 9.4) * 0.03;
+          shieldArcOpacityUniform.value = 0.4 + Math.sin(nowSec * 7.6) * 0.05;
+          shieldPanelOpacityUniform.value = 0.5 + Math.sin(nowSec * 9.8) * 0.06;
           shieldCrestOpacityUniform.value =
             0.46 + Math.sin(nowSec * 10.6) * 0.06;
         });
@@ -2017,7 +2369,8 @@ export function createEditorItemPreviewViewport(
           const burstAlpha = burstActive ? 1 - burstProgress : 0;
           const wakeLength = terraPlanetRadius * lerp(2.3, 4.9, burstProgress);
           const wakeWidth = terraPlanetRadius * lerp(1.5, 0.82, burstProgress);
-          const wakeOffset = terraPlanetRadius * lerp(0.46, 0.72, burstProgress);
+          const wakeOffset =
+            terraPlanetRadius * lerp(0.46, 0.72, burstProgress);
           const particleScale =
             terraPlanetRadius * lerp(0.9, 1.45, burstProgress);
           wakeMesh.visible = burstActive;
@@ -2025,18 +2378,10 @@ export function createEditorItemPreviewViewport(
           burstMaterial.opacityUniform.value = burstAlpha;
           wake.material.opacity = burstAlpha * lerp(1, 0.44, burstProgress);
           wakeMesh.position.set(-wakeOffset, 0, 2.2);
-          wakeMesh.scale.set(
-            wakeLength,
-            wakeWidth,
-            1,
-          );
+          wakeMesh.scale.set(wakeLength, wakeWidth, 1);
           wakeMesh.rotation.z = Math.PI;
           burstPoints.position.set(-terraPlanetRadius * 0.38, 0, 2.3);
-          burstPoints.scale.set(
-            particleScale,
-            particleScale,
-            1,
-          );
+          burstPoints.scale.set(particleScale, particleScale, 1);
         });
       }
 
@@ -2052,7 +2397,8 @@ export function createEditorItemPreviewViewport(
         });
         registerDisposables(disposables, planet);
         const wildcardColor = tuning.visuals.abilities.wildcardColor;
-        const gravityPulseRadius = tuning.gameplay.abilities.gravityPulse.radius;
+        const gravityPulseRadius =
+          tuning.gameplay.abilities.gravityPulse.radius;
         const pulseCoreGeometry = new CircleGeometry(1, 64);
         const pulseCoreMaterial = new MeshBasicMaterial({
           blending: AdditiveBlending,
@@ -2141,11 +2487,19 @@ export function createEditorItemPreviewViewport(
           const corePulse = 0.5 + Math.sin(nowSec * 7.4) * 0.5;
           const primaryScale =
             presentation === "stage"
-              ? lerp(terraPlanetRadius * 1.1, gravityPulseRadius, primaryProgress)
+              ? lerp(
+                  terraPlanetRadius * 1.1,
+                  gravityPulseRadius,
+                  primaryProgress,
+                )
               : terraPlanetRadius * lerp(1.1, 4.9, primaryProgress);
           const echoScale =
             presentation === "stage"
-              ? lerp(terraPlanetRadius * 1.3, gravityPulseRadius * 0.84, echoProgress)
+              ? lerp(
+                  terraPlanetRadius * 1.3,
+                  gravityPulseRadius * 0.84,
+                  echoProgress,
+                )
               : terraPlanetRadius * lerp(1.3, 4.2, echoProgress);
           pulseCoreMesh.scale.set(
             terraPlanetRadius * lerp(1.04, 1.34, corePulse),

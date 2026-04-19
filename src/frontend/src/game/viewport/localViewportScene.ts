@@ -1,9 +1,10 @@
 import type { RocketKind, Vec2 } from "@3body/shared";
 import {
+  BLACK_HOLE_SPEC,
   FIXED_STEP_SEC,
   add,
   clamp,
-  getOrbitSystemDriftVelocity,
+  getNeutronStarMassAlpha,
   getSunVisualProfile,
   len,
   lerp,
@@ -45,6 +46,12 @@ import {
   getRenderedPlanetRadius,
 } from "../planetVisualTuning";
 import {
+  getNeutronStarVisualShape,
+  NEUTRON_STAR_JET_SECONDARY_LENGTH_FACTOR,
+  NEUTRON_STAR_JET_SECONDARY_OPACITY_FACTOR,
+  NEUTRON_STAR_JET_SECONDARY_WIDTH_FACTOR,
+} from "../neutronStarVisuals";
+import {
   getCannonMuzzleDistanceFromLayout,
   getCannonMuzzleOrigin,
   getCannonWorldLayout,
@@ -69,10 +76,7 @@ import {
   getAmbientBoundaryDebrisRadii,
   updateAmbientBoundaryDebrisVisual,
 } from "./ambientBoundaryDebris";
-import {
-  clipForesightPathAtDistance,
-  getForesightPointOpacity,
-} from "./foresightShared";
+import { clipForesightPathAtDistance } from "./foresightShared";
 import { getRenderedShieldOuterRadius } from "../shieldPresentation";
 import type { LocalViewportCameraState } from "./localViewportCamera";
 import { getLocalViewportControlledBody } from "./localViewportCamera";
@@ -124,6 +128,17 @@ interface SunVisual {
   glowMesh: Mesh;
   rotationSpeed: number;
   warpMesh: Mesh;
+}
+
+interface NeutronStarVisual {
+  coreMesh: Mesh;
+  group: Group;
+  haloMesh: Mesh;
+  jetMeshA: Mesh;
+  jetMeshB: Mesh;
+  lensMesh: Mesh;
+  phase: number;
+  spinSpeed: number;
 }
 
 interface PlanetVisual {
@@ -236,8 +251,10 @@ interface BoostBurstVisual {
   opacityAttribute: Float32BufferAttribute;
   points: Points;
   positionAttribute: Float32BufferAttribute;
-  wakeMaterial: MeshBasicMaterial;
-  wakeMesh: Mesh;
+  wakeVisuals: readonly {
+    material: MeshBasicMaterial;
+    mesh: Mesh;
+  }[];
 }
 
 interface GravityPulseVisual {
@@ -530,20 +547,12 @@ const updateForesightVisual = (
   foresightVisual.lineMaterial.color.set(tuning.lineColor);
   foresightVisual.lineMaterial.opacity = tuning.lineOpacity;
   foresightVisual.pointColorUniform.value.set(tuning.dotColor);
-  foresightVisual.pointOpacityUniform.value = tuning.dotOpacity;
+  foresightVisual.pointOpacityUniform.value = 0;
   foresightVisual.pointMaterial.size = tuning.pointSize;
 
   const lineArray = foresightVisual.linePositionAttribute.array as Float32Array;
-  const pointArray = foresightVisual.pointPositionAttribute
-    .array as Float32Array;
-  const opacityArray = foresightVisual.pointOpacityAttribute
-    .array as Float32Array;
-  const maxPoints = Math.min(
-    foresightVisual.pointPositionAttribute.count,
-    foresightVisual.linePositionAttribute.count,
-  );
+  const maxPoints = foresightVisual.linePositionAttribute.count;
   const pointCount = Math.min(pathPoints.length, maxPoints);
-  let visiblePointCount = 0;
 
   for (let index = 0; index < pointCount; index += 1) {
     const point = pathPoints[index]!;
@@ -552,36 +561,13 @@ const updateForesightVisual = (
     lineArray[offset] = point.x;
     lineArray[offset + 1] = point.y;
     lineArray[offset + 2] = 0;
-    pointArray[offset] = point.x;
-    pointArray[offset + 1] = point.y;
-    pointArray[offset + 2] = 0;
-    const opacity = getForesightPointOpacity({
-      index,
-      pointCount,
-      tuning,
-    });
-    opacityArray[index] = opacity;
-
-    if (opacity > 0.01) {
-      visiblePointCount += 1;
-    }
   }
 
-  foresightVisual.lineGeometry.setDrawRange(
-    0,
-    tuning.showLine ? pointCount : 0,
-  );
-  foresightVisual.pointGeometry.setDrawRange(0, pointCount);
+  foresightVisual.lineGeometry.setDrawRange(0, pointCount);
+  foresightVisual.pointGeometry.setDrawRange(0, 0);
   foresightVisual.linePositionAttribute.needsUpdate = true;
-  foresightVisual.pointPositionAttribute.needsUpdate = true;
-  foresightVisual.pointOpacityAttribute.needsUpdate = true;
-  foresightVisual.line.visible =
-    tuning.showLine && tuning.lineOpacity > 0.01 && pointCount > 1;
-  foresightVisual.points.visible =
-    tuning.showDots &&
-    tuning.dotOpacity > 0.01 &&
-    pointCount > 0 &&
-    visiblePointCount > 0;
+  foresightVisual.line.visible = tuning.lineOpacity > 0.01 && pointCount > 1;
+  foresightVisual.points.visible = false;
 };
 
 const updateBoostBurstVisual = (
@@ -599,11 +585,13 @@ const updateBoostBurstVisual = (
     particleLimit * Math.max(1, bursts.length),
   );
   let drawCount = 0;
-  let brightestBurst: BoostBurstState | null = null;
-  let brightestAlpha = 0;
-  let brightestOrigin: Vec2 | null = null;
-  let brightestProgress = 0;
-  let brightestRadius = 0;
+  const visibleWakeBursts: Array<{
+    alpha: number;
+    burst: BoostBurstState;
+    origin: Vec2;
+    progress: number;
+    radius: number;
+  }> = [];
 
   for (const burst of bursts) {
     const ageSec = nowSec - burst.startedAtSec;
@@ -614,13 +602,13 @@ const updateBoostBurstVisual = (
     const burstAlpha = clamp(1 - ageSec / BOOST_BURST_DURATION_SEC, 0, 1);
     const burstProgress = clamp(ageSec / BOOST_BURST_DURATION_SEC, 0, 1);
     const { origin, radius } = getBoostBurstAnchor(burst, planetsById);
-    if (burstAlpha > brightestAlpha) {
-      brightestAlpha = burstAlpha;
-      brightestBurst = burst;
-      brightestOrigin = origin;
-      brightestProgress = burstProgress;
-      brightestRadius = radius;
-    }
+    visibleWakeBursts.push({
+      alpha: burstAlpha,
+      burst,
+      origin,
+      progress: burstProgress,
+      radius,
+    });
 
     const exhaustDir = scaleVec2(burst.direction, -1);
     const particleOrigin = add(origin, scaleVec2(exhaustDir, radius * 0.38));
@@ -660,25 +648,31 @@ const updateBoostBurstVisual = (
   boostVisual.opacityAttribute.needsUpdate = true;
   boostVisual.points.visible = drawCount > 0;
 
-  const hasBurst = brightestBurst !== null && brightestOrigin !== null;
-  boostVisual.wakeMesh.visible = hasBurst;
+  visibleWakeBursts.sort((left, right) => right.alpha - left.alpha);
 
-  if (hasBurst && brightestBurst !== null && brightestOrigin !== null) {
-    const exhaustDir = scaleVec2(brightestBurst.direction, -1);
-    const wakeLength = brightestRadius * lerp(2.3, 4.9, brightestProgress);
-    const wakeWidth = brightestRadius * lerp(1.5, 0.82, brightestProgress);
-    const wakeOffset = brightestRadius * lerp(0.46, 0.72, brightestProgress);
-    boostVisual.wakeMesh.position.set(
-      brightestOrigin.x + exhaustDir.x * wakeOffset,
-      brightestOrigin.y + exhaustDir.y * wakeOffset,
+  for (let index = 0; index < boostVisual.wakeVisuals.length; index += 1) {
+    const wakeVisual = boostVisual.wakeVisuals[index]!;
+    const wakeBurst = visibleWakeBursts[index];
+    if (wakeBurst === undefined) {
+      wakeVisual.mesh.visible = false;
+      wakeVisual.material.opacity = 0;
+      continue;
+    }
+
+    const exhaustDir = scaleVec2(wakeBurst.burst.direction, -1);
+    const wakeLength = wakeBurst.radius * lerp(2.3, 4.9, wakeBurst.progress);
+    const wakeWidth = wakeBurst.radius * lerp(1.5, 0.82, wakeBurst.progress);
+    const wakeOffset = wakeBurst.radius * lerp(0.46, 0.72, wakeBurst.progress);
+    wakeVisual.mesh.visible = true;
+    wakeVisual.mesh.position.set(
+      wakeBurst.origin.x + exhaustDir.x * wakeOffset,
+      wakeBurst.origin.y + exhaustDir.y * wakeOffset,
       2.26,
     );
-    boostVisual.wakeMesh.scale.set(wakeLength, wakeWidth, 1);
-    boostVisual.wakeMesh.rotation.z = Math.atan2(exhaustDir.y, exhaustDir.x);
-    boostVisual.wakeMaterial.opacity =
-      brightestAlpha * lerp(1, 0.44, brightestProgress);
-  } else {
-    boostVisual.wakeMaterial.opacity = 0;
+    wakeVisual.mesh.scale.set(wakeLength, wakeWidth, 1);
+    wakeVisual.mesh.rotation.z = Math.atan2(exhaustDir.y, exhaustDir.x);
+    wakeVisual.material.opacity =
+      wakeBurst.alpha * lerp(1, 0.44, wakeBurst.progress);
   }
 };
 
@@ -1242,19 +1236,22 @@ const armPlanetExplosion = ({
   const durationSec =
     planet.deathReason === "planetCollision"
       ? PLANET_EXPLOSION_DURATION_SEC + 0.22
-      : planet.deathReason === "sunCollision"
+      : planet.deathReason === "sunCollision" ||
+          planet.deathReason === "neutronStar"
         ? PLANET_EXPLOSION_DURATION_SEC + 0.12
         : PLANET_EXPLOSION_DURATION_SEC;
   const scatterScale =
     planet.deathReason === "planetCollision"
       ? 1.62
-      : planet.deathReason === "sunCollision"
+      : planet.deathReason === "sunCollision" ||
+          planet.deathReason === "neutronStar"
         ? 1.48
         : 1.34;
   const shockwaveScale =
     planet.deathReason === "planetCollision"
       ? 6.8
-      : planet.deathReason === "sunCollision"
+      : planet.deathReason === "sunCollision" ||
+          planet.deathReason === "neutronStar"
         ? 6.2
         : 5.6;
   visual.glowMaterial.color.copy(
@@ -1797,6 +1794,7 @@ interface UpdateLocalViewportSceneParams {
   shieldGroup: Group;
   backgroundLayers: readonly StarfieldLayerVisual[];
   sunVisuals: readonly SunVisual[];
+  neutronStarVisuals: readonly NeutronStarVisual[];
   planetVisuals: readonly PlanetVisual[];
   trailVisuals: readonly TrailVisual[];
   updateCacheVisualBadge: (
@@ -1884,37 +1882,19 @@ export const updateLocalViewportScene = ({
   shieldGroup,
   backgroundLayers,
   sunVisuals,
+  neutronStarVisuals,
   planetVisuals,
   trailVisuals,
   updateCacheVisualBadge,
   weaponKinds,
 }: UpdateLocalViewportSceneParams) => {
-  const orbitSystemDrift = getOrbitSystemDriftVelocity(
-    getRuntimeTuningDocument().gameplay.orbits,
-  );
-  const orbitSystemDriftMagnitude = Math.hypot(
-    orbitSystemDrift.x,
-    orbitSystemDrift.y,
-  );
-
   for (const layer of backgroundLayers) {
-    const layerDriftMagnitude = Math.hypot(layer.driftX, layer.driftY);
-    const layerDriftX =
-      orbitSystemDriftMagnitude > Number.EPSILON &&
-      layerDriftMagnitude > Number.EPSILON
-        ? (orbitSystemDrift.x / orbitSystemDriftMagnitude) * layerDriftMagnitude
-        : layer.driftX;
-    const layerDriftY =
-      orbitSystemDriftMagnitude > Number.EPSILON &&
-      layerDriftMagnitude > Number.EPSILON
-        ? (orbitSystemDrift.y / orbitSystemDriftMagnitude) * layerDriftMagnitude
-        : layer.driftY;
     layer.group.position.x = wrapCentered(
-      cameraState.renderCenterX * layer.parallax + nowSec * layerDriftX,
+      cameraState.renderCenterX * layer.parallax + nowSec * layer.driftX,
       layer.tileSize,
     );
     layer.group.position.y = wrapCentered(
-      cameraState.renderCenterY * layer.parallax + nowSec * layerDriftY,
+      cameraState.renderCenterY * layer.parallax + nowSec * layer.driftY,
       layer.tileSize,
     );
   }
@@ -1961,6 +1941,69 @@ export const updateLocalViewportScene = ({
     visual.coreMesh.rotation.x = 0.38;
     visual.coreMesh.rotation.y = nowSec * visual.rotationSpeed;
     visual.glowMesh.rotation.z = nowSec * (0.05 + index * 0.02);
+  }
+
+  const neutronStarTuning = getRuntimeTuningDocument().gameplay.neutronStars;
+  const neutronStarVisualTuning =
+    getRuntimeTuningDocument().visuals.neutronStars;
+  for (let index = 0; index < neutronStarVisuals.length; index += 1) {
+    const visual = neutronStarVisuals[index]!;
+    const neutronStar = renderState.neutronStars[index];
+    const visible = neutronStar !== undefined;
+
+    visual.group.visible = visible;
+    if (!visible) {
+      continue;
+    }
+
+    const massAlpha = getNeutronStarMassAlpha(
+      neutronStar.mass,
+      neutronStarTuning,
+    );
+    const pulse = 1 + Math.sin(nowSec * 6.4 + visual.phase) * 0.04;
+    const haloPulse = 1 + Math.sin(nowSec * 4.8 + visual.phase * 1.7) * 0.08;
+    const { coreRadius, haloRadius, lensRadius, jetLength, jetWidth } =
+      getNeutronStarVisualShape({
+        haloPulse,
+        massAlpha,
+        pulse,
+        radius: neutronStar.radius,
+        tuning: neutronStarVisualTuning,
+      });
+    const coreMaterial = visual.coreMesh.material as MeshBasicNodeMaterial;
+    const haloMaterial = visual.haloMesh.material as MeshBasicNodeMaterial;
+    const lensMaterial = visual.lensMesh.material as MeshBasicNodeMaterial;
+    const jetMaterialA = visual.jetMeshA.material as MeshBasicNodeMaterial;
+    const jetMaterialB = visual.jetMeshB.material as MeshBasicNodeMaterial;
+
+    visual.group.position.set(neutronStar.pos.x, neutronStar.pos.y, -1);
+    visual.group.rotation.z = nowSec * 0.06 + visual.phase * 0.18;
+    visual.coreMesh.scale.set(coreRadius, coreRadius, coreRadius);
+    visual.haloMesh.scale.set(haloRadius, haloRadius, 1);
+    visual.lensMesh.scale.set(lensRadius, lensRadius, 1);
+    visual.jetMeshA.scale.set(jetWidth, jetLength, 1);
+    visual.jetMeshB.scale.set(
+      jetWidth * NEUTRON_STAR_JET_SECONDARY_WIDTH_FACTOR,
+      jetLength * NEUTRON_STAR_JET_SECONDARY_LENGTH_FACTOR,
+      1,
+    );
+    visual.jetMeshA.rotation.z =
+      visual.phase + Math.sin(nowSec * 0.4 + visual.phase) * 0.08;
+    visual.jetMeshB.rotation.z =
+      visual.phase +
+      Math.PI / 2 -
+      Math.sin(nowSec * 0.36 + visual.phase) * 0.06;
+    visual.haloMesh.rotation.z = nowSec * 0.18 + visual.phase * 0.4;
+    visual.lensMesh.rotation.z = -nowSec * 0.12 - visual.phase * 0.3;
+    visual.coreMesh.rotation.x = 0.44;
+    visual.coreMesh.rotation.y = nowSec * visual.spinSpeed;
+    coreMaterial.opacity = 1;
+    haloMaterial.opacity = neutronStarVisualTuning.haloOpacity;
+    lensMaterial.opacity = neutronStarVisualTuning.lensOpacity;
+    jetMaterialA.opacity = neutronStarVisualTuning.jetOpacity;
+    jetMaterialB.opacity =
+      neutronStarVisualTuning.jetOpacity *
+      NEUTRON_STAR_JET_SECONDARY_OPACITY_FACTOR;
   }
 
   for (let index = 0; index < planetVisuals.length; index += 1) {
@@ -2508,10 +2551,6 @@ export const updateLocalViewportScene = ({
   updateAmbientBoundaryDebrisVisual({
     ...getAmbientBoundaryDebrisRadii(arenaRadius),
     nowSec,
-    offset: scaleVec2(
-      getOrbitSystemDriftVelocity(getRuntimeTuningDocument().gameplay.orbits),
-      renderState.elapsedSec,
-    ),
     visual: boundaryDebrisVisual,
   });
   while (
@@ -2790,7 +2829,13 @@ export const updateLocalViewportScene = ({
       renderState.blackHole.pos.y,
       4,
     );
+    const blackHoleScale =
+      renderState.blackHole.killRadius /
+      Math.max(1, BLACK_HOLE_SPEC.killRadius);
+    blackHoleGroup.scale.set(blackHoleScale, blackHoleScale, 1);
     blackHoleRing.rotation.z = nowSec * 0.16;
+  } else {
+    blackHoleGroup.scale.set(1, 1, 1);
   }
 
   const debug = getSandboxDebugSnapshot(currentState);

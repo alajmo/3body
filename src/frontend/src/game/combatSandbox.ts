@@ -11,6 +11,7 @@ import type {
   Debris,
   Drone,
   EntityBase,
+  NeutronStar,
   PlanetDebuffs,
   PlanetPrivateAmmo,
   PlanetPrivateState,
@@ -38,7 +39,9 @@ import {
   clampLen,
   cloneCacheContents,
   cloneCombatBotMemory,
+  consumeBlackHoleBodies,
   createCombatBotMemory,
+  createNeutronStars,
   createInitialAmmo,
   DEBRIS_TTL_SEC,
   DRONE_LAUNCH_SPEED,
@@ -52,8 +55,9 @@ import {
   fromAngle,
   getOuterRingMax,
   getOuterRingMin,
-  getOrbitSystemDriftVelocity,
   getBaseShieldLoad,
+  getBlackHoleMassAtElapsedSec,
+  getSeekerLockTicks,
   getShieldLoadCapacity,
   GRAVITY_PULSE_IMPULSE,
   GRAVITY_PULSE_RADIUS,
@@ -61,6 +65,7 @@ import {
   lerp,
   lerpVec2,
   mulberry32,
+  NEUTRON_STAR_SPEC,
   normalize,
   PLANET_HP,
   REPAIR_AMOUNT,
@@ -91,10 +96,6 @@ import { SHIELD_OUTER_SCALE } from "./shieldPresentation";
 export const SUN_SWALLOW_FADE_SEC = 2.4;
 const LIGHT_RELOCK_DISTANCE = 96;
 
-export const SEEKER_LOCK_DURATION_SEC = 3;
-export const SEEKER_LOCK_TICKS = Math.round(
-  SEEKER_LOCK_DURATION_SEC / FIXED_STEP_SEC,
-);
 // Use a calmer outer-orbit body for the local player so combat starts are playable.
 const PLAYER_PLANET_INDEX = 4;
 const DEFAULT_ROCKET_PLANET_IMPACT_RADIUS_MULTIPLIER = 1;
@@ -195,14 +196,12 @@ const getShieldArcDotThreshold = (): number =>
 export type CombatPlanetDeathReason =
   | "rocket"
   | "sunCollision"
+  | "neutronStar"
   | "planetCollision"
   | "boundary"
   | "blackHole";
 
-export type CombatResetReason =
-  | "sunCollision"
-  | "allPlanetsLost"
-  | "playerLost";
+export type CombatResetReason = "allPlanetsLost" | "playerLost";
 
 export interface CombatSandboxSun extends Sun {
   swallowedAtSec: number | null;
@@ -303,11 +302,17 @@ export interface CombatSandboxBotState extends CombatSandboxControllerState {
   memory: CombatBotMemory;
 }
 
+export interface CombatSandboxPlayerBotState {
+  difficulty: BotDifficulty;
+  memory: CombatBotMemory;
+}
+
 export interface CombatSandboxState {
   tick: number;
   elapsedSec: number;
   preset: OrbitPreset;
   suns: CombatSandboxSun[];
+  neutronStars: NeutronStar[];
   planets: CombatSandboxPlanet[];
   rockets: CombatSandboxRocket[];
   drones: CombatSandboxDrone[];
@@ -318,6 +323,8 @@ export interface CombatSandboxState {
   launchBursts: CombatSandboxRocketLaunchBurst[];
   blackHole: BlackHole | null;
   player: CombatSandboxPlayerState;
+  playerBot: CombatSandboxPlayerBotState | null;
+  playerLossResetsEnabled: boolean;
   bots: CombatSandboxBotState[];
   nextEntityId: number;
   playerLostAtSec: number | null;
@@ -326,6 +333,9 @@ export interface CombatSandboxState {
 
 export interface CreateSandboxStateOptions {
   botsEnabled?: boolean;
+  botDifficulty?: BotDifficulty;
+  participantCount?: number;
+  playerBehavior?: "bot" | "human";
   playerName?: string;
 }
 
@@ -385,6 +395,19 @@ export interface CombatSandboxDebugSnapshot {
   droneCooldownRemainingSec: number;
   gravityPulseHeld: boolean;
   cloakHeld: boolean;
+  aiFocused: CombatSandboxAiDebugSummary | null;
+  aiSummaries: CombatSandboxAiDebugSummary[];
+}
+
+export interface CombatSandboxAiDebugSummary {
+  playerId: string;
+  label: string;
+  intent: string;
+  executionState: string;
+  reason: string;
+  targetLabel: string | null;
+  shotSummary: string | null;
+  planExpiryTick: number | null;
 }
 
 const getArchetypeVisuals = (archetype: ArchetypeId) =>
@@ -593,6 +616,13 @@ const cloneBotState = (bot: CombatSandboxBotState): CombatSandboxBotState => ({
   memory: cloneCombatBotMemory(bot.memory),
 });
 
+const clonePlayerBotState = (
+  playerBot: CombatSandboxPlayerBotState,
+): CombatSandboxPlayerBotState => ({
+  ...playerBot,
+  memory: cloneCombatBotMemory(playerBot.memory),
+});
+
 const createControllerFrame = (): CombatSandboxControllerFrame => ({
   fireRequested: false,
   foresightRequested: false,
@@ -647,12 +677,14 @@ const createCombatBotWorld = (
     | "caches"
     | "debris"
     | "drones"
+    | "neutronStars"
     | "planets"
     | "rockets"
     | "suns"
   >,
 ): {
   suns: CombatSandboxSun[];
+  neutronStars: NeutronStar[];
   planets: PlanetPublic[];
   rockets: CombatSandboxRocket[];
   drones: CombatSandboxDrone[];
@@ -662,6 +694,7 @@ const createCombatBotWorld = (
   arenaRadius: number;
 } => ({
   suns: getActiveCombatSuns(state.suns),
+  neutronStars: state.neutronStars,
   planets: createBotWorld(state),
   rockets: state.rockets,
   drones: state.drones,
@@ -672,6 +705,21 @@ const createCombatBotWorld = (
 });
 
 const getBotAimWorldDistance = (): number => ARENA_RADIUS * 2.4;
+
+const getSandboxParticipantCount = (
+  requestedCount: number | undefined,
+  maxCount: number,
+): number => {
+  if (!(maxCount > 0)) {
+    return 0;
+  }
+
+  if (requestedCount === undefined) {
+    return maxCount;
+  }
+
+  return clamp(Math.round(requestedCount), 1, maxCount);
+};
 
 const getControlledBody = (
   planets: readonly CombatSandboxPlanet[],
@@ -769,12 +817,6 @@ export const describeCacheContents = (contents: CacheContents): string => {
 const createSandboxRng = (preset: OrbitPreset): (() => number) =>
   mulberry32(hashString(`phase5:${preset.id}`));
 
-const getCurrentOrbitSystemDriftVelocity = (): Vec2 =>
-  getOrbitSystemDriftVelocity(getRuntimeTuningDocument().gameplay.orbits);
-
-const getCurrentArenaCenter = (elapsedSec: number): Vec2 =>
-  scale(getCurrentOrbitSystemDriftVelocity(), elapsedSec);
-
 const isSunSwallowed = (
   sun: Pick<CombatSandboxSun, "swallowedAtSec">,
 ): boolean => sun.swallowedAtSec !== null;
@@ -786,7 +828,6 @@ export const getActiveCombatSuns = (
 const createOuterRingCache = (
   rng: () => number,
   id: number,
-  systemDriftVelocity: Vec2,
   preferredAngleRad?: number,
   contents?: CacheContents,
 ): CombatSandboxCache => {
@@ -809,7 +850,7 @@ const createOuterRingCache = (
       x: Math.cos(angle) * radius,
       y: Math.sin(angle) * radius,
     },
-    vel: add(scale(tangentialDir, driftSpeed), systemDriftVelocity),
+    vel: scale(tangentialDir, driftSpeed),
     radius: CACHE_RADIUS,
   };
 };
@@ -817,7 +858,6 @@ const createOuterRingCache = (
 const createInitialCaches = (
   rng: () => number,
   nextEntityId: number,
-  systemDriftVelocity: Vec2,
 ): { caches: CombatSandboxCache[]; nextEntityId: number } => {
   const caches: CombatSandboxCache[] = [];
   let nextId = nextEntityId;
@@ -825,7 +865,7 @@ const createInitialCaches = (
   for (let index = 0; index < CACHE_SPEC.count; index += 1) {
     const angle =
       (index / CACHE_SPEC.count) * Math.PI * 2 + (rng() - 0.5) * 0.42;
-    caches.push(createOuterRingCache(rng, nextId, systemDriftVelocity, angle));
+    caches.push(createOuterRingCache(rng, nextId, angle));
     nextId += 1;
   }
 
@@ -849,11 +889,16 @@ const isEntityInsideBlackHole = (
   blackHole !== null &&
   dist(entity.pos, blackHole.pos) <= blackHole.killRadius + entity.radius;
 
-const getBlackHoleCollapseAlpha = (
-  elapsedSec: number,
+const getBlackHoleBonusMass = (
+  blackHole: BlackHole,
   blackHoleSpec: BlackHoleSpec,
+  previousElapsedSec: number,
 ): number =>
-  clamp((elapsedSec - blackHoleSpec.spawnSec) / blackHoleSpec.rampSec, 0, 1);
+  Math.max(
+    0,
+    blackHole.mass -
+      getBlackHoleMassAtElapsedSec(previousElapsedSec, blackHoleSpec),
+  );
 
 const stepCombatSuns = (
   suns: readonly CombatSandboxSun[],
@@ -894,6 +939,46 @@ const stepCombatSuns = (
           swallowedAtSec: null,
         };
   });
+};
+
+const syncBlackHole = (
+  currentBlackHole: BlackHole | null,
+  elapsedSec: number,
+  blackHoleSpec: BlackHoleSpec,
+): BlackHole | null => {
+  if (elapsedSec < blackHoleSpec.spawnSec) {
+    return null;
+  }
+
+  const mass = getBlackHoleMassAtElapsedSec(elapsedSec, blackHoleSpec);
+  if (currentBlackHole === null) {
+    return {
+      id: 9_001,
+      kind: "blackHole",
+      killRadius: blackHoleSpec.killRadius,
+      mass,
+      pos: { x: 0, y: 0 },
+      radius: blackHoleSpec.killRadius,
+      vel: { x: 0, y: 0 },
+    };
+  }
+
+  const bonusMass = getBlackHoleBonusMass(
+    currentBlackHole,
+    blackHoleSpec,
+    Math.max(0, elapsedSec - FIXED_STEP_SEC),
+  );
+  const bonusKillRadius = Math.max(
+    0,
+    currentBlackHole.killRadius - blackHoleSpec.killRadius,
+  );
+
+  return {
+    ...currentBlackHole,
+    killRadius: blackHoleSpec.killRadius + bonusKillRadius,
+    mass: mass + bonusMass,
+    radius: blackHoleSpec.killRadius + bonusKillRadius,
+  };
 };
 
 const findPlayerPlanet = (
@@ -1145,7 +1230,6 @@ const createDebrisBurst = (
   nextEntityId: number,
   source: Pick<EntityBase, "pos" | "vel">,
   options: DebrisBurstOptions,
-  inheritedVelocity: Vec2 = { x: 0, y: 0 },
 ): CombatSandboxDebris[] => {
   const pieces: CombatSandboxDebris[] = [];
 
@@ -1161,10 +1245,7 @@ const createDebrisBurst = (
       pos: { x: source.pos.x, y: source.pos.y },
       radius: 5 + ((index % 3) + 1) * 1.2,
       ttlUntilTick: tick + debrisTtlTicks,
-      vel: add(
-        add(source.vel, inheritedVelocity),
-        scale(fromAngle(angle), speed),
-      ),
+      vel: add(source.vel, scale(fromAngle(angle), speed)),
       color: options.color,
     });
   }
@@ -1254,29 +1335,6 @@ const killPlanet = (
   pilotingDroneId: undefined,
 });
 
-const maybeSpawnBlackHole = (
-  state: CombatSandboxState,
-  blackHoleSpec: BlackHoleSpec,
-): BlackHole | null => {
-  if (state.elapsedSec < blackHoleSpec.spawnSec) {
-    return null;
-  }
-
-  return {
-    id: 9_001,
-    kind: "blackHole",
-    killRadius: blackHoleSpec.killRadius,
-    mass: lerp(
-      0,
-      blackHoleSpec.mass,
-      getBlackHoleCollapseAlpha(state.elapsedSec, blackHoleSpec),
-    ),
-    pos: { x: 0, y: 0 },
-    radius: blackHoleSpec.killRadius,
-    vel: { x: 0, y: 0 },
-  };
-};
-
 const maybeFireRocket = (
   controller: CombatSandboxControllerState,
   planets: readonly CombatSandboxPlanet[],
@@ -1309,8 +1367,12 @@ const maybeFireRocket = (
   }
 
   if (rocketKind === "seeker") {
+    const seekerLockTicks = getSeekerLockTicks();
     const lockStart = controller.seekerLockAcquiredAtTick;
-    if (lockStart === null || tick - lockStart < SEEKER_LOCK_TICKS) {
+    if (
+      seekerLockTicks > 0 &&
+      (lockStart === null || tick - lockStart < seekerLockTicks)
+    ) {
       return { launchBursts: [], rockets: [] };
     }
     controller.seekerLockAcquiredAtTick = tick;
@@ -1425,14 +1487,13 @@ const applyPlanetPairCollisions = (
 const markEnvironmentalPlanetDeaths = (
   planets: CombatSandboxPlanet[],
   suns: readonly Sun[],
+  neutronStars: readonly NeutronStar[],
   blackHole: BlackHole | null,
   deathPlanetIds: Set<number>,
+  swallowedPlanets: CombatSandboxPlanet[],
   controllers: ReadonlyMap<string, CombatSandboxControllerState>,
-  elapsedSec: number,
   tick: number,
 ) => {
-  const arenaCenter = getCurrentArenaCenter(elapsedSec);
-
   for (let index = 0; index < planets.length; index += 1) {
     const planet = planets[index]!;
     if (!planet.alive) {
@@ -1442,11 +1503,23 @@ const markEnvironmentalPlanetDeaths = (
     if (isPlanetInsideBlackHole(planet, blackHole)) {
       planets[index] = killPlanet(planet, "blackHole");
       deathPlanetIds.add(planet.id);
+      swallowedPlanets.push(planet);
+      continue;
+    }
+
+    for (const neutronStar of neutronStars) {
+      if (dist(planet.pos, neutronStar.pos) <= planet.radius + neutronStar.radius) {
+        planets[index] = killPlanet(planet, "neutronStar");
+        deathPlanetIds.add(planet.id);
+        break;
+      }
+    }
+    if (deathPlanetIds.has(planet.id)) {
       continue;
     }
 
     const controller = controllers.get(planet.playerId);
-    if (dist(planet.pos, arenaCenter) > ARENA_RADIUS) {
+    if (len(planet.pos) > ARENA_RADIUS) {
       if (ARENA_BOUNDARY_SPEC.instantDeath) {
         planets[index] = killPlanet(planet, "boundary");
         deathPlanetIds.add(planet.id);
@@ -1688,41 +1761,29 @@ const createDroneDebris = (
   nextEntityId: number,
   drone: CombatSandboxDrone,
 ): CombatSandboxDebris[] =>
-  createDebrisBurst(
-    tick,
-    nextEntityId,
-    drone,
-    {
-      color: "#9ef3d0",
-      pieces: DRONE_DEBRIS_PIECES,
-      baseSpeed: DRONE_DEBRIS_BURST_SPEED,
-      speedVariance: DRONE_DEBRIS_BURST_SPEED_VARIANCE,
-    },
-    getCurrentOrbitSystemDriftVelocity(),
-  );
+  createDebrisBurst(tick, nextEntityId, drone, {
+    color: "#9ef3d0",
+    pieces: DRONE_DEBRIS_PIECES,
+    baseSpeed: DRONE_DEBRIS_BURST_SPEED,
+    speedVariance: DRONE_DEBRIS_BURST_SPEED_VARIANCE,
+  });
 
 const createRocketDebris = (
   tick: number,
   nextEntityId: number,
   rocket: CombatSandboxRocket,
 ): CombatSandboxDebris[] =>
-  createDebrisBurst(
-    tick,
-    nextEntityId,
-    rocket,
-    {
-      color: rocket.color,
-      pieces:
-        rocket.rocketKind === "heavy"
-          ? ROCKET_DEBRIS_PIECES_HEAVY
-          : rocket.rocketKind === "light"
-            ? ROCKET_DEBRIS_PIECES_LIGHT
-            : ROCKET_DEBRIS_PIECES_SEEKER,
-      baseSpeed: ROCKET_DEBRIS_BURST_SPEED,
-      speedVariance: ROCKET_DEBRIS_BURST_SPEED_VARIANCE,
-    },
-    getCurrentOrbitSystemDriftVelocity(),
-  );
+  createDebrisBurst(tick, nextEntityId, rocket, {
+    color: rocket.color,
+    pieces:
+      rocket.rocketKind === "heavy"
+        ? ROCKET_DEBRIS_PIECES_HEAVY
+        : rocket.rocketKind === "light"
+          ? ROCKET_DEBRIS_PIECES_LIGHT
+          : ROCKET_DEBRIS_PIECES_SEEKER,
+    baseSpeed: ROCKET_DEBRIS_BURST_SPEED,
+    speedVariance: ROCKET_DEBRIS_BURST_SPEED_VARIANCE,
+  });
 
 const createCacheDebris = (
   tick: number,
@@ -1780,7 +1841,7 @@ const stepDroneEntity = (
 };
 
 const applyBotCommand = (
-  controller: CombatSandboxBotState,
+  controller: CombatSandboxControllerState,
   frame: CombatSandboxControllerFrame,
   planets: readonly CombatSandboxPlanet[],
   drones: readonly CombatSandboxDrone[],
@@ -1841,6 +1902,16 @@ const applyBotCommand = (
         frame.cloakRequested = true;
       }
       break;
+
+    case "droneLaunch":
+      setAimWorldFromDirection(controller, controlledBody, command.aimDir);
+      frame.droneLaunchRequested = true;
+      break;
+
+    case "droneSteer":
+      frame.droneTurnLeftHeld = command.turn > 0;
+      frame.droneTurnRightHeld = command.turn < 0;
+      break;
   }
 };
 
@@ -1877,25 +1948,44 @@ export const createSandboxState = (
   options: CreateSandboxStateOptions = {},
 ): CombatSandboxState => {
   const resolvedPreset = resolveRuntimeOrbitPreset(preset);
-  const systemDriftVelocity = getCurrentOrbitSystemDriftVelocity();
+  const playerBehavior = options.playerBehavior === "bot" ? "bot" : "human";
+  const participantCount = getSandboxParticipantCount(
+    options.participantCount,
+    resolvedPreset.planets.length,
+  );
+  const planetSeeds = resolvedPreset.planets.slice(0, participantCount);
+  const playerPlanetIndex = Math.min(
+    PLAYER_PLANET_INDEX,
+    Math.max(planetSeeds.length - 1, 0),
+  );
+  const playerPlanetId = planetSeeds[playerPlanetIndex]!.id;
+  const botDifficulty = options.botDifficulty ?? LOCAL_BOT_DIFFICULTY;
   const normalizedPlayerName = options.playerName?.trim();
-  const playerDisplayName =
-    normalizedPlayerName && normalizedPlayerName.length > 0
-      ? normalizedPlayerName
-      : DEFAULT_LOCAL_PLAYER_DISPLAY_NAME;
-  const playerPlanetId = resolvedPreset.planets[PLAYER_PLANET_INDEX]!.id;
   let nextBotDisplayNameIndex = 0;
-  const planets = resolvedPreset.planets.map((planetSeed, index) => {
+  const nextBotDisplayName = () =>
+    LOCAL_BOT_DISPLAY_NAMES[
+      nextBotDisplayNameIndex++ % LOCAL_BOT_DISPLAY_NAMES.length
+    ]!;
+  const playerDisplayName =
+    playerBehavior === "bot"
+      ? nextBotDisplayName()
+      : normalizedPlayerName && normalizedPlayerName.length > 0
+        ? normalizedPlayerName
+        : DEFAULT_LOCAL_PLAYER_DISPLAY_NAME;
+  const planets = planetSeeds.map((planetSeed, index) => {
     const displayName =
-      planetSeed.id === playerPlanetId
-        ? playerDisplayName
-        : LOCAL_BOT_DISPLAY_NAMES[
-            nextBotDisplayNameIndex++ % LOCAL_BOT_DISPLAY_NAMES.length
-          ]!;
+      planetSeed.id === playerPlanetId ? playerDisplayName : nextBotDisplayName();
 
     return clonePlanetSeed(planetSeed, index, playerPlanetId, displayName);
   });
-  const player = createControllerState(planets[PLAYER_PLANET_INDEX]!);
+  const player = createControllerState(planets[playerPlanetIndex]!);
+  const playerBot =
+    playerBehavior === "bot"
+      ? {
+          difficulty: botDifficulty,
+          memory: createCombatBotMemory(),
+        }
+      : null;
   const bots =
     options.botsEnabled === false
       ? []
@@ -1904,16 +1994,29 @@ export const createSandboxState = (
           .map(
             (planet): CombatSandboxBotState => ({
               ...createControllerState(planet),
-              difficulty: LOCAL_BOT_DIFFICULTY,
+              difficulty: botDifficulty,
               memory: createCombatBotMemory(),
             }),
           );
   const rng = createSandboxRng(resolvedPreset);
-  const initialCaches = createInitialCaches(
+  let nextEntityId = nextRocketIdBase;
+  const neutronStars = createNeutronStars({
+    arenaRadius: ARENA_RADIUS,
+    blockedBodies: [
+      ...resolvedPreset.suns.map((sun) => ({
+        pos: sun.pos,
+        radius: sun.radius,
+      })),
+      ...planets.map((planet) => ({
+        pos: planet.pos,
+        radius: planet.radius,
+      })),
+    ],
+    createId: () => nextEntityId++,
     rng,
-    nextRocketIdBase,
-    systemDriftVelocity,
-  );
+    spec: NEUTRON_STAR_SPEC,
+  });
+  const initialCaches = createInitialCaches(rng, nextEntityId);
   const controllerByPlayerId = new Map<string, CombatSandboxControllerState>([
     [player.playerId, player],
     ...bots.map((bot) => [bot.playerId, bot] as const),
@@ -1930,9 +2033,10 @@ export const createSandboxState = (
       mass: sunSeed.mass,
       radius: sunSeed.radius,
       pos: { x: sunSeed.pos.x, y: sunSeed.pos.y },
-      vel: add({ x: sunSeed.vel.x, y: sunSeed.vel.y }, systemDriftVelocity),
+      vel: { x: sunSeed.vel.x, y: sunSeed.vel.y },
       swallowedAtSec: null,
     })),
+    neutronStars,
     planets,
     rockets: [],
     drones: [],
@@ -1943,6 +2047,8 @@ export const createSandboxState = (
     launchBursts: [],
     blackHole: null,
     player,
+    playerBot,
+    playerLossResetsEnabled: playerBot === null,
     bots,
     nextEntityId: initialCaches.nextEntityId,
     playerLostAtSec: null,
@@ -1956,20 +2062,28 @@ export const stepSandbox = (
   blackHoleSpec: BlackHoleSpec,
   options: CombatSandboxSimulationOptions = {},
 ): CombatSandboxState => {
-  const blackHole = maybeSpawnBlackHole(state, blackHoleSpec);
+  let blackHole = syncBlackHole(
+    state.blackHole,
+    state.elapsedSec,
+    blackHoleSpec,
+  );
   const nextTick = state.tick + 1;
   const nextElapsedSec = state.elapsedSec + FIXED_STEP_SEC;
-  const systemDriftVelocity = getCurrentOrbitSystemDriftVelocity();
   const getPlanetImpactRadiusMultiplier = (
     _planet: Pick<CombatSandboxPlanet, "archetype">,
   ): number =>
     options.planetImpactRadiusMultiplier ??
     DEFAULT_ROCKET_PLANET_IMPACT_RADIUS_MULTIPLIER;
-  const player = cloneControllerState({
-    ...state.player,
-    aimWorld: { x: input.aimWorld.x, y: input.aimWorld.y },
-    selectedRocketKind: input.selectedRocketKind,
-  });
+  const player =
+    state.playerBot === null
+      ? cloneControllerState({
+          ...state.player,
+          aimWorld: { x: input.aimWorld.x, y: input.aimWorld.y },
+          selectedRocketKind: input.selectedRocketKind,
+        })
+      : cloneControllerState(state.player);
+  const playerBot =
+    state.playerBot === null ? null : clonePlayerBotState(state.playerBot);
   const bots = state.bots.map(cloneBotState);
   const controllers: CombatSandboxControllerState[] = [player, ...bots];
   const controllerByPlayerId = new Map<string, CombatSandboxControllerState>(
@@ -1978,18 +2092,20 @@ export const stepSandbox = (
   const frameByPlayerId = new Map<string, CombatSandboxControllerFrame>([
     [
       player.playerId,
-      {
-        ...createControllerFrame(),
-        fireRequested: input.fireRequested,
-        foresightRequested: input.foresightRequested,
-        shieldRequested: input.shieldRequested,
-        boostRequested: input.boostRequested,
-        gravityPulseRequested: input.gravityPulseRequested,
-        cloakRequested: input.cloakRequested,
-        droneLaunchRequested: input.droneLaunchRequested,
-        droneTurnLeftHeld: input.droneTurnLeftHeld,
-        droneTurnRightHeld: input.droneTurnRightHeld,
-      },
+      playerBot === null
+        ? {
+            ...createControllerFrame(),
+            fireRequested: input.fireRequested,
+            foresightRequested: input.foresightRequested,
+            shieldRequested: input.shieldRequested,
+            boostRequested: input.boostRequested,
+            gravityPulseRequested: input.gravityPulseRequested,
+            cloakRequested: input.cloakRequested,
+            droneLaunchRequested: input.droneLaunchRequested,
+            droneTurnLeftHeld: input.droneTurnLeftHeld,
+            droneTurnRightHeld: input.droneTurnRightHeld,
+          }
+        : createControllerFrame(),
     ],
     ...bots.map((bot) => [bot.playerId, createControllerFrame()] as const),
   ]);
@@ -2017,36 +2133,62 @@ export const stepSandbox = (
     caches,
     debris: state.debris,
     drones,
+    neutronStars: state.neutronStars,
     planets,
     rockets,
     suns: state.suns,
   });
-  for (const bot of bots) {
-    const self = findPlayerPlanet(planets, bot.planetId);
+  const runBotControllerStep = ({
+    controller,
+    difficulty,
+    frame,
+    memory,
+  }: {
+    controller: CombatSandboxControllerState;
+    difficulty: BotDifficulty;
+    frame: CombatSandboxControllerFrame;
+    memory: CombatBotMemory;
+  }) => {
+    const self = findPlayerPlanet(planets, controller.planetId);
     if (self === null || !self.alive) {
-      continue;
+      return;
     }
 
-    const frame = frameByPlayerId.get(bot.playerId)!;
     const runtime: CombatBotRuntime = {
-      activeDroneId: bot.activeDroneId,
-      controlMode: bot.controlMode,
+      activeDroneId: controller.activeDroneId,
+      controlMode: controller.controlMode,
     };
     const commands = decideCombatBot(
       {
-        difficulty: bot.difficulty,
+        difficulty,
         tick: state.tick,
         tickHz: SIM_HZ,
         world: botWorld,
         self,
-        privateState: toBotPrivateState(bot),
+        privateState: toBotPrivateState(controller),
         runtime,
       },
-      bot.memory,
+      memory,
     );
     for (const command of commands) {
-      applyBotCommand(bot, frame, planets, drones, command);
+      applyBotCommand(controller, frame, planets, drones, command);
     }
+  };
+  if (playerBot !== null) {
+    runBotControllerStep({
+      controller: player,
+      difficulty: playerBot.difficulty,
+      frame: frameByPlayerId.get(player.playerId)!,
+      memory: playerBot.memory,
+    });
+  }
+  for (const bot of bots) {
+    runBotControllerStep({
+      controller: bot,
+      difficulty: bot.difficulty,
+      frame: frameByPlayerId.get(bot.playerId)!,
+      memory: bot.memory,
+    });
   }
 
   syncControllersToPlanets(planets, controllerByPlayerId);
@@ -2289,6 +2431,15 @@ export const stepSandbox = (
   }
 
   const suns = stepCombatSuns(state.suns, blackHole, nextElapsedSec);
+  const swallowedSuns =
+    blackHole === null
+      ? []
+      : state.suns.filter(
+          (sun, index) => !isSunSwallowed(sun) && isSunSwallowed(suns[index]!),
+        );
+  if (blackHole !== null && swallowedSuns.length > 0) {
+    blackHole = consumeBlackHoleBodies(blackHole, swallowedSuns);
+  }
   const activeSuns = getActiveCombatSuns(suns);
   const steppedPlanets: CombatSandboxPlanet[] = new Array(planets.length);
   for (let index = 0; index < planets.length; index += 1) {
@@ -2342,6 +2493,7 @@ export const stepSandbox = (
       activeSuns,
       FIXED_STEP_SEC,
       blackHole ?? undefined,
+      state.neutronStars,
     );
 
     const nextPlanet = dragActive
@@ -2373,16 +2525,21 @@ export const stepSandbox = (
   }
   planets = steppedPlanets;
   const deathPlanetIds = new Set<number>();
+  const swallowedPlanets: CombatSandboxPlanet[] = [];
   markEnvironmentalPlanetDeaths(
     planets,
     activeSuns,
+    state.neutronStars,
     blackHole,
     deathPlanetIds,
+    swallowedPlanets,
     controllerByPlayerId,
-    nextElapsedSec,
     nextTick,
   );
   applyPlanetPairCollisions(planets, deathPlanetIds);
+  if (blackHole !== null && swallowedPlanets.length > 0) {
+    blackHole = consumeBlackHoleBodies(blackHole, swallowedPlanets);
+  }
 
   for (const controller of controllers) {
     const nextLockTargetId =
@@ -2843,9 +3000,7 @@ export const stepSandbox = (
     caches.length < CACHE_SPEC.count
   ) {
     cacheRespawnAtTicks.shift();
-    caches.push(
-      createOuterRingCache(state.rng, nextEntityId, systemDriftVelocity),
-    );
+    caches.push(createOuterRingCache(state.rng, nextEntityId));
     nextEntityId += 1;
   }
 
@@ -2854,18 +3009,12 @@ export const stepSandbox = (
       continue;
     }
 
-    const burst = createDebrisBurst(
-      nextTick,
-      nextEntityId,
-      planet,
-      {
-        color: planet.color,
-        pieces: DEBRIS_PIECES,
-        baseSpeed: DEBRIS_BURST_SPEED,
-        speedVariance: DEBRIS_BURST_SPEED_VARIANCE,
-      },
-      systemDriftVelocity,
-    );
+    const burst = createDebrisBurst(nextTick, nextEntityId, planet, {
+      color: planet.color,
+      pieces: DEBRIS_PIECES,
+      baseSpeed: DEBRIS_BURST_SPEED,
+      speedVariance: DEBRIS_BURST_SPEED_VARIANCE,
+    });
     debrisBursts.push(...burst);
     nextEntityId += burst.length;
   }
@@ -2887,7 +3036,8 @@ export const stepSandbox = (
   const nextPlayerPlanet = findPlayerPlanet(planets, player.planetId);
 
   const playerLostAtSec =
-    nextPlayerPlanet === null || !nextPlayerPlanet.alive
+    state.playerLossResetsEnabled &&
+    (nextPlayerPlanet === null || !nextPlayerPlanet.alive)
       ? (state.playerLostAtSec ?? nextElapsedSec)
       : null;
 
@@ -2896,6 +3046,7 @@ export const stepSandbox = (
     elapsedSec: nextElapsedSec,
     preset: state.preset,
     suns,
+    neutronStars: state.neutronStars,
     planets,
     rockets,
     drones,
@@ -2906,6 +3057,8 @@ export const stepSandbox = (
     launchBursts,
     blackHole,
     player,
+    playerBot,
+    playerLossResetsEnabled: state.playerLossResetsEnabled,
     bots,
     nextEntityId,
     playerLostAtSec,
@@ -2916,19 +3069,13 @@ export const stepSandbox = (
 export const getSandboxResetReason = (
   state: CombatSandboxState,
 ): CombatResetReason | null => {
-  if (
-    state.blackHole === null &&
-    findMinSunSunGap(getActiveCombatSuns(state.suns)) <= 0
-  ) {
-    return "sunCollision";
-  }
-
   const alivePlanets = state.planets.filter((planet) => planet.alive).length;
   if (alivePlanets === 0) {
     return "allPlanetsLost";
   }
 
   if (
+    state.playerLossResetsEnabled &&
     state.playerLostAtSec !== null &&
     state.elapsedSec - state.playerLostAtSec >= PLAYER_LOST_RESET_DELAY_SEC
   ) {
@@ -2951,8 +3098,14 @@ export const createInterpolatedSandboxState = (
 ): CombatSandboxState => ({
   ...state,
   player: cloneControllerState(state.player),
+  playerBot: state.playerBot === null ? null : clonePlayerBotState(state.playerBot),
   bots: state.bots.map(cloneBotState),
   suns: state.suns.map(cloneSun),
+  neutronStars: state.neutronStars.map((star) => ({
+    ...star,
+    pos: { ...star.pos },
+    vel: { ...star.vel },
+  })),
   planets: state.planets.map(clonePlanet),
   rockets: state.rockets.map(cloneRocket),
   drones: state.drones.map(cloneDrone),
@@ -3168,11 +3321,18 @@ export const syncInterpolatedSandboxState = (
     alpha,
   );
   targetState.preset = currentState.preset;
+  targetState.neutronStars = currentState.neutronStars.map((star) => ({
+    ...star,
+    pos: { ...star.pos },
+    vel: { ...star.vel },
+  }));
   targetState.cacheRespawnAtTicks = currentState.cacheRespawnAtTicks;
   targetState.impactBursts = currentState.impactBursts;
   targetState.launchBursts = currentState.launchBursts;
   targetState.blackHole = currentState.blackHole;
   targetState.player = currentState.player;
+  targetState.playerBot = currentState.playerBot;
+  targetState.playerLossResetsEnabled = currentState.playerLossResetsEnabled;
   targetState.bots = currentState.bots;
   targetState.nextEntityId = currentState.nextEntityId;
   targetState.playerLostAtSec = currentState.playerLostAtSec;
@@ -3283,6 +3443,57 @@ export const getSandboxDebugSnapshot = (
       alivePlanets += 1;
     }
   }
+  const summarizeAiDebug = (
+    playerId: string,
+    label: string,
+    memory: CombatBotMemory,
+  ): CombatSandboxAiDebugSummary | null => {
+    const debug = memory.blackboard.debug;
+    if (debug.activeIntent === null) {
+      return null;
+    }
+
+    const targetLabel =
+      debug.currentTargetId === null
+        ? null
+        : (findPlayerPlanet(state.planets, debug.currentTargetId)?.label ??
+            state.planets.find(
+              (planet) => planet.playerId === debug.currentTargetPlayerId,
+            )?.label ??
+            null);
+
+    return {
+      playerId,
+      label,
+      intent: debug.activeIntent,
+      executionState: debug.executionState,
+      reason: debug.activeIntentReason ?? debug.planReason ?? "no reason",
+      targetLabel,
+      shotSummary: debug.shotScoreBreakdown[0] ?? null,
+      planExpiryTick: debug.planExpiryTick,
+    };
+  };
+  const aiFocused =
+    state.playerBot === null
+      ? null
+      : summarizeAiDebug(
+          state.player.playerId,
+          playerPlanet?.displayName ?? "Player",
+          state.playerBot.memory,
+        );
+  const aiSummaries = [
+    ...(aiFocused === null ? [] : [aiFocused]),
+    ...state.bots
+      .map((bot) => {
+        const planet = findPlayerPlanet(state.planets, bot.planetId);
+        return summarizeAiDebug(
+          bot.playerId,
+          planet?.displayName ?? planet?.label ?? bot.playerId,
+          bot.memory,
+        );
+      })
+      .filter((item): item is CombatSandboxAiDebugSummary => item !== null),
+  ];
 
   return {
     elapsedSec: state.elapsedSec,
@@ -3306,5 +3517,7 @@ export const getSandboxDebugSnapshot = (
     droneCooldownRemainingSec,
     gravityPulseHeld: state.player.gravityPulseHeld,
     cloakHeld: state.player.cloakHeld,
+    aiFocused,
+    aiSummaries,
   };
 };

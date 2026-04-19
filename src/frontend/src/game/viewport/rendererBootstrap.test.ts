@@ -16,7 +16,7 @@ describe("renderer bootstrap backend policy", () => {
     expect(PRODUCTION_VIEWPORT_RENDERER_BACKEND_POLICY.label).toBe("webgpu");
   });
 
-  it("clears the host for renderer runtime errors", () => {
+  it("replaces the host with a visible failure message for renderer runtime errors", () => {
     const consoleErrorSpy = vi
       .spyOn(console, "error")
       .mockImplementation(() => {});
@@ -32,7 +32,13 @@ describe("renderer bootstrap backend policy", () => {
       isDisposed: () => false,
     });
 
-    expect(hostElement.childElementCount).toBe(0);
+    expect(hostElement.childElementCount).toBe(1);
+    const failureElement = hostElement.querySelector(".viewport-renderer-failure");
+    expect(failureElement).not.toBeNull();
+    expect(failureElement?.textContent).toContain("test viewport failed");
+    expect(failureElement?.textContent).toContain(
+      "Error: GPUDevice createBuffer failed",
+    );
     consoleErrorSpy.mockRestore();
   });
 

@@ -28,6 +28,7 @@ import {
   ROCKET_MIN_SCREEN_WIDTH_PX,
   ROCKET_RENDER_INSTANCE_LIMITS,
 } from "./rocketVisibility";
+import { getScaledRocketVisuals } from "./rocketVisualTuning";
 import {
   createCacheVisual as createSharedCacheVisual,
   type CacheIconKey,
@@ -72,6 +73,10 @@ import {
   createBlackHoleRingMaterial,
   createBoostWakeMaterial,
   createForesightVisual,
+  createNeutronStarCoreMaterial,
+  createNeutronStarHaloMaterial,
+  createNeutronStarJetMaterial,
+  createNeutronStarLensMaterial,
   createPlanetExplosionVisual,
   createPlanetGlowMaterial,
   createPlanetMaterial,
@@ -86,6 +91,7 @@ import {
   getPlanetForestProfile,
 } from "./viewport/localViewportVisualFactories";
 import { DEFAULT_VIEWPORT_RENDER_QUALITY_PROFILE } from "./viewport/renderQuality";
+import { createViewportRendererSizeState } from "./viewport/rendererSizing";
 import {
   createGameViewportSandboxSettingsStore,
   sandboxControlsEnabled as sandboxSettingsControlsEnabled,
@@ -116,7 +122,6 @@ import {
   SHIELD_OUTER_SCALE,
 } from "./shieldPresentation";
 
-const READ_MODE_HUD_OPACITY = 0.2;
 const TRAIL_DURATION_SEC = 3.5;
 const TRAIL_POINT_SIZE = 12;
 const MAX_TRAIL_SAMPLES = Math.ceil(TRAIL_DURATION_SEC * 180) + 8;
@@ -187,7 +192,8 @@ const getWeaponColors = (): Record<RocketKind, { accent: string }> => ({
     accent: getRuntimeVisuals().rockets.seeker.hudAccent,
   },
 });
-const getRocketRenderProfiles = () => getRuntimeVisuals().rockets;
+const getRocketRenderProfiles = () =>
+  getScaledRocketVisuals(getRuntimeVisuals().rockets);
 const readStoredLocalPlayerName = (): string | undefined => {
   if (typeof window === "undefined") {
     return undefined;
@@ -268,6 +274,9 @@ export function createGameViewport(
   hostElement: HTMLDivElement,
   options: CreateGameViewportOptions = {},
 ): () => void {
+  const sandboxSessionConfig = options.sandboxSessionConfig ?? {};
+  const cameraWorldHeightOverride = options.cameraWorldHeightOverride;
+  const observerMode = sandboxSessionConfig.playerBehavior === "bot";
   const sandboxStorageEnabled = options.enableSandboxStorage === true;
   const storage = sandboxStorageEnabled
     ? (hostElement.ownerDocument.defaultView?.localStorage ?? null)
@@ -320,11 +329,24 @@ export function createGameViewport(
   });
   const sandboxSettings = sandboxSettingsStore.state;
   const sandboxControlsEnabled = () =>
-    sandboxSettingsControlsEnabled(sandboxSettings);
+    !observerMode && sandboxSettingsControlsEnabled(sandboxSettings);
   options.onControllerReady?.(sandboxSettingsStore.controller);
   sandboxSettingsStore.emitInitialHudState();
-  const cameraState = createLocalViewportCameraState();
+  const cameraState = createLocalViewportCameraState({
+    cameraWorldHeightOverride,
+  });
+  const rendererSizeState = createViewportRendererSizeState();
   let rendererSessionToken = 0;
+  const createLocalSandboxState = () =>
+    createSandboxState(sandboxSettings.activePreset, {
+      botDifficulty: sandboxSessionConfig.botDifficulty,
+      botsEnabled: sandboxSettings.botsEnabled,
+      participantCount: sandboxSessionConfig.participantCount,
+      playerBehavior: sandboxSessionConfig.playerBehavior,
+      playerName: readStoredLocalPlayerName(),
+    });
+  const getViewportAspect = () =>
+    Math.max(1, hostElement.clientWidth) / Math.max(1, hostElement.clientHeight);
 
   const resizeViewport = () => {
     resizeLocalViewportCamera({
@@ -334,6 +356,7 @@ export function createGameViewport(
       hostElement,
       maxPixelRatio: currentMaxPixelRatio,
       renderer,
+      sizeState: rendererSizeState,
     });
     syncAimWorldToPointer?.();
   };
@@ -428,10 +451,7 @@ export function createGameViewport(
       backdropMesh = shellBackdropMesh;
       disposables.push(...shellDisposables);
 
-      const initialState = createSandboxState(sandboxSettings.activePreset, {
-        botsEnabled: sandboxSettings.botsEnabled,
-        playerName: readStoredLocalPlayerName(),
-      });
+      const initialState = createLocalSandboxState();
       const {
         blackHoleGroup,
         blackHoleRing,
@@ -460,6 +480,7 @@ export function createGameViewport(
         lockRingMesh,
         lockRingProgressUniform,
         lockRingTimeUniform,
+        neutronStarVisuals,
         planetVisuals,
         renderedCacheKeysById,
         reticleDotMesh,
@@ -480,6 +501,10 @@ export function createGameViewport(
         createBlackHoleLensMaterial,
         createBlackHoleRingMaterial,
         createBoostWakeMaterial,
+        createNeutronStarCoreMaterial,
+        createNeutronStarHaloMaterial,
+        createNeutronStarJetMaterial,
+        createNeutronStarLensMaterial,
         createPlanetExplosionVisual,
         createPlanetGlowMaterial,
         createPlanetMaterial,
@@ -613,7 +638,10 @@ export function createGameViewport(
           camera,
           cameraState,
           frame: getLocalViewportCameraFrame({
-            readModeHeld: inputRuntime.readModeHeld,
+            aspect: getViewportAspect(),
+            cameraWorldHeightOverride,
+            followAlivePlanetWhenPlayerDown: observerMode,
+            useArenaStageCamera: observerMode,
             state,
           }),
           hostElement,
@@ -635,10 +663,7 @@ export function createGameViewport(
       };
 
       resetSandbox = () => {
-        const nextState = createSandboxState(sandboxSettings.activePreset, {
-          botsEnabled: sandboxSettings.botsEnabled,
-          playerName: readStoredLocalPlayerName(),
-        });
+        const nextState = createLocalSandboxState();
         resetLocalSandboxSimulationState({
           inputController,
           nextState,
@@ -718,7 +743,6 @@ export function createGameViewport(
           const foresightSettings = sandboxSettings.foresightSettings;
           const fullViewEnabled = inputRuntime.fullViewEnabled;
           const profilingEnabled = sandboxSettings.profilingEnabled;
-          const readModeHeld = inputRuntime.readModeHeld;
           const sandboxPaused = sandboxSettings.sandboxPaused;
           const shieldSettings = sandboxSettings.shieldSettings;
           const frameProfilerStartMs = profilingEnabled ? performance.now() : 0;
@@ -775,8 +799,12 @@ export function createGameViewport(
             camera,
             cameraShake: simulationState.cameraShake,
             cameraState,
+            cameraWorldHeightOverride,
             frame: getLocalViewportCameraFrame({
-              readModeHeld: inputRuntime.readModeHeld,
+              aspect: getViewportAspect(),
+              cameraWorldHeightOverride,
+              followAlivePlanetWhenPlayerDown: observerMode,
+              useArenaStageCamera: observerMode,
               state: simulationState.renderState,
             }),
             frameDeltaSec: simulationFrame.frameDeltaSec,
@@ -868,6 +896,7 @@ export function createGameViewport(
             shieldGroup,
             backgroundLayers,
             sunVisuals,
+            neutronStarVisuals,
             planetVisuals,
             trailVisuals,
             updateCacheVisualBadge,
@@ -987,15 +1016,14 @@ export function createGameViewport(
                   playerPlanetVisuals?.auraScale ??
                   lastHudState.planetAuraScale,
                 planetBodyScale:
-                  playerPlanetVisuals?.bodyScale ?? lastHudState.planetBodyScale,
+                  playerPlanetVisuals?.bodyScale ??
+                  lastHudState.planetBodyScale,
                 playerDamageFlash: simulationState.playerDamageFlash,
                 playerHpPulse: simulationState.playerHpPulse,
                 playerLabel:
                   playerPlanet?.displayName ?? playerPlanet?.label ?? "Player",
                 profilingEnabled,
                 profilerSnapshot,
-                readModeHeld,
-                readModeHudOpacity: READ_MODE_HUD_OPACITY,
                 runtimeStats: simulationState.runtimeStats,
                 sandboxPaused,
                 selectedWeapon: inputState.selectedRocketKind,

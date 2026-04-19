@@ -4,12 +4,18 @@ import type { Mesh, OrthographicCamera, WebGPURenderer } from "three/webgpu";
 import type { CombatSandboxDrone, CombatSandboxPlanet } from "../combatSandbox";
 import { getRuntimeTuningDocument } from "../runtimeTuning";
 import { syncBackdropFrame } from "../showcaseVisuals";
+import {
+  getViewportHostSize,
+  syncViewportRendererSize,
+  type ViewportRendererSizeState,
+} from "./rendererSizing";
 
 export const LOCAL_VIEWPORT_CAMERA_DISTANCE = 100;
 const CAMERA_FOLLOW_LERP = 6.4;
 const CAMERA_ZOOM_LERP = 5.2;
 const MAX_CAMERA_SHAKE_WORLD_OFFSET = 34;
 const BACKDROP_OVERDRAW = 1.35;
+const STAGE_CAMERA_PADDING = 520;
 
 export interface LocalViewportCameraState {
   centerX: number;
@@ -30,14 +36,29 @@ interface CameraFrame {
 const easingAlpha = (rate: number, dtSec: number): number =>
   1 - Math.exp(-rate * dtSec);
 
-const getLocalViewportCameraHeights = () => {
+const getLocalViewportCameraHeights = (cameraWorldHeightOverride?: number) => {
   const cameraTuning = getRuntimeTuningDocument().gameplay.camera;
 
   return {
-    // Local sandbox uses the read-mode height as its baseline gameplay camera.
-    followWorldHeight: cameraTuning.readModeWorldHeight,
-    readModeWorldHeight: cameraTuning.readModeWorldHeight,
+    followWorldHeight:
+      cameraWorldHeightOverride ?? cameraTuning.gameplayCameraWorldHeight,
   };
+};
+
+const expandCameraBounds = (
+  bounds: {
+    maxX: number;
+    maxY: number;
+    minX: number;
+    minY: number;
+  },
+  pos: Vec2,
+  radius: number,
+) => {
+  bounds.minX = Math.min(bounds.minX, pos.x - radius);
+  bounds.maxX = Math.max(bounds.maxX, pos.x + radius);
+  bounds.minY = Math.min(bounds.minY, pos.y - radius);
+  bounds.maxY = Math.max(bounds.maxY, pos.y + radius);
 };
 
 const getSandboxFocusPlanet = (
@@ -48,8 +69,13 @@ const getSandboxFocusPlanet = (
     pos: Vec2;
   }[],
   playerPlanetId: number,
+  followAlivePlanetWhenPlayerDown: boolean,
 ) =>
-  planets.find((planet) => planet.id === playerPlanetId) ??
+  planets.find(
+    (planet) =>
+      planet.id === playerPlanetId &&
+      (!followAlivePlanetWhenPlayerDown || planet.alive),
+  ) ??
   planets.find((planet) => planet.alive) ??
   planets[0] ??
   null;
@@ -70,6 +96,7 @@ const getSandboxFocusBody = (state: {
     controlMode: "planet" | "drone";
     planetId: number;
   };
+  followAlivePlanetWhenPlayerDown: boolean;
 }) => {
   const activeDrone =
     state.player.controlMode === "drone" && state.player.activeDroneId !== null
@@ -88,6 +115,7 @@ const getSandboxFocusBody = (state: {
   const focusPlanet = getSandboxFocusPlanet(
     state.planets,
     state.player.planetId,
+    state.followAlivePlanetWhenPlayerDown,
   );
   return focusPlanet === null
     ? null
@@ -121,14 +149,19 @@ export const getLocalViewportControlledBody = (state: {
   );
 };
 
-export const createLocalViewportCameraState = (): LocalViewportCameraState => ({
+export const createLocalViewportCameraState = ({
+  cameraWorldHeightOverride,
+}: {
+  cameraWorldHeightOverride?: number;
+} = {}): LocalViewportCameraState => ({
   centerX: 0,
   centerY: 0,
   renderCenterX: 0,
   renderCenterY: 0,
   shakeOffsetX: 0,
   shakeOffsetY: 0,
-  visibleWorldHeight: getLocalViewportCameraHeights().followWorldHeight,
+  visibleWorldHeight: getLocalViewportCameraHeights(cameraWorldHeightOverride)
+    .followWorldHeight,
 });
 
 export const applyLocalViewportCameraFrame = ({
@@ -146,9 +179,7 @@ export const applyLocalViewportCameraFrame = ({
     return;
   }
 
-  const width = Math.max(1, hostElement.clientWidth);
-  const height = Math.max(1, hostElement.clientHeight);
-  const aspect = width / height;
+  const { aspect } = getViewportHostSize(hostElement);
   const worldHalfHeight = cameraState.visibleWorldHeight / 2;
   const worldHalfWidth = worldHalfHeight * aspect;
   const renderCenterX = cameraState.centerX + cameraState.shakeOffsetX;
@@ -185,6 +216,7 @@ export const resizeLocalViewportCamera = ({
   hostElement,
   maxPixelRatio,
   renderer,
+  sizeState,
 }: {
   backdropMesh: Mesh | null;
   camera: OrthographicCamera | null;
@@ -192,16 +224,18 @@ export const resizeLocalViewportCamera = ({
   hostElement: HTMLDivElement;
   maxPixelRatio: number;
   renderer: WebGPURenderer | null;
+  sizeState: ViewportRendererSizeState;
 }) => {
   if (renderer === null || camera === null) {
     return;
   }
 
-  const width = Math.max(1, hostElement.clientWidth);
-  const height = Math.max(1, hostElement.clientHeight);
-
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, maxPixelRatio));
-  renderer.setSize(width, height, false);
+  syncViewportRendererSize({
+    hostElement,
+    maxPixelRatio,
+    renderer,
+    sizeState,
+  });
   applyLocalViewportCameraFrame({
     backdropMesh,
     camera,
@@ -211,10 +245,16 @@ export const resizeLocalViewportCamera = ({
 };
 
 export const getLocalViewportCameraFrame = ({
-  readModeHeld,
+  aspect = 1,
+  cameraWorldHeightOverride,
+  followAlivePlanetWhenPlayerDown = false,
+  useArenaStageCamera = false,
   state,
 }: {
-  readModeHeld: boolean;
+  aspect?: number;
+  cameraWorldHeightOverride?: number;
+  followAlivePlanetWhenPlayerDown?: boolean;
+  useArenaStageCamera?: boolean;
   state: {
     blackHole: { pos: Vec2; radius: number } | null;
     drones: readonly CombatSandboxDrone[];
@@ -231,14 +271,75 @@ export const getLocalViewportCameraFrame = ({
     }[];
   };
 }): CameraFrame => {
-  const { followWorldHeight, readModeWorldHeight } =
-    getLocalViewportCameraHeights();
+  const { followWorldHeight } = getLocalViewportCameraHeights(
+    cameraWorldHeightOverride,
+  );
+  if (useArenaStageCamera) {
+    const bounds = {
+      maxX: Number.NEGATIVE_INFINITY,
+      maxY: Number.NEGATIVE_INFINITY,
+      minX: Number.POSITIVE_INFINITY,
+      minY: Number.POSITIVE_INFINITY,
+    };
+    const arenaRadius = Math.max(
+      0,
+      getRuntimeTuningDocument().gameplay.arena.radius,
+    );
+    const safeAspect = Math.max(0.1, aspect);
 
-  const focusBody = getSandboxFocusBody(state);
+    if (arenaRadius > 0) {
+      expandCameraBounds(bounds, { x: 0, y: 0 }, arenaRadius);
+    }
+
+    if (state.blackHole !== null) {
+      expandCameraBounds(bounds, state.blackHole.pos, state.blackHole.radius * 2.4);
+    }
+
+    for (const sun of state.suns) {
+      if (sun.swallowedAtSec !== null) {
+        continue;
+      }
+
+      expandCameraBounds(bounds, sun.pos, sun.radius * 2.25);
+    }
+
+    for (const planet of state.planets) {
+      if (!planet.alive) {
+        continue;
+      }
+
+      expandCameraBounds(bounds, planet.pos, planet.radius * 1.8);
+    }
+
+    for (const drone of state.drones) {
+      expandCameraBounds(bounds, drone.pos, drone.radius * 1.6);
+    }
+
+    if (Number.isFinite(bounds.minX) && Number.isFinite(bounds.minY)) {
+      const halfWidth = (bounds.maxX - bounds.minX) / 2 + STAGE_CAMERA_PADDING;
+      const halfHeight =
+        (bounds.maxY - bounds.minY) / 2 + STAGE_CAMERA_PADDING;
+
+      return {
+        centerX: (bounds.minX + bounds.maxX) / 2,
+        centerY: (bounds.minY + bounds.maxY) / 2,
+        visibleWorldHeight: Math.max(
+          followWorldHeight,
+          halfHeight * 2,
+          (halfWidth * 2) / safeAspect,
+        ),
+      };
+    }
+  }
+
+  const focusBody = getSandboxFocusBody({
+    ...state,
+    followAlivePlanetWhenPlayerDown,
+  });
   return {
     centerX: focusBody !== null ? focusBody.pos.x : 0,
     centerY: focusBody !== null ? focusBody.pos.y : 0,
-    visibleWorldHeight: readModeHeld ? readModeWorldHeight : followWorldHeight,
+    visibleWorldHeight: followWorldHeight,
   };
 };
 
@@ -271,6 +372,7 @@ export const updateLocalViewportCamera = ({
   camera,
   cameraShake,
   cameraState,
+  cameraWorldHeightOverride,
   frame,
   frameDeltaSec,
   hostElement,
@@ -280,12 +382,15 @@ export const updateLocalViewportCamera = ({
   camera: OrthographicCamera | null;
   cameraShake: number;
   cameraState: LocalViewportCameraState;
+  cameraWorldHeightOverride?: number;
   frame: CameraFrame;
   frameDeltaSec: number;
   hostElement: HTMLDivElement;
   nowSec: number;
 }) => {
-  const { followWorldHeight } = getLocalViewportCameraHeights();
+  const { followWorldHeight } = getLocalViewportCameraHeights(
+    cameraWorldHeightOverride,
+  );
   const cameraMoveAlpha = easingAlpha(CAMERA_FOLLOW_LERP, frameDeltaSec);
   const cameraZoomAlpha = easingAlpha(CAMERA_ZOOM_LERP, frameDeltaSec);
 

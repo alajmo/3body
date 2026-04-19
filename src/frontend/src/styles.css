@@ -458,8 +458,12 @@ body {
 .edit-object-preview__all-rocket,
 .edit-object-preview__orbit-ring,
 .edit-object-preview__orbit-sun,
+.edit-object-preview__orbit-planet,
 .edit-object-preview__black-hole-ring,
 .edit-object-preview__black-hole-core,
+.edit-object-preview__neutron-star-halo,
+.edit-object-preview__neutron-star-core,
+.edit-object-preview__neutron-star-jet,
 .edit-object-preview__cannon-breech,
 .edit-object-preview__cannon-barrel,
 .edit-object-preview__cannon-flash,
@@ -535,6 +539,14 @@ body {
   left: 22px;
 }
 
+.edit-object-preview__orbit-planet {
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.16);
+  transform: translate(-50%, -50%);
+}
+
 .edit-object-preview--background {
   background:
     radial-gradient(
@@ -543,6 +555,16 @@ body {
       transparent 60%
     ),
     linear-gradient(180deg, #05070b, #010203);
+}
+
+.edit-object-preview--neutron-stars {
+  background:
+    radial-gradient(
+      circle at 50% 2px,
+      rgba(86, 150, 255, 0.3),
+      transparent 52%
+    ),
+    linear-gradient(180deg, #040914, #010203);
 }
 
 .edit-object-preview__background-haze {
@@ -585,6 +607,92 @@ body {
 .edit-object-preview__background-star--c {
   bottom: 10px;
   left: 26px;
+}
+
+.edit-object-preview__background-neutron-star {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle, #ffffff 0%, #bfe8ff 22%, #4fc2ff 48%, rgba(30, 94, 174, 0.16) 100%);
+  box-shadow:
+    0 0 10px rgba(116, 218, 255, 0.88),
+    0 0 22px rgba(54, 145, 255, 0.44);
+}
+
+.edit-object-preview__background-neutron-star--a {
+  top: 14px;
+  left: 48px;
+}
+
+.edit-object-preview__background-neutron-star--b {
+  right: 30px;
+  bottom: 14px;
+}
+
+.edit-object-preview__neutron-star-halo,
+.edit-object-preview__neutron-star-core,
+.edit-object-preview__neutron-star-jet {
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.edit-object-preview__neutron-star-halo {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  background: radial-gradient(
+    circle,
+    rgba(216, 242, 255, 0.26),
+    rgba(116, 214, 255, 0.18) 54%,
+    rgba(35, 92, 214, 0) 76%
+  );
+  filter: blur(2px);
+  box-shadow:
+    0 0 14px rgba(116, 214, 255, 0.34),
+    0 0 24px rgba(47, 115, 255, 0.18);
+}
+
+.edit-object-preview__neutron-star-core {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: radial-gradient(
+    circle,
+    #ffffff 0%,
+    #d8f4ff 28%,
+    #61cfff 60%,
+    rgba(25, 82, 196, 0.28) 100%
+  );
+  box-shadow:
+    0 0 10px rgba(129, 224, 255, 0.9),
+    0 0 18px rgba(54, 145, 255, 0.38);
+}
+
+.edit-object-preview__neutron-star-jet {
+  width: 34px;
+  height: 5px;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(171, 240, 255, 0.92) 24%,
+    rgba(84, 188, 255, 0.74) 48%,
+    rgba(40, 110, 255, 0.24) 76%,
+    transparent
+  );
+  filter: blur(1px);
+}
+
+.edit-object-preview__neutron-star-jet--a {
+  transform: translate(-50%, -50%) rotate(14deg);
+}
+
+.edit-object-preview__neutron-star-jet--b {
+  width: 28px;
+  opacity: 0.76;
+  transform: translate(-50%, -50%) rotate(104deg);
 }
 
 .edit-object-preview__sun-core {
@@ -971,6 +1079,24 @@ body {
 
 .game-stage--editor {
   border-radius: inherit;
+}
+
+.edit-ai-gameplay-stage {
+  background:
+    radial-gradient(circle at top, rgba(34, 58, 88, 0.18), transparent 42%),
+    linear-gradient(180deg, #05070b 0%, #020307 100%);
+}
+
+.edit-ai-gameplay-stage--fullscreen,
+.edit-ai-gameplay-stage:fullscreen {
+  border-radius: 0;
+}
+
+.edit-preview-overlay-button {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  z-index: 3;
 }
 
 .editor-preview-surface {

@@ -39,6 +39,7 @@ import { createInitialMatchState } from "./spawn";
 const snapshotWorld = (world: World): World => ({
   ...world,
   suns: world.suns.slice(),
+  neutronStars: world.neutronStars.slice(),
   planets: world.planets.slice(),
   rockets: world.rockets.slice(),
   drones: world.drones.slice(),
@@ -148,6 +149,16 @@ export type QueuedCombatMessage =
       playerId: PlayerId;
       slot: AbilityMsg["slot"];
       aimDir?: AbilityMsg["aimDir"];
+    }
+  | {
+      type: "droneLaunch";
+      playerId: PlayerId;
+      aimDir: Vec2;
+    }
+  | {
+      type: "droneSteer";
+      playerId: PlayerId;
+      turn: -1 | 0 | 1;
     };
 
 export interface RoomParticipant {

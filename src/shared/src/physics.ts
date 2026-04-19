@@ -1,11 +1,18 @@
 import { EPS2, G, ROCKET_SPECS } from "./constants";
-import type { BlackHole, EntityBase, Rocket, Sun } from "./entities";
+import type {
+  BlackHole,
+  EntityBase,
+  NeutronStar,
+  Rocket,
+  Sun,
+} from "./entities";
 import { add, fromAngle, len, lenSq, normalize, scale, sub } from "./vec2";
 import type { Vec2 } from "./vec2";
 
 type GravitySource =
   | Pick<Sun, "mass" | "pos">
-  | Pick<BlackHole, "mass" | "pos">;
+  | Pick<BlackHole, "mass" | "pos">
+  | Pick<NeutronStar, "mass" | "pos">;
 
 const zeroVec2 = (): Vec2 => ({ x: 0, y: 0 });
 
@@ -66,7 +73,9 @@ const sunAccelerationAt = (
 const wrapGravitySources = (
   suns: readonly Sun[],
   blackHole?: BlackHole,
-): GravitySource[] => (blackHole ? [...suns, blackHole] : [...suns]);
+  extraSources: readonly GravitySource[] = [],
+): GravitySource[] =>
+  blackHole ? [...suns, blackHole, ...extraSources] : [...suns, ...extraSources];
 
 export const normalizeAngleDelta = (angleRad: number): number => {
   let normalized = angleRad;
@@ -86,10 +95,11 @@ export const gravityAccel = (
   pos: Vec2,
   suns: readonly Sun[],
   blackHole?: BlackHole,
+  extraSources: readonly GravitySource[] = [],
 ): Vec2 => {
   let accel = zeroVec2();
 
-  for (const source of wrapGravitySources(suns, blackHole)) {
+  for (const source of wrapGravitySources(suns, blackHole, extraSources)) {
     accel = add(accel, gravityFromSource(pos, source));
   }
 
@@ -127,9 +137,10 @@ export const stepBody = <T extends EntityBase>(
   suns: readonly Sun[],
   dt: number,
   blackHole?: BlackHole,
+  extraSources: readonly GravitySource[] = [],
 ): T =>
   integrateVelocityVerlet(body, dt, (pos) =>
-    gravityAccel(pos, suns, blackHole),
+    gravityAccel(pos, suns, blackHole, extraSources),
   );
 
 export const stepBodyWithGravityScale = <T extends EntityBase>(
@@ -138,9 +149,10 @@ export const stepBodyWithGravityScale = <T extends EntityBase>(
   dt: number,
   gravityScale: number,
   blackHole?: BlackHole,
+  extraSources: readonly GravitySource[] = [],
 ): T =>
   integrateVelocityVerlet(body, dt, (pos) =>
-    scale(gravityAccel(pos, suns, blackHole), gravityScale),
+    scale(gravityAccel(pos, suns, blackHole, extraSources), gravityScale),
   );
 
 export const stepSeeker = <T extends Rocket>(
@@ -150,16 +162,17 @@ export const stepSeeker = <T extends Rocket>(
   dt: number,
   blackHole?: BlackHole,
   turnRateOverride?: number,
+  extraSources: readonly GravitySource[] = [],
 ): T => {
   const spec = ROCKET_SPECS[rocket.rocketKind];
   const turnRate = turnRateOverride ?? spec.turnRate;
   if (!target || turnRate <= 0) {
-    return stepBody(rocket, suns, dt, blackHole);
+    return stepBody(rocket, suns, dt, blackHole, extraSources);
   }
 
   const toTarget = sub(target.pos, rocket.pos);
   if (lenSq(toTarget) === 0) {
-    return stepBody(rocket, suns, dt, blackHole);
+    return stepBody(rocket, suns, dt, blackHole, extraSources);
   }
 
   const currentSpeed = len(rocket.vel);
@@ -178,7 +191,7 @@ export const stepSeeker = <T extends Rocket>(
     vel: scale(fromAngle(steerAngle), steerSpeed),
   };
 
-  return stepBody(steeredRocket, suns, dt, blackHole);
+  return stepBody(steeredRocket, suns, dt, blackHole, extraSources);
 };
 
 export const predictPath = (
@@ -188,6 +201,7 @@ export const predictPath = (
   steps: number,
   dt: number,
   blackHole?: BlackHole,
+  extraSources: readonly GravitySource[] = [],
 ): Vec2[] => {
   const points: Vec2[] = [{ x: pos.x, y: pos.y }];
   let predictedSuns = suns.map((sun) => ({
@@ -204,7 +218,7 @@ export const predictPath = (
 
   for (let index = 0; index < steps; index += 1) {
     predictedSuns = stepSuns(predictedSuns, dt, blackHole);
-    state = stepBody(state, predictedSuns, dt, blackHole);
+    state = stepBody(state, predictedSuns, dt, blackHole, extraSources);
     points.push({ x: state.pos.x, y: state.pos.y });
   }
 

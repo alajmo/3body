@@ -33,7 +33,6 @@ export interface GameViewportInputRuntimeState {
   pendingDroneRequests: PendingDroneRequests;
   pendingShots: number;
   pointerState: PointerState;
-  readModeHeld: boolean;
   droneSteering: DroneSteeringState;
 }
 
@@ -122,14 +121,16 @@ export const createGameViewportInputController = (
       clientY: 0,
       hasPointer: false,
     },
-    readModeHeld: false,
     droneSteering: createDroneSteeringState(),
   };
+  let boostHeld = false;
 
   const clearStepScopedRequests = () => {
     state.pendingAbilityRequests.foresight = false;
     state.pendingAbilityRequests.shield = false;
-    state.pendingAbilityRequests.boost = false;
+    // Preserve held boost input across simulation steps while still keeping
+    // quick taps latched until the next frame consumes them.
+    state.pendingAbilityRequests.boost = boostHeld;
     state.pendingAbilityRequests.gravityPulse = false;
     state.pendingAbilityRequests.cloak = false;
     state.pendingDroneRequests.launch = false;
@@ -137,6 +138,7 @@ export const createGameViewportInputController = (
 
   const clearPendingGameplayRequests = () => {
     state.pendingShots = 0;
+    boostHeld = false;
     clearStepScopedRequests();
   };
 
@@ -172,12 +174,6 @@ export const createGameViewportInputController = (
       return;
     }
 
-    if (event.code === "ShiftLeft" || event.code === "ShiftRight") {
-      state.readModeHeld = true;
-      event.preventDefault();
-      return;
-    }
-
     if (!options.sandboxControlsEnabled()) {
       return;
     }
@@ -206,19 +202,20 @@ export const createGameViewportInputController = (
     }
 
     if (event.code === "KeyQ" && !event.repeat) {
-      state.pendingAbilityRequests.foresight = true;
-      event.preventDefault();
-      return;
-    }
-
-    if (event.code === "KeyW" && !event.repeat) {
       state.pendingAbilityRequests.shield = true;
       event.preventDefault();
       return;
     }
 
-    if (event.code === "KeyE" && !event.repeat) {
+    if (event.code === "KeyW" && !event.repeat) {
+      boostHeld = true;
       state.pendingAbilityRequests.boost = true;
+      event.preventDefault();
+      return;
+    }
+
+    if (event.code === "KeyE" && !event.repeat) {
+      state.pendingAbilityRequests.foresight = true;
       event.preventDefault();
       return;
     }
@@ -237,15 +234,14 @@ export const createGameViewportInputController = (
   };
 
   const handleKeyUp = (event: KeyboardEvent) => {
-    if (event.code === "ShiftLeft" || event.code === "ShiftRight") {
-      state.readModeHeld = false;
-      event.preventDefault();
+    if (event.code !== "KeyW") {
       return;
     }
-  };
 
-  const handleWindowBlur = () => {
-    state.readModeHeld = false;
+    boostHeld = false;
+    if (!isEditableTarget(event.target) && options.sandboxControlsEnabled()) {
+      event.preventDefault();
+    }
   };
 
   const handlePointerMove = (event: PointerEvent) => {
@@ -295,7 +291,6 @@ export const createGameViewportInputController = (
 
   options.windowTarget.addEventListener("keydown", handleKeyDown);
   options.windowTarget.addEventListener("keyup", handleKeyUp);
-  options.windowTarget.addEventListener("blur", handleWindowBlur);
   options.canvasElement.addEventListener("pointermove", handlePointerMove);
   options.canvasElement.addEventListener("pointerdown", handlePointerDown);
   options.canvasElement.addEventListener("contextmenu", handleContextMenu);
@@ -307,7 +302,6 @@ export const createGameViewportInputController = (
     dispose: () => {
       options.windowTarget.removeEventListener("keydown", handleKeyDown);
       options.windowTarget.removeEventListener("keyup", handleKeyUp);
-      options.windowTarget.removeEventListener("blur", handleWindowBlur);
       options.canvasElement.removeEventListener(
         "pointermove",
         handlePointerMove,

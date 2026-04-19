@@ -226,16 +226,33 @@ export const reportViewportRendererFailure = ({
   hostElement,
   isDisposed,
 }: ReportViewportRendererFailureOptions) => {
+  const failureText = getRendererFailureText(error);
   console.error(`[frontend] ${failureLogLabel} failed.`, error);
   recordRendererValidationEntry(hostElement, {
     backend: null,
     backendPolicy: null,
-    error: getRendererFailureText(error),
+    error: failureText,
     label: failureLogLabel,
     status: "failed",
   });
   if (!isDisposed()) {
-    hostElement.replaceChildren();
+    const ownerDocument = hostElement.ownerDocument;
+    const failureElement = ownerDocument.createElement("div");
+    failureElement.className = "viewport-renderer-failure";
+    failureElement.style.display = "grid";
+    failureElement.style.placeItems = "center";
+    failureElement.style.width = "100%";
+    failureElement.style.height = "100%";
+    failureElement.style.padding = "24px";
+    failureElement.style.boxSizing = "border-box";
+    failureElement.style.textAlign = "center";
+    failureElement.style.color = "#9ec6ff";
+    failureElement.style.fontSize = "12px";
+    failureElement.style.letterSpacing = "0.08em";
+    failureElement.style.textTransform = "uppercase";
+    failureElement.style.whiteSpace = "pre-wrap";
+    failureElement.textContent = `${failureLogLabel} failed\n${failureText}`;
+    hostElement.replaceChildren(failureElement);
   }
 };
 

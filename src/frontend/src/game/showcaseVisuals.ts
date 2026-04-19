@@ -110,12 +110,15 @@ export interface PlanetSurfaceMaterial extends MeshBasicNodeMaterial {
 }
 
 export interface BackdropMaterial extends MeshBasicNodeMaterial {
-  parallaxOffsetUniform: ReturnType<typeof uniform>;
+  parallaxOffsetUniform: {
+    value: Vector2;
+  };
 }
 
 export const SUN_GLOW_SCALE = 1.7;
 export const SUN_WARP_SCALE = 3.2;
 export const CACHE_BADGE_BASE_SIZE = 80;
+const DUST_CAMERA_FOLLOW = 0.06;
 const DISTANT_BODIES_CAMERA_FOLLOW = 0.08;
 const NEBULA_CAMERA_FOLLOW = 0.12;
 const MIN_BACKDROP_WORLD_SPAN = 0.001;
@@ -146,27 +149,6 @@ const BASE_STARFIELD_LAYERS = [
     parallax: 0.22,
     size: 1.8,
     z: -22,
-  },
-] as const;
-
-const BASE_DUST_LAYERS = [
-  {
-    count: 120,
-    alphaScale: 0.085,
-    driftX: -9,
-    driftY: 4,
-    parallax: 0.05,
-    size: 11,
-    z: -36,
-  },
-  {
-    count: 90,
-    alphaScale: 0.12,
-    driftX: 7,
-    driftY: -3,
-    parallax: 0.1,
-    size: 8,
-    z: -32,
   },
 ] as const;
 
@@ -225,31 +207,6 @@ export const createBackgroundLayerConfigs = (
     );
   }
 
-  if (background.dustEnabled) {
-    const coolColor = toHexString(
-      tintColor(background.baseColor, 0.05, 0.08, 0.42),
-    );
-    const warmColor = toHexString(
-      tintColor(background.glowColor, 0.02, -0.12, 0.55),
-    );
-
-    configs.push(
-      ...BASE_DUST_LAYERS.map((layer) => ({
-        ...layer,
-        alphaScale: layer.alphaScale * background.dustBrightness,
-        colorVariance: 0.28,
-        coolColor,
-        count: Math.max(0, Math.round(layer.count * background.dustDensity)),
-        driftX: layer.driftX * background.dustDrift,
-        driftY: layer.driftY * background.dustDrift,
-        kind: "dust" as const,
-        size: layer.size * background.dustSize,
-        twinkleAmount: 0.14,
-        warmColor,
-      })),
-    );
-  }
-
   return configs;
 };
 
@@ -262,6 +219,7 @@ export const ROCKET_RENDER_PROFILES = {
     bodyScale: { x: 31, y: 7.8 } satisfies Vec2,
     core: "#ff8d4a",
     flameScale: { x: 28, y: 14 } satisfies Vec2,
+    scale: 1,
     trail: "#ff6130",
     trailScale: { x: 36, y: 9 } satisfies Vec2,
   },
@@ -269,6 +227,7 @@ export const ROCKET_RENDER_PROFILES = {
     bodyScale: { x: 24, y: 4.8 } satisfies Vec2,
     core: "#f4f9ff",
     flameScale: { x: 22, y: 9 } satisfies Vec2,
+    scale: 1,
     trail: "#b7e6ff",
     trailScale: { x: 30, y: 6 } satisfies Vec2,
   },
@@ -276,6 +235,7 @@ export const ROCKET_RENDER_PROFILES = {
     bodyScale: { x: 27, y: 6.2 } satisfies Vec2,
     core: "#f564ff",
     flameScale: { x: 25, y: 11 } satisfies Vec2,
+    scale: 1,
     trail: "#ff4dd4",
     trailScale: { x: 33, y: 7.5 } satisfies Vec2,
   },
@@ -479,7 +439,8 @@ export const createBackdropMaterial = (
   background: BackgroundVisualTuning,
 ): BackdropMaterial => {
   const material = new MeshBasicNodeMaterial() as BackdropMaterial;
-  material.parallaxOffsetUniform = uniform(new Vector2(0, 0));
+  const parallaxOffsetUniform = uniform(new Vector2(0, 0));
+  material.parallaxOffsetUniform = parallaxOffsetUniform;
   const surfaceUv = uv();
   const backdropTime = time.mul(0.02);
   const glowNoise = mx_fractal_noise_float(
@@ -497,12 +458,70 @@ export const createBackdropMaterial = (
     surfaceUv.y.add(glowNoise.mul(0.12)),
   );
 
+  if (background.dustEnabled && background.dustBrightness > 0) {
+    const dustTime = time.mul(0.01 + background.dustDrift * 0.012);
+    const dustUv = surfaceUv
+      .add(
+        parallaxOffsetUniform.mul(getBackdropParallaxOffset(DUST_CAMERA_FOLLOW)),
+      )
+      .add(vec2(dustTime.mul(-0.18), dustTime.mul(0.08)));
+    const dustScale = 1 / Math.max(background.dustSize, 0.35);
+    const dustStretch = vec2(1.45, 0.72).mul(dustScale);
+    const dustCoreA = float(1).sub(
+      smoothstep(
+        0.18,
+        0.56,
+        length(dustUv.sub(vec2(0.24, 0.44)).mul(dustStretch)),
+      ),
+    );
+    const dustCoreB = float(1).sub(
+      smoothstep(
+        0.12,
+        0.48,
+        length(
+          dustUv
+            .sub(vec2(0.72, 0.58))
+            .add(vec2(dustTime.mul(0.08), dustTime.mul(-0.04)))
+            .mul(vec2(1.22, 0.66).mul(dustScale)),
+        ),
+      ),
+    );
+    const dustRibbon = float(1).sub(
+      smoothstep(
+        0.08,
+        0.24,
+        abs(dustUv.y.sub(float(0.38).add(dustUv.x.mul(0.08)))),
+      ),
+    );
+    const dustDensityMask = smoothstep(
+      Math.max(0.24, 0.74 - background.dustDensity * 0.26),
+      1,
+      dustCoreA.add(dustCoreB.mul(0.85)).add(dustRibbon.mul(0.55)),
+    );
+    const dustMask = dustDensityMask.mul(
+      float(1).sub(smoothstep(0.12, 1.16, abs(dustUv.y.sub(0.42)).mul(1.6))),
+    );
+    const dustCoolColor = color(
+      toHexString(tintColor(background.glowColor, -0.03, 0.06, 0.22)),
+    );
+    const dustWarmColor = color(
+      toHexString(tintColor(background.nebulaColor, 0.01, -0.04, 0.28)),
+    );
+    const dustColor = mix(
+      dustCoolColor,
+      dustWarmColor,
+      dustUv.x.mul(0.55).add(dustCoreB.mul(0.45)),
+    );
+
+    backdropColor = backdropColor.add(
+      dustColor.mul(dustMask).mul(background.dustBrightness * 0.16),
+    );
+  }
+
   if (background.nebulaEnabled && background.nebulaStrength > 0) {
     const nebulaTime = time.mul(0.012 + background.nebulaDrift * 0.01);
     const nebulaUv = surfaceUv.add(
-      material.parallaxOffsetUniform.mul(
-        getBackdropParallaxOffset(NEBULA_CAMERA_FOLLOW),
-      ),
+      parallaxOffsetUniform.mul(getBackdropParallaxOffset(NEBULA_CAMERA_FOLLOW)),
     );
     const nebulaNoise = mx_fractal_noise_float(
       vec3(
@@ -535,7 +554,7 @@ export const createBackdropMaterial = (
 
   if (background.distantBodiesEnabled && background.distantBodiesOpacity > 0) {
     const distantBodiesUv = surfaceUv.add(
-      material.parallaxOffsetUniform.mul(
+      parallaxOffsetUniform.mul(
         getBackdropParallaxOffset(DISTANT_BODIES_CAMERA_FOLLOW),
       ),
     );

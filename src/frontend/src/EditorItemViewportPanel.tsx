@@ -26,8 +26,10 @@ export function EditorItemViewportPanel({
       return;
     }
 
-    if (itemId === "orbits") {
-      return createSunInteractionViewport(viewportElement);
+    if (itemId === "orbits" || itemId === "background" || itemId === "hud") {
+      return createSunInteractionViewport(viewportElement, {
+        mode: itemId,
+      });
     }
 
     return createEditorItemPreviewViewport(viewportElement, {

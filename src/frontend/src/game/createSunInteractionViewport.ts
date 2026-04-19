@@ -1,9 +1,10 @@
 import {
+  BLACK_HOLE_SPEC,
   FIXED_STEP_SEC,
-  getOrbitSystemDriftVelocity,
+  getNeutronStarMassAlpha,
+  getNeutronStarRadiusForMass,
   getSunVisualProfile,
   lerp,
-  scale as scaleVec2,
   type Vec2,
 } from "@3body/shared";
 import { attribute, color, renderOutput } from "three/tsl";
@@ -14,8 +15,10 @@ import {
   BufferGeometry,
   CircleGeometry,
   Float32BufferAttribute,
+  Group,
   Mesh,
   MeshBasicMaterial,
+  MeshBasicNodeMaterial,
   OrthographicCamera,
   PlaneGeometry,
   Points,
@@ -51,6 +54,15 @@ import {
 } from "./showcaseVisuals";
 import { getRuntimeTuningDocument } from "./runtimeTuning";
 import {
+  createBlackHoleCoreMaterial,
+  createBlackHoleLensMaterial,
+  createBlackHoleRingMaterial,
+  createNeutronStarCoreMaterial,
+  createNeutronStarHaloMaterial,
+  createNeutronStarJetMaterial,
+  createNeutronStarLensMaterial,
+} from "./viewport/localViewportVisualFactories";
+import {
   disposeViewportRendererSession,
   initializeViewportRendererSession,
   reportViewportRendererFailure,
@@ -63,6 +75,13 @@ import {
   getAmbientBoundaryDebrisRadii,
   updateAmbientBoundaryDebrisVisual,
 } from "./viewport/ambientBoundaryDebris";
+import {
+  getNeutronStarVisualShape,
+  NEUTRON_STAR_JET_SECONDARY_LENGTH_FACTOR,
+  NEUTRON_STAR_JET_SECONDARY_OPACITY_FACTOR,
+  NEUTRON_STAR_JET_SECONDARY_WIDTH_FACTOR,
+} from "./neutronStarVisuals";
+import { getEditorPreviewCameraHalfHeight } from "./editorPreviewCamera";
 
 const CAMERA_DISTANCE = 100;
 const MAX_PIXEL_RATIO = 2;
@@ -78,6 +97,64 @@ const CAMERA_LERP = 0.08;
 const MIN_CAMERA_HALF_HEIGHT = 760;
 const FRAME_PADDING = 520;
 
+type SunInteractionViewportMode =
+  | "hud"
+  | "background"
+  | "blackHole"
+  | "neutronStars"
+  | "orbits";
+
+export const getSunInteractionViewportCameraTarget = ({
+  aspect,
+  bounds,
+  mode,
+  tuning,
+}: {
+  aspect: number;
+  bounds: {
+    maxX: number;
+    maxY: number;
+    minX: number;
+    minY: number;
+  };
+  mode: SunInteractionViewportMode;
+  tuning: ReturnType<typeof getRuntimeTuningDocument>;
+}): {
+  centerX: number;
+  centerY: number;
+  worldHalfHeight: number;
+} => {
+  if (mode === "hud") {
+    return {
+      centerX: 0,
+      centerY: 0,
+      worldHalfHeight: getEditorPreviewCameraHalfHeight({
+        itemId: mode,
+        tuning,
+      }),
+    };
+  }
+
+  const targetCenterX = (bounds.minX + bounds.maxX) / 2;
+  const targetCenterY = (bounds.minY + bounds.maxY) / 2;
+  const targetHalfWidth = (bounds.maxX - bounds.minX) / 2 + FRAME_PADDING;
+  const targetHalfHeight = (bounds.maxY - bounds.minY) / 2 + FRAME_PADDING;
+
+  return {
+    centerX: targetCenterX,
+    centerY: targetCenterY,
+    worldHalfHeight: Math.max(
+      MIN_CAMERA_HALF_HEIGHT,
+      getEditorPreviewCameraHalfHeight({
+        itemId: mode,
+        tuning,
+      }),
+      targetHalfHeight,
+      targetHalfWidth / Math.max(aspect, 0.001),
+    ),
+  };
+};
+
 interface SunVisual {
   coreMesh: Mesh;
   glowMesh: Mesh;
@@ -92,6 +169,17 @@ interface PlanetVisual {
   rotationSpeed: number;
   spinAxis: ReturnType<typeof createPlanetSpinAxis>;
   spinPhase: number;
+}
+
+interface NeutronStarVisual {
+  coreMesh: Mesh;
+  group: Group;
+  haloMesh: Mesh;
+  jetMeshA: Mesh;
+  jetMeshB: Mesh;
+  lensMesh: Mesh;
+  phase: number;
+  spinSpeed: number;
 }
 
 interface SunTrailVisual {
@@ -189,6 +277,11 @@ const createIdleSandboxInput = (
 
 export function createSunInteractionViewport(
   hostElement: HTMLDivElement,
+  {
+    mode = "orbits",
+  }: {
+    mode?: SunInteractionViewportMode;
+  } = {},
 ): () => void {
   let disposed = false;
   let renderer: WebGPURenderer | null = null;
@@ -200,18 +293,87 @@ export function createSunInteractionViewport(
   let backdropMesh: Mesh | null = null;
   const disposables: Array<{ dispose: () => void }> = [];
   let cleanupComplete = false;
-  const blackHoleTuning = getRuntimeTuningDocument().gameplay.blackHole;
+  const runtimeBlackHoleTuning = getRuntimeTuningDocument().gameplay.blackHole;
+  const blackHoleTuning =
+    mode === "blackHole"
+      ? {
+          ...runtimeBlackHoleTuning,
+          rampSec: FIXED_STEP_SEC,
+          spawnSec: 0,
+        }
+      : runtimeBlackHoleTuning;
   const sunTuning = getRuntimeTuningDocument().visuals.suns;
-  const createSeedState = (): CombatSandboxState =>
-    createCombatSandboxState(undefined, { botsEnabled: false });
+  const createSeedState = (): CombatSandboxState => {
+    const seedState = createCombatSandboxState(undefined, { botsEnabled: false });
+    if (mode === "neutronStars") {
+      const minMassKg = Math.min(
+        getRuntimeTuningDocument().gameplay.neutronStars.minMassKg,
+        getRuntimeTuningDocument().gameplay.neutronStars.maxMassKg,
+      );
+      const maxMassKg = Math.max(
+        getRuntimeTuningDocument().gameplay.neutronStars.minMassKg,
+        getRuntimeTuningDocument().gameplay.neutronStars.maxMassKg,
+      );
+      const mass = (minMassKg + maxMassKg) / 2;
+
+      return {
+        ...seedState,
+        neutronStars: [
+          {
+            id: 19_001,
+            kind: "neutronStar",
+            mass,
+            pos: { x: 0, y: 0 },
+            radius: getNeutronStarRadiusForMass(
+              mass,
+              getRuntimeTuningDocument().gameplay.neutronStars,
+            ),
+            vel: { x: 0, y: 0 },
+          },
+        ],
+        suns: [],
+      };
+    }
+
+    if (mode !== "blackHole") {
+      return seedState;
+    }
+
+    return {
+      ...seedState,
+      blackHole: {
+        id: 9_001,
+        kind: "blackHole",
+        killRadius: blackHoleTuning.killRadius,
+        mass: blackHoleTuning.mass,
+        pos: { x: 0, y: 0 },
+        radius: blackHoleTuning.killRadius,
+        vel: { x: 0, y: 0 },
+      },
+      elapsedSec: blackHoleTuning.rampSec,
+      suns: [],
+    };
+  };
   let previousState = createSeedState();
   let currentState = createSeedState();
   let accumulatedSec = 0;
   let lastFrameMs: number | null = null;
+  const getMinimumCameraHalfHeight = () =>
+    getSunInteractionViewportCameraTarget({
+      aspect: 1,
+      bounds: {
+        maxX: 0,
+        maxY: 0,
+        minX: 0,
+        minY: 0,
+      },
+      mode,
+      tuning: getRuntimeTuningDocument(),
+    }).worldHalfHeight;
   const cameraState = {
     centerX: 0,
     centerY: 0,
-    worldHalfHeight: MIN_CAMERA_HALF_HEIGHT,
+    worldHalfHeight: getMinimumCameraHalfHeight(),
   };
   let rendererSessionToken = 0;
 
@@ -375,6 +537,42 @@ export function createSunInteractionViewport(
       const planetGeometry = new SphereGeometry(1, 96, 96);
       const glowGeometry = new CircleGeometry(1, 64);
       const warpGeometry = new RingGeometry(0.55, 1, 96);
+      const blackHoleGroup = new Group();
+      blackHoleGroup.visible = false;
+      blackHoleGroup.position.set(0, 0, 4);
+      const blackHoleLens = new Mesh(
+        new CircleGeometry(1, 72),
+        createBlackHoleLensMaterial(),
+      );
+      blackHoleLens.position.z = -2;
+      blackHoleLens.renderOrder = 4;
+      blackHoleLens.scale.set(
+        getRuntimeTuningDocument().visuals.blackHole.lensRadius,
+        getRuntimeTuningDocument().visuals.blackHole.lensRadius,
+        1,
+      );
+      const blackHoleRing = new Mesh(
+        new RingGeometry(0.42, 1, 96),
+        createBlackHoleRingMaterial(),
+      );
+      blackHoleRing.renderOrder = 5;
+      blackHoleRing.scale.set(
+        getRuntimeTuningDocument().visuals.blackHole.ringRadius,
+        getRuntimeTuningDocument().visuals.blackHole.ringRadius,
+        1,
+      );
+      const blackHoleCore = new Mesh(
+        new CircleGeometry(1, 72),
+        createBlackHoleCoreMaterial(),
+      );
+      blackHoleCore.renderOrder = 6;
+      blackHoleCore.scale.set(
+        getRuntimeTuningDocument().visuals.blackHole.coreRadius,
+        getRuntimeTuningDocument().visuals.blackHole.coreRadius,
+        1,
+      );
+      blackHoleGroup.add(blackHoleLens, blackHoleRing, blackHoleCore);
+      scene.add(blackHoleGroup);
       registerDisposables(
         disposables,
         boundaryGeometry,
@@ -383,6 +581,12 @@ export function createSunInteractionViewport(
         planetGeometry,
         sunGeometry,
         warpGeometry,
+        blackHoleLens.geometry,
+        blackHoleLens.material as { dispose: () => void },
+        blackHoleRing.geometry,
+        blackHoleRing.material as { dispose: () => void },
+        blackHoleCore.geometry,
+        blackHoleCore.material as { dispose: () => void },
       );
 
       const sunVisuals = previewState.suns.map((sun, index) => {
@@ -423,6 +627,66 @@ export function createSunInteractionViewport(
           warpMesh,
         } satisfies SunVisual;
       });
+
+      const neutronStarVisuals =
+        mode === "neutronStars"
+          ? previewState.neutronStars.map((neutronStar, index) => {
+              const coreMesh = new Mesh(
+                sunGeometry,
+                createNeutronStarCoreMaterial(neutronStar.id),
+              );
+              const haloMesh = new Mesh(
+                glowGeometry,
+                createNeutronStarHaloMaterial(neutronStar.id),
+              );
+              const lensMesh = new Mesh(
+                glowGeometry,
+                createNeutronStarLensMaterial(neutronStar.id),
+              );
+              const jetMeshA = new Mesh(
+                new PlaneGeometry(1, 1),
+                createNeutronStarJetMaterial(neutronStar.id),
+              );
+              const jetMeshB = new Mesh(
+                new PlaneGeometry(1, 1),
+                createNeutronStarJetMaterial(neutronStar.id + 0.37),
+              );
+              const group = new Group();
+
+              coreMesh.renderOrder = -6;
+              haloMesh.renderOrder = -7;
+              lensMesh.renderOrder = -8;
+              jetMeshA.renderOrder = -7;
+              jetMeshB.renderOrder = -7;
+              haloMesh.position.z = -1.6;
+              lensMesh.position.z = -2.4;
+              jetMeshA.position.z = -1.2;
+              jetMeshB.position.z = -1.2;
+              group.add(lensMesh, haloMesh, jetMeshA, jetMeshB, coreMesh);
+              scene.add(group);
+              registerDisposables(
+                disposables,
+                jetMeshA.geometry,
+                jetMeshB.geometry,
+                coreMesh.material as { dispose: () => void },
+                haloMesh.material as { dispose: () => void },
+                lensMesh.material as { dispose: () => void },
+                jetMeshA.material as { dispose: () => void },
+                jetMeshB.material as { dispose: () => void },
+              );
+
+              return {
+                coreMesh,
+                group,
+                haloMesh,
+                jetMeshA,
+                jetMeshB,
+                lensMesh,
+                phase: index * 0.91 + neutronStar.id * 0.0008,
+                spinSpeed: 0.22 + index * 0.04,
+              } satisfies NeutronStarVisual;
+            })
+          : [];
 
       const planetVisuals = previewState.planets.map((planet, index) => {
         const visualStyle = getPlanetArchetypeVisuals(planet.archetype);
@@ -547,12 +811,6 @@ export function createSunInteractionViewport(
             currentState,
             alpha,
           );
-          const arenaOffset = scaleVec2(
-            getOrbitSystemDriftVelocity(
-              getRuntimeTuningDocument().gameplay.orbits,
-            ),
-            renderState.elapsedSec,
-          );
           const arenaRadius = Math.max(
             0,
             getRuntimeTuningDocument().gameplay.arena.radius,
@@ -566,16 +824,127 @@ export function createSunInteractionViewport(
           if (arenaRadius > 0) {
             const { outerRadius: debrisOuterRadius } =
               getAmbientBoundaryDebrisRadii(arenaRadius);
-            boundaryMesh.position.set(arenaOffset.x, arenaOffset.y, -16);
+            boundaryMesh.position.set(0, 0, -16);
             boundaryMesh.scale.set(arenaRadius, arenaRadius, 1);
-            minX = Math.min(minX, arenaOffset.x - arenaRadius);
-            maxX = Math.max(maxX, arenaOffset.x + arenaRadius);
-            minY = Math.min(minY, arenaOffset.y - arenaRadius);
-            maxY = Math.max(maxY, arenaOffset.y + arenaRadius);
-            minX = Math.min(minX, arenaOffset.x - debrisOuterRadius);
-            maxX = Math.max(maxX, arenaOffset.x + debrisOuterRadius);
-            minY = Math.min(minY, arenaOffset.y - debrisOuterRadius);
-            maxY = Math.max(maxY, arenaOffset.y + debrisOuterRadius);
+            minX = Math.min(minX, -debrisOuterRadius);
+            maxX = Math.max(maxX, debrisOuterRadius);
+            minY = Math.min(minY, -debrisOuterRadius);
+            maxY = Math.max(maxY, debrisOuterRadius);
+          }
+
+          if (mode === "neutronStars") {
+            const neutronStarTuning = getRuntimeTuningDocument().gameplay.neutronStars;
+            const neutronStarVisualTuning =
+              getRuntimeTuningDocument().visuals.neutronStars;
+            for (let index = 0; index < neutronStarVisuals.length; index += 1) {
+              const visual = neutronStarVisuals[index]!;
+              const neutronStar = renderState.neutronStars[index];
+              const visible = neutronStar !== undefined;
+
+              visual.group.visible = visible;
+              if (!visible) {
+                continue;
+              }
+
+              const massAlpha = getNeutronStarMassAlpha(
+                neutronStar.mass,
+                neutronStarTuning,
+              );
+              const pulse = 1 + Math.sin(nowSec * 6.4 + visual.phase) * 0.04;
+              const haloPulse =
+                1 + Math.sin(nowSec * 4.8 + visual.phase * 1.7) * 0.08;
+              const { coreRadius, haloRadius, lensRadius, jetLength, jetWidth } =
+                getNeutronStarVisualShape({
+                  haloPulse,
+                  massAlpha,
+                  pulse,
+                  radius: neutronStar.radius,
+                  tuning: neutronStarVisualTuning,
+                });
+              const visibleRadius = Math.max(haloRadius, lensRadius, jetLength);
+              const coreMaterial =
+                visual.coreMesh.material as MeshBasicNodeMaterial;
+              const haloMaterial =
+                visual.haloMesh.material as MeshBasicNodeMaterial;
+              const lensMaterial =
+                visual.lensMesh.material as MeshBasicNodeMaterial;
+              const jetMaterialA =
+                visual.jetMeshA.material as MeshBasicNodeMaterial;
+              const jetMaterialB =
+                visual.jetMeshB.material as MeshBasicNodeMaterial;
+
+              minX = Math.min(minX, neutronStar.pos.x - visibleRadius);
+              maxX = Math.max(maxX, neutronStar.pos.x + visibleRadius);
+              minY = Math.min(minY, neutronStar.pos.y - visibleRadius);
+              maxY = Math.max(maxY, neutronStar.pos.y + visibleRadius);
+
+              visual.group.position.set(neutronStar.pos.x, neutronStar.pos.y, -1);
+              visual.group.rotation.z = nowSec * 0.06 + visual.phase * 0.18;
+              visual.coreMesh.scale.set(coreRadius, coreRadius, coreRadius);
+              visual.haloMesh.scale.set(haloRadius, haloRadius, 1);
+              visual.lensMesh.scale.set(lensRadius, lensRadius, 1);
+              visual.jetMeshA.scale.set(jetWidth, jetLength, 1);
+              visual.jetMeshB.scale.set(
+                jetWidth * NEUTRON_STAR_JET_SECONDARY_WIDTH_FACTOR,
+                jetLength * NEUTRON_STAR_JET_SECONDARY_LENGTH_FACTOR,
+                1,
+              );
+              visual.jetMeshA.rotation.z =
+                visual.phase + Math.sin(nowSec * 0.4 + visual.phase) * 0.08;
+              visual.jetMeshB.rotation.z =
+                visual.phase +
+                Math.PI / 2 -
+                Math.sin(nowSec * 0.36 + visual.phase) * 0.06;
+              visual.haloMesh.rotation.z = nowSec * 0.18 + visual.phase * 0.4;
+              visual.lensMesh.rotation.z = -nowSec * 0.12 - visual.phase * 0.3;
+              visual.coreMesh.rotation.x = 0.44;
+              visual.coreMesh.rotation.y = nowSec * visual.spinSpeed;
+              coreMaterial.opacity = 1;
+              haloMaterial.opacity = neutronStarVisualTuning.haloOpacity;
+              lensMaterial.opacity = neutronStarVisualTuning.lensOpacity;
+              jetMaterialA.opacity = neutronStarVisualTuning.jetOpacity;
+              jetMaterialB.opacity =
+                neutronStarVisualTuning.jetOpacity *
+                NEUTRON_STAR_JET_SECONDARY_OPACITY_FACTOR;
+            }
+          }
+
+          blackHoleGroup.visible = renderState.blackHole !== null;
+          if (renderState.blackHole !== null) {
+            const blackHoleScale =
+              renderState.blackHole.killRadius /
+              Math.max(1, BLACK_HOLE_SPEC.killRadius);
+            const blackHoleVisualRadius =
+              Math.max(
+                getRuntimeTuningDocument().visuals.blackHole.lensRadius,
+                getRuntimeTuningDocument().visuals.blackHole.ringRadius,
+                getRuntimeTuningDocument().visuals.blackHole.coreRadius,
+              ) * blackHoleScale;
+            minX = Math.min(
+              minX,
+              renderState.blackHole.pos.x - blackHoleVisualRadius,
+            );
+            maxX = Math.max(
+              maxX,
+              renderState.blackHole.pos.x + blackHoleVisualRadius,
+            );
+            minY = Math.min(
+              minY,
+              renderState.blackHole.pos.y - blackHoleVisualRadius,
+            );
+            maxY = Math.max(
+              maxY,
+              renderState.blackHole.pos.y + blackHoleVisualRadius,
+            );
+            blackHoleGroup.position.set(
+              renderState.blackHole.pos.x,
+              renderState.blackHole.pos.y,
+              4,
+            );
+            blackHoleGroup.scale.set(blackHoleScale, blackHoleScale, 1);
+            blackHoleRing.rotation.z = nowSec * 0.16;
+          } else {
+            blackHoleGroup.scale.set(1, 1, 1);
           }
 
           for (const [index, sun] of renderState.suns.entries()) {
@@ -643,68 +1012,48 @@ export function createSunInteractionViewport(
           updateAmbientBoundaryDebrisVisual({
             ...getAmbientBoundaryDebrisRadii(arenaRadius),
             nowSec,
-            offset: arenaOffset,
             visual: outerRingDebris,
           });
 
           const width = Math.max(1, hostElement.clientWidth);
           const height = Math.max(1, hostElement.clientHeight);
           const aspect = width / height;
-          const targetCenterX = (minX + maxX) / 2;
-          const targetCenterY = (minY + maxY) / 2;
-          const targetHalfWidth = (maxX - minX) / 2 + FRAME_PADDING;
-          const targetHalfHeight = (maxY - minY) / 2 + FRAME_PADDING;
-          const nextHalfHeight = Math.max(
-            MIN_CAMERA_HALF_HEIGHT,
-            targetHalfHeight,
-            targetHalfWidth / aspect,
-          );
+          const cameraTarget = getSunInteractionViewportCameraTarget({
+            aspect,
+            bounds: {
+              maxX,
+              maxY,
+              minX,
+              minY,
+            },
+            mode,
+            tuning: getRuntimeTuningDocument(),
+          });
 
           cameraState.centerX = lerp(
             cameraState.centerX,
-            targetCenterX,
+            cameraTarget.centerX,
             CAMERA_LERP,
           );
           cameraState.centerY = lerp(
             cameraState.centerY,
-            targetCenterY,
+            cameraTarget.centerY,
             CAMERA_LERP,
           );
           cameraState.worldHalfHeight = lerp(
             cameraState.worldHalfHeight,
-            nextHalfHeight,
+            cameraTarget.worldHalfHeight,
             CAMERA_LERP,
           );
           applyCameraFrame();
 
-          const orbitSystemDrift = getOrbitSystemDriftVelocity(
-            getRuntimeTuningDocument().gameplay.orbits,
-          );
-          const orbitSystemDriftMagnitude = Math.hypot(
-            orbitSystemDrift.x,
-            orbitSystemDrift.y,
-          );
-
           for (const layer of backgroundLayers) {
-            const layerDriftMagnitude = Math.hypot(layer.driftX, layer.driftY);
-            const layerDriftX =
-              orbitSystemDriftMagnitude > Number.EPSILON &&
-              layerDriftMagnitude > Number.EPSILON
-                ? (orbitSystemDrift.x / orbitSystemDriftMagnitude) *
-                  layerDriftMagnitude
-                : layer.driftX;
-            const layerDriftY =
-              orbitSystemDriftMagnitude > Number.EPSILON &&
-              layerDriftMagnitude > Number.EPSILON
-                ? (orbitSystemDrift.y / orbitSystemDriftMagnitude) *
-                  layerDriftMagnitude
-                : layer.driftY;
             layer.group.position.x = wrapCentered(
-              cameraState.centerX * layer.parallax + nowSec * layerDriftX,
+              cameraState.centerX * layer.parallax + nowSec * layer.driftX,
               layer.tileSize,
             );
             layer.group.position.y = wrapCentered(
-              cameraState.centerY * layer.parallax + nowSec * layerDriftY,
+              cameraState.centerY * layer.parallax + nowSec * layer.driftY,
               layer.tileSize,
             );
           }

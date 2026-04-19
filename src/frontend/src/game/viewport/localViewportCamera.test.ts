@@ -28,7 +28,6 @@ describe("getLocalViewportCameraFrame", () => {
     };
 
     const frame = getLocalViewportCameraFrame({
-      readModeHeld: false,
       state,
     });
 
@@ -38,26 +37,76 @@ describe("getLocalViewportCameraFrame", () => {
     expect(frame.centerY).not.toBe(otherPlanet.pos.y);
   });
 
-  it("uses the configured read mode world height as the sandbox baseline", () => {
+  it("can follow the next surviving planet after the focused bot dies", () => {
+    const state = createSandboxState(DEFAULT_ORBIT_PRESET, {
+      playerBehavior: "bot",
+    });
+    const playerPlanetIndex = state.planets.findIndex(
+      (planet) => planet.id === state.player.planetId,
+    );
+    const otherPlanet = state.planets.find(
+      (planet) => planet.id !== state.player.planetId && planet.alive,
+    )!;
+
+    state.planets[playerPlanetIndex] = {
+      ...state.planets[playerPlanetIndex]!,
+      alive: false,
+      pos: { x: -320, y: 540 },
+    };
+
+    const frame = getLocalViewportCameraFrame({
+      followAlivePlanetWhenPlayerDown: true,
+      state,
+    });
+
+    expect(frame.centerX).toBe(otherPlanet.pos.x);
+    expect(frame.centerY).toBe(otherPlanet.pos.y);
+  });
+
+  it("uses the configured gameplay camera height as the sandbox baseline", () => {
     const tunedDocument = structuredClone(CURRENT_GAME_TUNING);
-    tunedDocument.gameplay.camera.viewportWorldHeight = 5100;
-    tunedDocument.gameplay.camera.readModeWorldHeight = 7800;
+    tunedDocument.gameplay.camera.gameplayCameraWorldHeight = 5100;
     applyRuntimeTuningDocument(tunedDocument);
 
     const state = createSandboxState(DEFAULT_ORBIT_PRESET, {
       botsEnabled: false,
     });
 
-    const followFrame = getLocalViewportCameraFrame({
-      readModeHeld: false,
-      state,
-    });
-    const readModeFrame = getLocalViewportCameraFrame({
-      readModeHeld: true,
-      state,
+    const frame = getLocalViewportCameraFrame({ state });
+
+    expect(frame.visibleWorldHeight).toBe(5100);
+  });
+
+  it("expands observer stage framing to fit the arena bounds", () => {
+    const frame = getLocalViewportCameraFrame({
+      aspect: 16 / 9,
+      state: {
+        blackHole: null,
+        drones: [],
+        planets: [],
+        player: {
+          activeDroneId: null,
+          controlMode: "planet",
+          planetId: 1,
+        },
+        suns: [],
+      },
+      useArenaStageCamera: true,
     });
 
-    expect(followFrame.visibleWorldHeight).toBe(7800);
-    expect(readModeFrame.visibleWorldHeight).toBe(7800);
+    expect(frame.centerX).toBe(0);
+    expect(frame.centerY).toBe(0);
+    expect(frame.visibleWorldHeight).toBe(5040);
+  });
+
+  it("supports overriding the sandbox camera height for preview-only uses", () => {
+    const frame = getLocalViewportCameraFrame({
+      cameraWorldHeightOverride: 7600,
+      state: createSandboxState(DEFAULT_ORBIT_PRESET, {
+        botsEnabled: false,
+      }),
+    });
+
+    expect(frame.visibleWorldHeight).toBe(7600);
   });
 });
