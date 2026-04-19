@@ -262,7 +262,9 @@ const createShardLayer = ({
 };
 
 const createRockGeometry = (radius: number, seed: number): BufferGeometry => {
-  const geometry = new IcosahedronGeometry(radius, 0).toNonIndexed();
+  const baseGeometry = new IcosahedronGeometry(radius, 0);
+  const geometry =
+    baseGeometry.index === null ? baseGeometry : baseGeometry.toNonIndexed();
   const positionAttribute = geometry.getAttribute(
     "position",
   ) as Float32BufferAttribute;

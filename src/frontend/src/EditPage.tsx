@@ -16,6 +16,7 @@ import {
   startTransition,
   type ReactNode,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -1748,7 +1749,11 @@ export function EditPage() {
       return;
     }
 
-    if (document.fullscreenElement === aiGameplayPreviewRef.current) {
+    const previewElement = aiGameplayPreviewRef.current;
+    if (
+      previewElement !== null &&
+      document.fullscreenElement === previewElement
+    ) {
       void document.exitFullscreen();
       return;
     }
@@ -2726,46 +2731,46 @@ export function EditPage() {
       case "overview":
         return (
           <InspectorSection
-              title="Camera Modes"
-              note="Larger values zoom farther out. Sandbox uses the gameplay camera height."
-              resetDisabled={sectionResetDisabled}
-              onReset={() =>
-                resetInspectorSection((draft, defaults) => {
-                  draft.gameplay.camera = defaults.gameplay.camera;
+            title="Camera Modes"
+            note="Larger values zoom farther out. Sandbox uses the gameplay camera height."
+            resetDisabled={sectionResetDisabled}
+            onReset={() =>
+              resetInspectorSection((draft, defaults) => {
+                draft.gameplay.camera = defaults.gameplay.camera;
+              })
+            }
+          >
+            <NumberField
+              label="Gameplay camera height"
+              step={10}
+              value={documentValue.gameplay.camera.gameplayCameraWorldHeight}
+              onPreviewChange={(value) =>
+                applyPreviewChange((draft) => {
+                  draft.gameplay.camera.gameplayCameraWorldHeight = value;
                 })
               }
-            >
-              <NumberField
-                label="Gameplay camera height"
-                step={10}
-                value={documentValue.gameplay.camera.gameplayCameraWorldHeight}
-                onPreviewChange={(value) =>
-                  applyPreviewChange((draft) => {
-                    draft.gameplay.camera.gameplayCameraWorldHeight = value;
-                  })
-                }
-                onCommit={(value) =>
-                  commitChange((draft) => {
-                    draft.gameplay.camera.gameplayCameraWorldHeight = value;
-                  })
-                }
-              />
-              <NumberField
-                label="Preview camera height"
-                step={10}
-                value={documentValue.gameplay.camera.previewCameraWorldHeight}
-                onPreviewChange={(value) =>
-                  applyPreviewChange((draft) => {
-                    draft.gameplay.camera.previewCameraWorldHeight = value;
-                  })
-                }
-                onCommit={(value) =>
-                  commitChange((draft) => {
-                    draft.gameplay.camera.previewCameraWorldHeight = value;
-                  })
-                }
-              />
-            </InspectorSection>
+              onCommit={(value) =>
+                commitChange((draft) => {
+                  draft.gameplay.camera.gameplayCameraWorldHeight = value;
+                })
+              }
+            />
+            <NumberField
+              label="Preview camera height"
+              step={10}
+              value={documentValue.gameplay.camera.previewCameraWorldHeight}
+              onPreviewChange={(value) =>
+                applyPreviewChange((draft) => {
+                  draft.gameplay.camera.previewCameraWorldHeight = value;
+                })
+              }
+              onCommit={(value) =>
+                commitChange((draft) => {
+                  draft.gameplay.camera.previewCameraWorldHeight = value;
+                })
+              }
+            />
+          </InspectorSection>
         );
       case "hud":
         return (
@@ -5549,11 +5554,15 @@ export function EditPage() {
   };
 
   const previewMode = getPreviewMode(selectedItemId);
-  const aiGameplaySandboxConfig = {
-    botDifficulty: aiGameplayDifficulty,
-    participantCount: aiGameplayParticipantCount,
-    playerBehavior: "bot",
-  } as const;
+  const aiGameplaySandboxConfig = useMemo(
+    () =>
+      ({
+        botDifficulty: aiGameplayDifficulty,
+        participantCount: aiGameplayParticipantCount,
+        playerBehavior: "bot",
+      }) as const,
+    [aiGameplayDifficulty, aiGameplayParticipantCount],
+  );
   const setClampedAiGameplayParticipantCount = (value: number) => {
     setAiGameplayParticipantCount(
       clamp(

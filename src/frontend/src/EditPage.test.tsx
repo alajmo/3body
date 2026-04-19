@@ -1,7 +1,4 @@
-import {
-  CURRENT_GAME_TUNING,
-  DEFAULT_GAME_TUNING,
-} from "@3body/shared";
+import { CURRENT_GAME_TUNING, DEFAULT_GAME_TUNING } from "@3body/shared";
 import {
   fireEvent,
   render,
@@ -13,10 +10,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EditPage } from "./EditPage";
 import { applyRuntimeTuningDocument } from "./game/runtimeTuning";
 
-const { editGameViewportPanelMock, editorPreviewStageMock } = vi.hoisted(() => ({
-  editGameViewportPanelMock: vi.fn(),
-  editorPreviewStageMock: vi.fn(),
-}));
+const { editGameViewportPanelMock, editorPreviewStageMock } = vi.hoisted(
+  () => ({
+    editGameViewportPanelMock: vi.fn(),
+    editorPreviewStageMock: vi.fn(),
+  }),
+);
 
 type EditorPreviewStageProps = {
   documentValue: typeof CURRENT_GAME_TUNING;
@@ -70,21 +69,19 @@ describe("EditPage", () => {
   const mockTuningFetch = (
     initialDocument: typeof CURRENT_GAME_TUNING = CURRENT_GAME_TUNING,
   ) => {
-    fetchMock.mockImplementation(
-      async (input: unknown, init?: RequestInit) => {
-        const method = init?.method ?? "GET";
-        const path = String(input);
-        const document =
-          method === "PUT" && path === "/api/editor/tuning"
-            ? (JSON.parse(String(init?.body)) as typeof CURRENT_GAME_TUNING)
-            : initialDocument;
+    fetchMock.mockImplementation(async (input: unknown, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      const path = String(input);
+      const document =
+        method === "PUT" && path === "/api/editor/tuning"
+          ? (JSON.parse(String(init?.body)) as typeof CURRENT_GAME_TUNING)
+          : initialDocument;
 
-        return new Response(JSON.stringify(document), {
-          headers: { "Content-Type": "application/json" },
-          status: 200,
-        });
-      },
-    );
+      return new Response(JSON.stringify(document), {
+        headers: { "Content-Type": "application/json" },
+        status: 200,
+      });
+    });
   };
 
   beforeEach(() => {
@@ -185,7 +182,9 @@ describe("EditPage", () => {
     );
 
     const scaleInput = await screen.findByLabelText("Scale");
-    expect(scaleInput).toHaveValue(CURRENT_GAME_TUNING.visuals.rockets.light.scale);
+    expect(scaleInput).toHaveValue(
+      CURRENT_GAME_TUNING.visuals.rockets.light.scale,
+    );
 
     fireEvent.change(scaleInput, { target: { value: "1.8" } });
     fireEvent.blur(scaleInput);
@@ -391,6 +390,62 @@ describe("EditPage", () => {
     ).toBeInTheDocument();
   });
 
+  it("does not exit fullscreen when AI gameplay preview is not mounted", async () => {
+    mockTuningFetch();
+    window.history.pushState({}, "", "/edit?item=background");
+
+    const exitFullscreenMock = vi.fn(async () => {});
+    Object.defineProperty(document, "fullscreenElement", {
+      configurable: true,
+      get: () => null,
+    });
+    Object.defineProperty(document, "exitFullscreen", {
+      configurable: true,
+      value: exitFullscreenMock,
+    });
+
+    render(<EditPage />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+    });
+
+    expect(exitFullscreenMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps the AI sandbox config stable across fullscreen state rerenders", async () => {
+    mockTuningFetch();
+    window.history.pushState({}, "", "/edit?item=ai-gameplay");
+
+    let fullscreenElement: Element | null = null;
+    Object.defineProperty(document, "fullscreenElement", {
+      configurable: true,
+      get: () => fullscreenElement,
+    });
+
+    render(<EditPage />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+    });
+
+    const initialSandboxConfig =
+      editGameViewportPanelMock.mock.lastCall?.[0]?.sandboxSessionConfig;
+    const previewStage = screen.getByTestId("ai-gameplay-preview-stage");
+    fullscreenElement = previewStage;
+    document.dispatchEvent(new Event("fullscreenchange"));
+
+    await waitFor(() => {
+      expect(
+        screen.getAllByRole("button", { name: /^Exit fullscreen$/i }).length,
+      ).toBeGreaterThan(0);
+    });
+
+    expect(
+      editGameViewportPanelMock.mock.lastCall?.[0]?.sandboxSessionConfig,
+    ).toBe(initialSandboxConfig);
+  });
+
   it("updates the selected item from history navigation on /edit", async () => {
     mockTuningFetch();
     window.history.pushState({}, "", "/edit?item=background");
@@ -576,7 +631,9 @@ describe("EditPage", () => {
     expect(screen.getByLabelText("Star density")).toHaveValue(
       CURRENT_GAME_TUNING.visuals.background.starDensity,
     );
-    expect(screen.queryByLabelText("Neutron star count")).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Neutron star count"),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText("Moving Objects")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Enable movers")).not.toBeInTheDocument();
 
@@ -754,7 +811,9 @@ describe("EditPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /Neutron Stars/i }));
 
     const countInput = await screen.findByLabelText("Neutron star count");
-    expect(countInput).toHaveValue(CURRENT_GAME_TUNING.gameplay.neutronStars.count);
+    expect(countInput).toHaveValue(
+      CURRENT_GAME_TUNING.gameplay.neutronStars.count,
+    );
     expect(screen.getByLabelText("Min mass (kg)")).toHaveValue(
       CURRENT_GAME_TUNING.gameplay.neutronStars.minMassKg,
     );
@@ -947,8 +1006,7 @@ describe("EditPage", () => {
     customDocument.gameplay.neutronStars.count = 3;
     customDocument.gameplay.neutronStars.minMassKg = 240000;
     customDocument.gameplay.neutronStars.maxSize = 144;
-    customDocument.gameplay.neutronStars.randomizePositionInsidePlayableCircle =
-      false;
+    customDocument.gameplay.neutronStars.randomizePositionInsidePlayableCircle = false;
     customDocument.visuals.neutronStars.haloScale = 4.8;
     customDocument.visuals.neutronStars.jetOpacity = 0.33;
     mockTuningFetch(customDocument);
@@ -962,7 +1020,9 @@ describe("EditPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /Neutron Stars/i }));
 
     expect(await screen.findByLabelText("Neutron star count")).toHaveValue(3);
-    expect(screen.getByLabelText("Randomize position inside playable circle")).not.toBeChecked();
+    expect(
+      screen.getByLabelText("Randomize position inside playable circle"),
+    ).not.toBeChecked();
 
     fireEvent.click(screen.getByRole("button", { name: /Reset item/i }));
 
@@ -1441,7 +1501,9 @@ describe("EditPage", () => {
       expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /SeekerLock-on profile/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /SeekerLock-on profile/i }),
+    );
 
     const lockSecondsInput = await screen.findByLabelText("Lock seconds");
     expect(lockSecondsInput).toHaveValue(
