@@ -889,6 +889,11 @@ const isEntityInsideBlackHole = (
   blackHole !== null &&
   dist(entity.pos, blackHole.pos) <= blackHole.killRadius + entity.radius;
 
+const isEntityTouchingArenaBoundary = (
+  entity: Pick<EntityBase, "pos" | "radius">,
+  arenaRadius: number,
+): boolean => len(entity.pos) + entity.radius >= arenaRadius;
+
 const getBlackHoleBonusMass = (
   blackHole: BlackHole,
   blackHoleSpec: BlackHoleSpec,
@@ -2588,8 +2593,10 @@ export const stepSandbox = (
   }
 
   const steppedRockets: CombatSandboxRocket[] = [];
+  const expiredRockets: CombatSandboxRocket[] = [];
   for (const rocket of rockets) {
     if (rocket.ttlUntilTick <= nextTick) {
+      expiredRockets.push(rocket);
       continue;
     }
 
@@ -2641,6 +2648,7 @@ export const stepSandbox = (
   caches = steppedCaches;
 
   const survivingRockets: CombatSandboxRocket[] = [];
+  const destroyedRocketIds = new Set<number>();
   const destroyedDroneIds = new Set<number>();
   const destroyedCacheIds = new Set<number>();
   const scheduleDroneRemoval = (droneId: number) => {
@@ -2688,16 +2696,65 @@ export const stepSandbox = (
     nextEntityId += 1;
   };
 
+  for (const rocket of expiredRockets) {
+    emitRocketImpact(rocket);
+  }
+
+  for (let index = 0; index < rockets.length; index += 1) {
+    const rocket = rockets[index]!;
+    if (destroyedRocketIds.has(rocket.id)) {
+      continue;
+    }
+
+    for (
+      let otherIndex = index + 1;
+      otherIndex < rockets.length;
+      otherIndex += 1
+    ) {
+      const other = rockets[otherIndex]!;
+      if (destroyedRocketIds.has(other.id)) {
+        continue;
+      }
+
+      if (dist(rocket.pos, other.pos) <= rocket.radius + other.radius) {
+        destroyedRocketIds.add(rocket.id);
+        destroyedRocketIds.add(other.id);
+      }
+    }
+  }
+
   for (const rocket of rockets) {
+    if (destroyedRocketIds.has(rocket.id)) {
+      emitRocketImpact(rocket);
+      continue;
+    }
+
     if (rocket.ttlUntilTick <= 0) {
       continue;
     }
 
     if (isEntityInsideBlackHole(rocket, blackHole)) {
+      emitRocketImpact(rocket);
       continue;
     }
 
     let consumed = false;
+
+    for (const neutronStar of state.neutronStars) {
+      if (dist(rocket.pos, neutronStar.pos) <= rocket.radius + neutronStar.radius) {
+        emitRocketImpact(rocket);
+        consumed = true;
+        break;
+      }
+    }
+    if (consumed) {
+      continue;
+    }
+
+    if (isEntityTouchingArenaBoundary(rocket, ARENA_RADIUS)) {
+      emitRocketImpact(rocket);
+      continue;
+    }
 
     for (const sun of activeSuns) {
       if (dist(rocket.pos, sun.pos) <= rocket.radius + sun.radius) {

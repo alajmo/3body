@@ -56,6 +56,14 @@ export const scoreCombatAiIntents = ({
           (planet) => planet.id === primaryTargetFact.planetId,
         ) ?? null);
   const bestCache = perception.caches[0];
+  const topNonBoundaryThreat = perception.threats.find(
+    (threat) => threat.kind !== "boundary",
+  );
+  const boundaryOnlyPressure =
+    topThreat?.kind === "boundary" &&
+    (topThreat.urgency ?? 0) < 0.86 &&
+    perception.boundaryPressure < 0.76 &&
+    (topNonBoundaryThreat?.urgency ?? 0) < 0.58;
   const currentIntentKind = blackboard.intent.kind;
   const currentIntentBias = (kind: CombatAiIntent["kind"]): number =>
     currentIntentKind === kind && tick < blackboard.intent.expiresAtTick
@@ -63,14 +71,16 @@ export const scoreCombatAiIntents = ({
       : 0;
 
   const surviveScore =
-    (topThreat?.urgency ?? 0) * 120 +
-    perception.boundaryPressure * 36 +
+    (topThreat?.urgency ?? 0) * (boundaryOnlyPressure ? 72 : 120) +
+    perception.boundaryPressure * (boundaryOnlyPressure ? 14 : 36) +
     perception.blackHolePressure * 42 +
-    currentIntentBias("survive");
+    (boundaryOnlyPressure ? 0 : currentIntentBias("survive"));
   const surviveReason =
     topThreat === undefined
       ? "no urgent threats"
-      : `answer ${topThreat.kind} (${Math.round(topThreat.urgency * 100)}%)`;
+      : boundaryOnlyPressure
+        ? `stabilize orbit after ${topThreat.reason}`
+        : `answer ${topThreat.kind} (${Math.round(topThreat.urgency * 100)}%)`;
 
   const finishScore =
     primaryTarget === null
@@ -98,6 +108,7 @@ export const scoreCombatAiIntents = ({
     ) *
       16 +
     perception.boundaryPressure * 24 +
+    (boundaryOnlyPressure ? 18 + perception.boundaryPressure * 18 : 0) +
     ((perception.boostReady && topThreat === undefined) || difficulty === "hard"
       ? 8
       : 0) +

@@ -103,6 +103,36 @@ const executionStateForIntent = (
   }
 };
 
+const inwardDir = (pos: Vec2): Vec2 => {
+  const dir = normalize(scale(pos, -1));
+  return len(dir) === 0 ? defaultCombatAiAimDir() : dir;
+};
+
+const selectShieldThreat = ({
+  perception,
+  self,
+}: {
+  perception: CombatAiBlackboard["perception"];
+  self: PlanetPublic;
+}): CombatAiBlackboard["perception"]["threats"][number] | undefined => {
+  if (self.shieldLoad <= 0) {
+    return undefined;
+  }
+
+  return perception.threats.find((threat) => {
+    if (threat.kind !== "rocket") {
+      return false;
+    }
+
+    return (
+      threat.immediate ||
+      (threat.timeSec <= 0.8 && threat.urgency >= 0.34) ||
+      (self.shieldActive && threat.timeSec <= 1.05 && threat.urgency >= 0.24) ||
+      threat.urgency >= 0.62
+    );
+  });
+};
+
 const resolveBoostCommitThreshold = ({
   intent,
   lastBoostTick,
@@ -162,6 +192,13 @@ const resolveBoostCommitThreshold = ({
     threshold *= 0.82;
   }
 
+  if (perception.boundaryPressure >= 0.34) {
+    threshold *= 0.72;
+  }
+  if (perception.boundaryPressure >= 0.55 || topThreat?.kind === "boundary") {
+    threshold *= 0.58;
+  }
+
   const ticksSinceBoost =
     lastBoostTick < 0
       ? Number.POSITIVE_INFINITY
@@ -192,13 +229,45 @@ const isPressureLightProbeShot = (score: CombatAiShotScore): boolean =>
     ) &&
   score.breakdown.shieldLikelihood <= 0.5;
 
+const isLowAmmoLightFallbackShot = ({
+  privateState,
+  score,
+}: {
+  privateState: PlanetPrivateState;
+  score: CombatAiShotScore;
+}): boolean =>
+  score.weaponKind === "light" &&
+  privateState.ammo.heavy <= 0 &&
+  privateState.ammo.seeker <= 0 &&
+  score.confidence >=
+    Math.max(
+      0.26,
+      COMBAT_AI_TUNING.execution.pressureLightOverrideConfidence * 0.6,
+    ) &&
+  score.expectedDamage >=
+    Math.max(
+      2.5,
+      COMBAT_AI_TUNING.execution.pressureLightOverrideDamage * 0.35,
+    ) &&
+  score.wasteScore <=
+    Math.min(
+      0.56,
+      COMBAT_AI_TUNING.execution.pressureLightOverrideWaste + 0.32,
+    ) &&
+  score.breakdown.shieldLikelihood <= 0.56;
+
 const chooseShotForIntent = (
   intent: CombatAiIntent,
+  privateState: PlanetPrivateState,
   scores: CombatAiShotScore[],
 ): CombatAiShotScore | null => {
   if (scores.length === 0) {
     return null;
   }
+
+  const lowAmmoLightFallback = scores.find((score) =>
+    isLowAmmoLightFallbackShot({ privateState, score }),
+  );
 
   switch (intent.kind) {
     case "zoneWithHeavy":
@@ -222,7 +291,12 @@ const chooseShotForIntent = (
           heavy.wasteScore <= 0.18;
         return heavyDecisive || !lightPressureReady ? heavy : light;
       }
-      return (lightPressureReady ? light : undefined) ?? heavy ?? scores[0]!;
+      return (
+        (lightPressureReady ? light : undefined) ??
+        lowAmmoLightFallback ??
+        heavy ??
+        scores[0]!
+      );
     }
     case "survive":
     case "reposition":
@@ -234,10 +308,12 @@ const chooseShotForIntent = (
           (score) =>
             score.allowFire &&
             (score.weaponKind === "light" || score.confidence >= 0.74),
-        ) ?? scores[0]!
+        ) ??
+        lowAmmoLightFallback ??
+        scores[0]!
       );
     default:
-      return scores[0]!;
+      return lowAmmoLightFallback ?? scores[0]!;
   }
 };
 
@@ -251,6 +327,7 @@ const buildAbilityPolicy = ({
   moveGoal,
   perception,
   privateState,
+  shieldThreat,
   self,
   target,
   tick,
@@ -267,6 +344,7 @@ const buildAbilityPolicy = ({
   moveGoal: CombatAiMoveGoal | null;
   perception: CombatAiBlackboard["perception"];
   privateState: PlanetPrivateState;
+  shieldThreat: CombatAiBlackboard["perception"]["threats"][number] | undefined;
   self: PlanetPublic;
   target: PlanetPublic | null;
   tick: number;
@@ -281,18 +359,17 @@ const buildAbilityPolicy = ({
     target,
     world,
   });
-  const shield =
-    topThreat?.preferredResponse === "shield" &&
-    (topThreat.immediate || topThreat.urgency >= 0.55) &&
-    self.shieldLoad > 0;
-  if (shield && topThreat !== undefined) {
-    reasons.push(`shield ${topThreat.kind}`);
+  const shield = shieldThreat !== undefined;
+  if (shield) {
+    reasons.push("shield rocket");
   }
 
   const ticksSinceBoost =
     lastBoostTick < 0
       ? Number.POSITIVE_INFINITY
       : Math.max(0, tick - lastBoostTick);
+  const inwardAlignment =
+    moveGoal === null ? 0 : dot(moveGoal.dir, inwardDir(self.pos));
   const movementPressure =
     moveGoal === null
       ? 0
@@ -311,10 +388,18 @@ const buildAbilityPolicy = ({
     movementPressure >= 0.4 &&
     ticksSinceBoost >= tickHz * 2 &&
     dot(normalize(self.vel), moveGoal.dir) < 0.74;
+  const boundaryRescueWindow =
+    moveGoal !== null &&
+    moveGoal.usesBoost &&
+    perception.boundaryPressure >= 0.32 &&
+    moveGoal.breakdown.survival >= 0.44 &&
+    inwardAlignment >= 0.18 &&
+    ticksSinceBoost >= tickHz;
   const boost =
     privateState.boostCharges > 0 &&
     moveGoal?.usesBoost === true &&
     (bestMoveDelta >= boostCommitThreshold ||
+      boundaryRescueWindow ||
       (assertiveRepositionWindow &&
         bestMoveDelta >= boostCommitThreshold * 0.4) ||
       (intent.kind === "survive" &&
@@ -387,8 +472,8 @@ const buildAbilityPolicy = ({
 
   return {
     shield,
-    shieldDir: topThreat?.escapeDir
-      ? normalize(topThreat.escapeDir)
+    shieldDir: shieldThreat?.escapeDir
+      ? normalize(scale(shieldThreat.escapeDir, -1))
       : undefined,
     boost,
     boostDir:
@@ -411,10 +496,14 @@ const buildFireGate = ({
   chosenShot,
   executionState,
   intent,
+  privateState,
+  topThreat,
 }: {
   chosenShot: CombatAiShotScore | null;
   executionState: CombatAiPlan["executionState"];
   intent: CombatAiIntent;
+  privateState: PlanetPrivateState;
+  topThreat: CombatAiBlackboard["perception"]["threats"][number] | undefined;
 }): CombatAiFireGate => {
   if (chosenShot === null) {
     return {
@@ -426,25 +515,37 @@ const buildFireGate = ({
     };
   }
 
+  const lowAmmoLightOverride = isLowAmmoLightFallbackShot({
+    privateState,
+    score: chosenShot,
+  });
+  const boundaryEvadeLightWindow =
+    executionState === "evade" &&
+    topThreat?.kind === "boundary" &&
+    chosenShot.weaponKind === "light" &&
+    (chosenShot.allowFire || lowAmmoLightOverride);
   const fireSuppressed =
-    executionState === "evade" ||
-    executionState === "recover" ||
+    (executionState === "evade" && !boundaryEvadeLightWindow) ||
+    (executionState === "recover" && !lowAmmoLightOverride) ||
     executionState === "droneRun" ||
     (executionState === "cacheRun" &&
       chosenShot.confidence <
-        COMBAT_AI_TUNING.execution.cacheRunFireConfidence);
+        COMBAT_AI_TUNING.execution.cacheRunFireConfidence &&
+      !lowAmmoLightOverride);
   const pressureLightOverride =
     intent.kind === "pressure" && isPressureLightProbeShot(chosenShot);
   const allowFire =
-    (chosenShot.allowFire || pressureLightOverride) &&
+    (chosenShot.allowFire || pressureLightOverride || lowAmmoLightOverride) &&
     !fireSuppressed &&
     !(
       (intent.kind === "reposition" &&
         chosenShot.confidence <
-          COMBAT_AI_TUNING.execution.repositionFireConfidence) ||
+          COMBAT_AI_TUNING.execution.repositionFireConfidence &&
+        !lowAmmoLightOverride) ||
       (executionState === "cacheRun" &&
         chosenShot.confidence <
-          COMBAT_AI_TUNING.execution.cacheRunFireConfidence)
+          COMBAT_AI_TUNING.execution.cacheRunFireConfidence &&
+        !lowAmmoLightOverride)
     );
 
   return {
@@ -489,6 +590,7 @@ export const buildCombatAiPlan = ({
       : (world.caches.find((cache) => cache.id === intent.targetCacheId) ??
         null);
   const topThreat = perception.threats[0];
+  const shieldThreat = selectShieldThreat({ perception, self });
   const moveGoals = scoreMovementGoals({
     bestCache,
     boostCharges: privateState.boostCharges,
@@ -546,13 +648,15 @@ export const buildCombatAiPlan = ({
           world,
         })
       : [];
-  const chosenShot = chooseShotForIntent(intent, shotScores);
+  const chosenShot = chooseShotForIntent(intent, privateState, shotScores);
   const executionState = executionStateForIntent(intent);
   const drone = findDrone(self, world, blackboard.self.activeDroneId);
   const fireGate = buildFireGate({
     chosenShot,
     executionState,
     intent,
+    privateState,
+    topThreat,
   });
   const forcedMoveGoal =
     intent.kind === "survive" &&
@@ -563,11 +667,19 @@ export const buildCombatAiPlan = ({
       : intent.kind === "contestCache" && cacheMoveGoal !== null
         ? cacheMoveGoal
         : null;
+  const edgeRescueBoostGoal =
+    bestMoveGoal !== null &&
+    bestMoveGoal.usesBoost &&
+    perception.boundaryPressure >= 0.32 &&
+    bestMoveGoal.breakdown.survival >= 0.44 &&
+    dot(bestMoveGoal.dir, inwardDir(self.pos)) >= 0.18;
   const moveGoal =
     forcedMoveGoal ??
     (bestMoveGoal === null
       ? null
-      : bestMoveGoal.usesBoost && bestMoveDelta < boostCommitThreshold
+      : bestMoveGoal.usesBoost &&
+          bestMoveDelta < boostCommitThreshold &&
+          !edgeRescueBoostGoal
         ? (holdGoal ?? bestMoveGoal)
         : bestMoveGoal);
   const abilityPolicy = buildAbilityPolicy({
@@ -580,6 +692,7 @@ export const buildCombatAiPlan = ({
     moveGoal,
     perception,
     privateState,
+    shieldThreat,
     self,
     target,
     tick,
@@ -635,10 +748,7 @@ export const buildCombatAiPlan = ({
     abilityPolicy: {
       ...abilityPolicy,
       boostDir: moveGoal?.dir,
-      shieldDir:
-        topThreat !== undefined
-          ? normalize(scale(topThreat.escapeDir, -1))
-          : abilityPolicy.shieldDir,
+      shieldDir: abilityPolicy.shieldDir,
     },
     fireGate,
     abortConditions: [

@@ -6,6 +6,7 @@ import {
   cloneGameTuningDocument,
   DEFAULT_GAME_TUNING,
   FORESIGHT_SPEC,
+  len,
   PLANET_HP,
   ROCKET_SPECS,
   SHIELD_SPEC,
@@ -415,6 +416,243 @@ describe("AI mode", () => {
     expect(memory.blackboard.plan?.moveGoal?.dir.x).toBeLessThan(-0.2);
   });
 
+  it("fires light shots while correcting from boundary pressure", () => {
+    const self = createPlanet({
+      id: 1,
+      playerId: "self",
+      pos: { x: ARENA_RADIUS * 0.86, y: -40 },
+      vel: { x: 130, y: 18 },
+      shieldLoad: 0,
+      shieldMaxLoad: 100,
+    });
+    const target = createPlanet({
+      id: 2,
+      playerId: "enemy",
+      pos: { x: ARENA_RADIUS * 0.61, y: -20 },
+      vel: { x: 0, y: 0 },
+      hp: 82,
+      shieldLoad: 0,
+      shieldMaxLoad: 0,
+      shieldActive: false,
+    });
+    const world = createWorld([self, target]);
+    const memory = createCombatBotMemory();
+
+    const commands = decideCombatBot(
+      createContext({
+        self,
+        privateState: createPrivateState(self.id, {
+          ammo: {
+            light: 6,
+            heavy: 0,
+            seeker: 0,
+          },
+          boostCharges: 1,
+        }),
+        tick: 240,
+        world,
+      }),
+      memory,
+    );
+
+    expect(memory.blackboard.plan?.fireGate.weaponKind).toBe("light");
+    expect(commands).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "fireRocket",
+          kind: "light",
+        }),
+      ]),
+    );
+  });
+
+  it("keeps firing light shots after special ammo is depleted", () => {
+    const tunedDocument = cloneGameTuningDocument(getRuntimeTuningDocument());
+    tunedDocument.gameplay.ai.shots.confidenceThresholds.hard.light = 0.99;
+    applyRuntimeTuningDocument(tunedDocument);
+
+    const self = createPlanet({
+      id: 1,
+      playerId: "self",
+      pos: { x: ARENA_RADIUS * 0.84, y: -80 },
+      vel: { x: 118, y: 24 },
+      shieldLoad: 0,
+      shieldMaxLoad: 100,
+    });
+    const target = createPlanet({
+      id: 2,
+      playerId: "enemy",
+      pos: { x: ARENA_RADIUS * 0.56, y: 220 },
+      vel: { x: -94, y: 38 },
+      hp: 78,
+      shieldLoad: 0,
+      shieldMaxLoad: 0,
+      shieldActive: false,
+    });
+    const world = createWorld([self, target]);
+    const memory = createCombatBotMemory();
+
+    const commands = decideCombatBot(
+      createContext({
+        self,
+        privateState: createPrivateState(self.id, {
+          ammo: {
+            light: 6,
+            heavy: 0,
+            seeker: 0,
+          },
+          boostCharges: 1,
+        }),
+        tick: 240,
+        world,
+      }),
+      memory,
+    );
+
+    const lightShot = memory.blackboard.plan?.weaponPolicy.scoredShots.find(
+      (shot) => shot.weaponKind === "light",
+    );
+
+    expect(lightShot?.allowFire).toBe(false);
+    expect(memory.blackboard.plan?.fireGate.weaponKind).toBe("light");
+    expect(memory.blackboard.plan?.fireGate.allowFire).toBe(true);
+    expect(commands).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "fireRocket",
+          kind: "light",
+        }),
+      ]),
+    );
+  });
+
+  it("allows low-ammo light fallback while in recover execution", () => {
+    const tunedDocument = cloneGameTuningDocument(getRuntimeTuningDocument());
+    tunedDocument.gameplay.ai.shots.confidenceThresholds.hard.light = 0.99;
+    applyRuntimeTuningDocument(tunedDocument);
+
+    const self = createPlanet({
+      id: 1,
+      playerId: "self",
+      pos: { x: ARENA_RADIUS * 0.72, y: -120 },
+      vel: { x: 96, y: 34 },
+      shieldLoad: 0,
+      shieldMaxLoad: 100,
+    });
+    const target = createPlanet({
+      id: 2,
+      playerId: "enemy",
+      pos: { x: ARENA_RADIUS * 0.48, y: 180 },
+      vel: { x: -88, y: 30 },
+      hp: 72,
+      shieldLoad: 0,
+      shieldMaxLoad: 0,
+      shieldActive: false,
+    });
+    const world = createWorld([self, target]);
+    const memory = createCombatBotMemory();
+    const privateState = createPrivateState(self.id, {
+      ammo: {
+        light: 6,
+        heavy: 0,
+        seeker: 0,
+      },
+      boostCharges: 1,
+    });
+
+    decideCombatAi(
+      createContext({
+        self,
+        privateState,
+        tick: 240,
+        world,
+      }),
+      memory,
+    );
+
+    const plan = buildCombatAiPlan({
+      blackboard: memory.blackboard,
+      difficulty: "hard",
+      intent: {
+        kind: "recover",
+        score: 100,
+        expiresAtTick: 260,
+        reason: "recover fire gate test",
+      },
+      privateState,
+      self,
+      tick: 240,
+      world,
+    });
+
+    const lightShot = plan.weaponPolicy.scoredShots.find(
+      (shot) => shot.weaponKind === "light",
+    );
+
+    expect(plan.executionState).toBe("recover");
+    expect(lightShot?.allowFire).toBe(false);
+    expect(plan.fireGate.weaponKind).toBe("light");
+    expect(plan.fireGate.allowFire).toBe(true);
+  });
+
+  it("raises shield for an incoming targeted rocket even under edge pressure", () => {
+    const self = createPlanet({
+      id: 1,
+      playerId: "self",
+      pos: { x: ARENA_RADIUS * 0.86, y: 0 },
+      vel: { x: 120, y: 0 },
+      shieldLoad: 100,
+      shieldMaxLoad: 100,
+    });
+    const target = createPlanet({
+      id: 2,
+      playerId: "enemy",
+      pos: { x: 220, y: -120 },
+      vel: { x: 20, y: 0 },
+    });
+    const world = createWorld([self, target], {
+      rockets: [
+        {
+          id: 92,
+          kind: "rocket",
+          ownerId: target.playerId,
+          rocketKind: "light",
+          targetId: self.id,
+          pos: { x: ARENA_RADIUS * 0.75, y: 0 },
+          vel: { x: 420, y: 0 },
+          radius: 10,
+          ttlUntilTick: 240,
+        },
+      ],
+    });
+    const memory = createCombatBotMemory();
+
+    const commands = decideCombatBot(
+      createContext({
+        self,
+        privateState: createPrivateState(self.id, {
+          boostCharges: 1,
+        }),
+        tick: 120,
+        world,
+      }),
+      memory,
+    );
+
+    expect(memory.blackboard.plan?.abilityPolicy.shield).toBe(true);
+    expect(memory.blackboard.plan?.abilityPolicy.shieldDir?.x).toBeLessThan(
+      -0.2,
+    );
+    expect(commands).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "ability",
+          slot: "w",
+        }),
+      ]),
+    );
+  });
+
   it("honors runtime AI tuning for boost commitment", () => {
     const tunedDocument = cloneGameTuningDocument(getRuntimeTuningDocument());
     tunedDocument.gameplay.ai.execution.boostCommitScoreDelta = 999;
@@ -606,6 +844,46 @@ describe("AI mode", () => {
         }),
       ]),
     );
+  });
+
+  it("keeps exploration targets inside the inner safe orbit band", () => {
+    const self = createPlanet({
+      id: 1,
+      playerId: "self",
+      pos: { x: -920, y: -280 },
+      vel: { x: 36, y: 52 },
+      shieldLoad: 100,
+      shieldMaxLoad: 100,
+    });
+    const target = createPlanet({
+      id: 2,
+      playerId: "enemy",
+      pos: { x: 1340, y: 720 },
+      vel: { x: -12, y: 14 },
+      shieldActive: true,
+      shieldLoad: 100,
+      shieldMaxLoad: 100,
+      shieldAimDir: { x: -1, y: 0 },
+    });
+    const world = createWorld([self, target]);
+    const memory = createCombatBotMemory();
+
+    decideCombatAi(
+      createContext({
+        self,
+        privateState: createPrivateState(self.id, {
+          boostCharges: 2,
+        }),
+        tick: 480,
+        world,
+      }),
+      memory,
+    );
+
+    expect(memory.blackboard.perception.explore).not.toBeNull();
+    expect(
+      len(memory.blackboard.perception.explore!.targetPos),
+    ).toBeLessThanOrEqual(ARENA_RADIUS * 0.6);
   });
 
   it("switches to survive when another planet is on a collision course", () => {
@@ -803,6 +1081,8 @@ describe("AI mode", () => {
     });
 
     expect(plan.moveGoal?.label).not.toBe("burn outward");
+    expect(plan.moveGoal?.usesBoost).toBe(true);
+    expect(plan.abilityPolicy.boost).toBe(true);
     expect(plan.moveGoal?.dir.x).toBeLessThan(0.1);
   });
 

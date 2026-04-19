@@ -651,6 +651,104 @@ describe("combatSandbox", () => {
     expect(next.debris.length).toBeGreaterThan(0);
   });
 
+  it("detonates both rockets when missiles touch", () => {
+    const { state } = createLinearCombatState();
+    state.rockets = [
+      buildRocket({
+        id: 501,
+        ownerId: "player",
+        pos: { x: 640, y: 0 },
+      }),
+      buildRocket({
+        id: 502,
+        ownerId: "bot-2",
+        pos: { x: 640, y: 0 },
+      }),
+    ];
+
+    const next = stepSandbox(
+      state,
+      createStepInput(),
+      DISABLED_BLACK_HOLE_SPEC,
+    );
+
+    expect(next.rockets).toHaveLength(0);
+    expect(next.debris.length).toBeGreaterThan(0);
+    expect(next.impactBursts).toHaveLength(0);
+  });
+
+  it("detonates rockets when they hit neutron stars", () => {
+    const { state } = createLinearCombatState();
+    state.neutronStars = [
+      {
+        id: 601,
+        kind: "neutronStar",
+        mass: 4_000_000,
+        pos: { x: 640, y: 0 },
+        vel: { x: 0, y: 0 },
+        radius: 40,
+      },
+    ];
+    state.rockets = [
+      buildRocket({
+        id: 602,
+        pos: { x: 640, y: 0 },
+      }),
+    ];
+
+    const next = stepSandbox(
+      state,
+      createStepInput(),
+      DISABLED_BLACK_HOLE_SPEC,
+    );
+
+    expect(next.rockets).toHaveLength(0);
+    expect(next.debris.length).toBeGreaterThan(0);
+  });
+
+  it("detonates rockets on the arena boundary debris ring", () => {
+    const { state } = createLinearCombatState();
+    state.rockets = [
+      buildRocket({
+        id: 603,
+        pos: {
+          x: ARENA_RADIUS - ROCKET_SPECS.light.radius + 1,
+          y: 0,
+        },
+      }),
+    ];
+
+    const next = stepSandbox(
+      state,
+      createStepInput(),
+      DISABLED_BLACK_HOLE_SPEC,
+    );
+
+    expect(next.rockets).toHaveLength(0);
+    expect(next.debris.length).toBeGreaterThan(0);
+  });
+
+  it("detonates rockets when missile ttl expires", () => {
+    const { state } = createLinearCombatState();
+    state.rockets = [
+      buildRocket({
+        id: 604,
+        ttlUntilTick: state.tick + 1,
+        pos: { x: 640, y: 0 },
+      }),
+    ];
+
+    const next = stepSandbox(
+      state,
+      createStepInput(),
+      DISABLED_BLACK_HOLE_SPEC,
+    );
+
+    expect(next.rockets).toHaveLength(0);
+    expect(next.debris.length).toBeGreaterThan(0);
+    expect(next.impactBursts).toHaveLength(0);
+  });
+
   it("lets player-owned rockets hit the player planet", () => {
     const { state } = createLinearCombatState();
     const playerPlanet = state.planets.find(

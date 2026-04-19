@@ -38,10 +38,10 @@ import type {
 
 const DEFAULT_DIR: Vec2 = { x: 1, y: 0 };
 const EXPLORE_ANGLE_SECTORS = 12;
-const EXPLORE_RING_CENTERS = [0.22, 0.4, 0.58, 0.74] as const;
+const EXPLORE_RING_CENTERS = [0.18, 0.32, 0.46, 0.58] as const;
 const EXPLORE_UNSEEN_BONUS_TICKS = 8 * 120;
 const EXPLORE_AGE_CAP_TICKS = 18 * 120;
-const BOUNDARY_THREAT_START_RATIO = 0.88;
+const BOUNDARY_THREAT_START_RATIO = 0.84;
 
 const normalizeDir = (dir: Vec2, fallback: Vec2 = DEFAULT_DIR): Vec2 => {
   const normalized = normalize(dir);
@@ -153,6 +153,8 @@ const assessRocketThreats = (
       continue;
     }
 
+    const targeted = rocket.targetId === self.id;
+    const seeker = rocket.rocketKind === "seeker";
     const relativePos = sub(rocket.pos, self.pos);
     const relativeVel = sub(rocket.vel, self.vel);
     const relativeSpeedSq = Math.max(1, lenSq(relativeVel));
@@ -162,18 +164,24 @@ const assessRocketThreats = (
     );
     const closestVec = addScaled(relativePos, relativeVel, t);
     const missDistance = len(closestVec);
-    const hitRadius = self.radius + rocket.radius + 36;
+    const hitRadius =
+      self.radius + rocket.radius + (targeted ? 92 : seeker ? 72 : 52);
     if (missDistance > hitRadius) {
       continue;
     }
 
-    const urgency =
-      clamp01(1 - t / 1.25) * 0.68 +
-      clamp01(1 - missDistance / hitRadius) * 0.32;
+    const urgency = clamp01(
+      clamp01(1 - t / 1.25) * 0.56 +
+        clamp01(1 - missDistance / hitRadius) * 0.26 +
+        (targeted ? 0.12 : 0) +
+        (seeker ? 0.06 : 0),
+    );
     threats.push({
       kind: "rocket",
       urgency,
-      immediate: t <= 0.45,
+      immediate:
+        t <= (targeted || seeker ? 0.68 : 0.48) ||
+        missDistance <= hitRadius * 0.28,
       timeSec: t,
       entityId: rocket.id,
       playerId: rocket.ownerId,
@@ -393,7 +401,12 @@ const scoreExploreSectorSafety = (
   world: World,
 ): number => {
   const boundarySafety = clamp01(
-    (world.arenaRadius * 0.9 - len(pos)) / (world.arenaRadius * 0.26),
+    (world.arenaRadius * 0.82 - len(pos)) / (world.arenaRadius * 0.18),
+  );
+  const radialComfort = clamp01(
+    1 -
+      Math.abs(len(pos) - world.arenaRadius * 0.46) /
+        (world.arenaRadius * 0.28),
   );
   let sunSafety = 1;
   let neutronSafety = 1;
@@ -417,10 +430,11 @@ const scoreExploreSectorSafety = (
         );
 
   return clamp01(
-    boundarySafety * 0.34 +
-      sunSafety * 0.28 +
-      neutronSafety * 0.16 +
-      blackHoleSafety * 0.22,
+    boundarySafety * 0.4 +
+      radialComfort * 0.14 +
+      sunSafety * 0.22 +
+      neutronSafety * 0.1 +
+      blackHoleSafety * 0.14,
   );
 };
 
@@ -465,10 +479,10 @@ const buildExploreFact = ({
           : Math.max(0, tick - lastVisitTick);
       const ageScore = clamp01(ageTicks / EXPLORE_AGE_CAP_TICKS);
       const travelScore = clamp01(
-        dist(self.pos, targetPos) / Math.max(160, world.arenaRadius * 0.9),
+        1 - dist(self.pos, targetPos) / Math.max(240, world.arenaRadius * 0.72),
       );
       const score = clamp01(
-        ageScore * 0.58 + safety * 0.28 + travelScore * 0.14,
+        ageScore * 0.56 + safety * 0.34 + travelScore * 0.1,
       );
       const fact: CombatAiExploreFact = {
         sectorKey,
@@ -685,7 +699,7 @@ export const buildCombatAiPerception = ({
   const hpPressure = clamp01(1 - self.hp / PLANET_HP);
   const ammoPressure = scoreAmmoPressure(privateState);
   const boundaryPressure = clamp01(
-    (len(self.pos) - world.arenaRadius * 0.72) / (world.arenaRadius * 0.2),
+    (len(self.pos) - world.arenaRadius * 0.66) / (world.arenaRadius * 0.18),
   );
   const blackHolePressure =
     world.blackHole === undefined

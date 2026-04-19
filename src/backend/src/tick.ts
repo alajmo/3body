@@ -1331,6 +1331,11 @@ const applyBoundaryEffects = (
   return survivors;
 };
 
+const isEntityTouchingArenaBoundary = (
+  entity: Pick<Rocket, "pos" | "radius">,
+  arenaRadius: number,
+): boolean => len(entity.pos) + entity.radius >= arenaRadius;
+
 const stepRockets = (
   room: Room,
   planets: readonly PlanetPublic[],
@@ -1521,6 +1526,44 @@ const applyRocketCollisions = (
     }
 
     let consumed = false;
+
+    const neutronStars = room.world?.neutronStars ?? [];
+    for (const neutronStar of neutronStars) {
+      if (dist(rocket.pos, neutronStar.pos) <= rocket.radius + neutronStar.radius) {
+        consumed = true;
+        break;
+      }
+    }
+    if (consumed) {
+      room.rocketRuntime.delete(rocket.id);
+      debrisSink.push(
+        ...createDebrisBurst(
+          room,
+          rocket,
+          ROCKET_DEBRIS_PIECES,
+          ROCKET_DEBRIS_SPEED,
+          ROCKET_DEBRIS_SPEED_VARIANCE,
+          nextTick,
+        ),
+      );
+      continue;
+    }
+
+    const arenaRadius = room.world?.arenaRadius ?? 0;
+    if (arenaRadius > 0 && isEntityTouchingArenaBoundary(rocket, arenaRadius)) {
+      room.rocketRuntime.delete(rocket.id);
+      debrisSink.push(
+        ...createDebrisBurst(
+          room,
+          rocket,
+          ROCKET_DEBRIS_PIECES,
+          ROCKET_DEBRIS_SPEED,
+          ROCKET_DEBRIS_SPEED_VARIANCE,
+          nextTick,
+        ),
+      );
+      continue;
+    }
 
     for (const sun of suns) {
       if (dist(rocket.pos, sun.pos) <= rocket.radius + sun.radius) {

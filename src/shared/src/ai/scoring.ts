@@ -100,8 +100,9 @@ const MOVEMENT_HARD_NEUTRON_MARGIN = 40;
 const MOVEMENT_HARD_BLACK_HOLE_MARGIN = 56;
 const MOVEMENT_HARD_PLANET_MARGIN = 24;
 const MOVEMENT_HARD_ROCKET_MARGIN = 16;
-const MOVEMENT_BOUNDARY_CAREFUL_RATIO = 0.76;
-const MOVEMENT_BOUNDARY_OUTWARD_VETO_RATIO = 0.82;
+const MOVEMENT_ORBIT_RADIUS_RATIO = 0.54;
+const MOVEMENT_BOUNDARY_CAREFUL_RATIO = 0.64;
+const MOVEMENT_BOUNDARY_OUTWARD_VETO_RATIO = 0.7;
 
 const normalizeDir = (dir: Vec2, fallback: Vec2 = DEFAULT_DIR): Vec2 => {
   const normalized = normalize(dir);
@@ -234,8 +235,8 @@ const buildHazardPressureDir = (
   let composite = scale(
     inwardDir(self.pos),
     clamp01(
-      (len(self.pos) - world.arenaRadius * 0.74) / (world.arenaRadius * 0.16),
-    ) * 0.9,
+      (len(self.pos) - world.arenaRadius * 0.66) / (world.arenaRadius * 0.18),
+    ) * 1.1,
   );
 
   for (const sun of world.suns) {
@@ -1288,7 +1289,10 @@ export const scoreMovementGoals = ({
         bestOrbitBand,
         clamp01(
           1 -
-            Math.abs(len(predictedSelf.pos) - world.arenaRadius * 0.62) /
+            Math.abs(
+              len(predictedSelf.pos) -
+                world.arenaRadius * MOVEMENT_ORBIT_RADIUS_RATIO,
+            ) /
               (world.arenaRadius * 0.2),
         ),
       );
@@ -1548,7 +1552,7 @@ export const scoreMovementGoals = ({
         label: candidate.label,
         targetCacheId: candidate.targetCacheId,
         targetPlayerId: target?.playerId,
-        desiredRadius: world.arenaRadius * 0.62,
+        desiredRadius: world.arenaRadius * MOVEMENT_ORBIT_RADIUS_RATIO,
         totalScore,
         breakdown: createMovementBreakdown(
           survival,
