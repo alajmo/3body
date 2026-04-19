@@ -264,9 +264,6 @@ const createIdleSandboxInput = (
 ): CombatSandboxStepInput => ({
   aimWorld: { x: state.player.aimWorld.x, y: state.player.aimWorld.y },
   boostRequested: false,
-  droneLaunchRequested: false,
-  droneTurnLeftHeld: false,
-  droneTurnRightHeld: false,
   fireRequested: false,
   foresightRequested: false,
   gravityPulseRequested: false,

@@ -101,7 +101,6 @@ const MINIMAP_MIN_MARKER_RADIUS: Record<GameViewportMinimapEntityKind, number> =
   {
     blackHole: 4.8,
     cache: 2.4,
-    drone: 2.4,
     planet: 2.8,
     sun: 3.2,
   };
@@ -110,14 +109,12 @@ const MINIMAP_LAYER_ORDER: Record<GameViewportMinimapEntityKind, number> = {
   sun: 1,
   planet: 2,
   cache: 3,
-  drone: 4,
 };
 
 const countMinimapEntities = (minimap: GameViewportMinimapState) => {
   const counts = {
     blackHole: 0,
     cache: 0,
-    drone: 0,
     planet: 0,
     sun: 0,
   } satisfies Record<GameViewportMinimapEntityKind, number>;
@@ -136,7 +133,6 @@ const formatMinimapAriaLabel = (
     counts.sun > 0 ? `${counts.sun} suns` : null,
     counts.planet > 0 ? `${counts.planet} planets` : null,
     counts.cache > 0 ? `${counts.cache} caches` : null,
-    counts.drone > 0 ? `${counts.drone} drones` : null,
     counts.blackHole > 0 ? `${counts.blackHole} black holes` : null,
   ]
     .filter((value): value is string => value !== null)
@@ -442,27 +438,6 @@ function WorldMinimap({ minimap }: { minimap: GameViewportMinimapState }) {
                     />
                   </g>
                 );
-              case "drone": {
-                const points = [
-                  `${point.x},${point.y - markerRadius}`,
-                  `${point.x + markerRadius * 0.9},${point.y + markerRadius * 0.85}`,
-                  `${point.x - markerRadius * 0.9},${point.y + markerRadius * 0.85}`,
-                ].join(" ");
-
-                return (
-                  <g
-                    key={`${entity.kind}-${entity.id}`}
-                    className="minimap__entity"
-                    style={markerStyle}
-                  >
-                    {highlight}
-                    <polygon
-                      className="minimap__marker minimap__marker--drone"
-                      points={points}
-                    />
-                  </g>
-                );
-              }
               case "sun":
                 return (
                   <g

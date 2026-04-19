@@ -42,7 +42,6 @@ const snapshotWorld = (world: World): World => ({
   neutronStars: world.neutronStars.slice(),
   planets: world.planets.slice(),
   rockets: world.rockets.slice(),
-  drones: world.drones.slice(),
   caches: world.caches.slice(),
   debris: world.debris.slice(),
 });
@@ -72,10 +71,6 @@ export interface RocketRuntimeState {
 }
 
 export interface CombatPlayerRuntime {
-  activeDroneId: EntityId | null;
-  controlMode: "planet" | "drone";
-  droneTurnLeft: boolean;
-  droneTurnRight: boolean;
   boundaryEnteredTick?: number;
   deathTick?: number;
   kills: number;
@@ -149,16 +144,6 @@ export type QueuedCombatMessage =
       playerId: PlayerId;
       slot: AbilityMsg["slot"];
       aimDir?: AbilityMsg["aimDir"];
-    }
-  | {
-      type: "droneLaunch";
-      playerId: PlayerId;
-      aimDir: Vec2;
-    }
-  | {
-      type: "droneSteer";
-      playerId: PlayerId;
-      turn: -1 | 0 | 1;
     };
 
 export interface RoomParticipant {
@@ -638,10 +623,6 @@ export class Room {
     }
 
     runtime = {
-      activeDroneId: null,
-      controlMode: "planet",
-      droneTurnLeft: false,
-      droneTurnRight: false,
       kills: 0,
       nearMisses: 0,
       damageDealt: 0,
@@ -922,10 +903,6 @@ export class Room {
         lastInputClientTick: -1,
       });
       this.combatPlayerRuntime.set(participant.playerId, {
-        activeDroneId: null,
-        controlMode: "planet",
-        droneTurnLeft: false,
-        droneTurnRight: false,
         kills: 0,
         nearMisses: 0,
         damageDealt: 0,

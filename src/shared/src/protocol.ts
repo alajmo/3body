@@ -4,7 +4,6 @@ import type {
   Cache,
   CacheContents,
   Debris,
-  Drone,
   EntityId,
   NeutronStar,
   PlanetPrivateState,
@@ -73,7 +72,6 @@ export interface SnapshotDelta {
   neutronStars?: NeutronStar[];
   planets?: PlanetPublic[];
   rockets?: Rocket[];
-  drones?: Drone[];
   caches?: Cache[];
   debris?: Debris[];
   blackHole?: BlackHole | null;
@@ -84,7 +82,6 @@ export interface SnapshotRemoved {
   neutronStars?: EntityId[];
   planets?: EntityId[];
   rockets?: EntityId[];
-  drones?: EntityId[];
   caches?: EntityId[];
   debris?: EntityId[];
   blackHole?: true;
@@ -120,23 +117,8 @@ export type SnapshotEvent =
       kind: "cachePickup";
       tick: number;
       playerId: PlayerId;
-      droneId: EntityId;
+      planetId: EntityId;
       contents: CacheContents;
-    }
-  | {
-      kind: "cacheDrop";
-      tick: number;
-      ownerPlayerId: PlayerId;
-      droneId: EntityId;
-      cacheId: EntityId;
-      contents: CacheContents;
-      pos: Vec2;
-    }
-  | {
-      kind: "droneDown";
-      tick: number;
-      ownerPlayerId: PlayerId;
-      droneId: EntityId;
     }
   | {
       kind: "boost";

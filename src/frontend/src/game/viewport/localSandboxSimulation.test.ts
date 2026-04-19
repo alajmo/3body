@@ -13,10 +13,6 @@ import {
 } from "./foresightShared";
 
 const createInputRuntime = (): GameViewportInputRuntimeState => ({
-  droneSteering: {
-    leftHeld: false,
-    rightHeld: false,
-  },
   fullViewEnabled: false,
   inputState: {
     aimWorld: { x: 0, y: 0 },
@@ -28,9 +24,6 @@ const createInputRuntime = (): GameViewportInputRuntimeState => ({
     shield: false,
     gravityPulse: false,
     cloak: false,
-  },
-  pendingDroneRequests: {
-    launch: false,
   },
   pendingShots: 0,
   pointerState: {

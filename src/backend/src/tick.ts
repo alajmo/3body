@@ -10,8 +10,6 @@ import {
   CACHE_TANGENTIAL_SPEED_MAX,
   CACHE_TANGENTIAL_SPEED_MIN,
   DEBRIS_TTL_SEC,
-  DRONE_LAUNCH_SPEED,
-  DRONE_SPEC,
   FORESIGHT_EXT_MULTIPLIER,
   FORESIGHT_SPEC,
   GRAVITY_PULSE_IMPULSE,
@@ -48,7 +46,6 @@ import {
   type CacheContents,
   type Debris,
   type DeltaSnapshotMsg,
-  type Drone,
   type PlanetPrivateState,
   type PlanetPublic,
   type PlayerId,
@@ -73,9 +70,6 @@ const ROCKET_DEBRIS_SPEED_VARIANCE = 104;
 const CACHE_DEBRIS_PIECES = 10;
 const CACHE_DEBRIS_SPEED = 140;
 const CACHE_DEBRIS_SPEED_VARIANCE = 92;
-const DRONE_DEBRIS_PIECES = 12;
-const DRONE_DEBRIS_SPEED = 168;
-const DRONE_DEBRIS_SPEED_VARIANCE = 104;
 const LAG_COMP_MAX_REWIND_MS = 100;
 const NEAR_MISS_DISTANCE = 48;
 
@@ -148,12 +142,6 @@ const getForesightChargeTicks = ({
 
 const getBoostRechargeTicks = (tickHz: number): number =>
   getAbilityTicks(BOOST_SPEC.cooldownSec, tickHz);
-
-const getDroneCooldownTicks = (tickHz: number): number =>
-  getAbilityTicks(DRONE_SPEC.cooldownSec, tickHz);
-
-const getDroneTtlTicks = (tickHz: number): number =>
-  getAbilityTicks(DRONE_SPEC.ttlSec, tickHz);
 
 const getCacheRespawnTicks = (tickHz: number): number =>
   getAbilityTicks(CACHE_SPEC.respawnSec, tickHz);
@@ -266,11 +254,6 @@ const findPlanetIndexByPlayerId = (
   playerId: PlayerId,
 ): number => planets.findIndex((planet) => planet.playerId === playerId);
 
-const findDroneIndexById = (
-  drones: readonly Drone[],
-  droneId: number,
-): number => drones.findIndex((drone) => drone.id === droneId);
-
 const queueCacheRespawn = (room: Room, readyAtTick: number): void => {
   room.cacheRespawnAtTicks.push(readyAtTick);
   room.cacheRespawnAtTicks.sort((left, right) => left - right);
@@ -278,7 +261,7 @@ const queueCacheRespawn = (room: Room, readyAtTick: number): void => {
 
 const createDebrisBurst = (
   room: Room,
-  source: Pick<PlanetPublic | Rocket | Drone | Cache | Debris, "pos" | "vel">,
+  source: Pick<PlanetPublic | Rocket | Cache | Debris, "pos" | "vel">,
   pieces: number,
   baseSpeed: number,
   speedVariance: number,
@@ -330,28 +313,6 @@ const createOuterRingCache = (room: Room): Cache => {
     vel: scale(tangentialDir, driftSpeed),
     radius: CACHE_RADIUS,
   };
-};
-
-const rotateVec2 = (dir: Vec2, angleRad: number): Vec2 => {
-  const cosAngle = Math.cos(angleRad);
-  const sinAngle = Math.sin(angleRad);
-  return {
-    x: dir.x * cosAngle - dir.y * sinAngle,
-    y: dir.x * sinAngle + dir.y * cosAngle,
-  };
-};
-
-const getDroneForwardDir = (drone: Pick<Drone, "vel">): Vec2 => {
-  const forward = normalize(drone.vel);
-  return len(forward) > 0 ? forward : { ...DEFAULT_INPUT_DIR };
-};
-
-const getDroneTurnInput = (turnLeft: boolean, turnRight: boolean): number => {
-  if (turnLeft === turnRight) {
-    return 0;
-  }
-
-  return turnLeft ? 1 : -1;
 };
 
 const diffEntityCollection = <T extends { id: number }>(
@@ -423,10 +384,6 @@ const markPlayerDeath = (
 ): void => {
   const runtime = room.combatRuntimeFor(playerId);
   runtime.deathTick ??= tick;
-  runtime.controlMode = "planet";
-  runtime.activeDroneId = null;
-  runtime.droneTurnLeft = false;
-  runtime.droneTurnRight = false;
   room.privateStates.delete(playerId);
 };
 
@@ -458,20 +415,6 @@ const refreshBoostCharges = (
   }
 };
 
-const ensurePlanetPointers = (room: Room, planets: PlanetPublic[]): void => {
-  for (let index = 0; index < planets.length; index += 1) {
-    const planet = planets[index]!;
-    const runtime = room.combatRuntimeFor(planet.playerId);
-    planets[index] = {
-      ...planet,
-      pilotingDroneId:
-        runtime.controlMode === "drone"
-          ? (runtime.activeDroneId ?? undefined)
-          : undefined,
-    };
-  }
-};
-
 const spawnRocket = (
   room: Room,
   playerId: PlayerId,
@@ -487,11 +430,6 @@ const spawnRocket = (
 
   const planetIndex = findPlanetIndexByPlayerId(room.world.planets, playerId);
   if (planetIndex < 0) {
-    return;
-  }
-
-  const runtime = room.combatRuntimeFor(playerId);
-  if (runtime.controlMode !== "planet") {
     return;
   }
 
@@ -631,12 +569,6 @@ const activateWildcard = (
         GRAVITY_PULSE_IMPULSE * 1.15,
       );
       applyImpulseAwayFromPoint(
-        room.world.drones,
-        playerPlanet.pos,
-        GRAVITY_PULSE_RADIUS,
-        GRAVITY_PULSE_IMPULSE * 0.95,
-      );
-      applyImpulseAwayFromPoint(
         room.world.caches,
         playerPlanet.pos,
         GRAVITY_PULSE_RADIUS,
@@ -687,11 +619,6 @@ const applyAbilityMessage = (
 
   const planetIndex = findPlanetIndexByPlayerId(room.world.planets, playerId);
   if (planetIndex < 0) {
-    return;
-  }
-
-  const runtime = room.combatRuntimeFor(playerId);
-  if (runtime.controlMode !== "planet") {
     return;
   }
 
@@ -882,99 +809,62 @@ const applyAbilityMessage = (
   }
 };
 
-const launchDrone = (
+const applyCachePickup = (
   room: Room,
   playerId: PlayerId,
-  aimDir: Vec2,
+  planetId: number,
+  privateState: PlanetPrivateState,
+  planet: PlanetPublic,
+  contents: CacheContents,
   tickHz: number,
-): void => {
-  if (!room.world) {
-    return;
-  }
-
-  const planetIndex = findPlanetIndexByPlayerId(room.world.planets, playerId);
-  if (planetIndex < 0) {
-    return;
-  }
-
-  const runtime = room.combatRuntimeFor(playerId);
-  const privateState = room.privateStates.get(playerId);
-  if (
-    runtime.controlMode !== "planet" ||
-    runtime.activeDroneId !== null ||
-    !privateState ||
-    room.tick < privateState.cooldowns.droneCooldownUntilTick
-  ) {
-    return;
-  }
-
-  const planet = room.world.planets[planetIndex]!;
-  const dir = normalizeDir(aimDir);
-  const drone: Drone = {
-    id: room.entityIds.nextEntityId(),
-    kind: "drone",
-    ownerId: playerId,
-    ttlUntilTick: room.tick + getDroneTtlTicks(tickHz),
-    pos: add(planet.pos, scale(dir, planet.radius + 18 + 10)),
-    vel: add(planet.vel, scale(dir, DRONE_LAUNCH_SPEED)),
-    radius: 18,
-  };
-
-  room.world.drones.push(drone);
-  runtime.activeDroneId = drone.id;
-  runtime.controlMode = "drone";
-  runtime.droneTurnLeft = false;
-  runtime.droneTurnRight = false;
-  privateState.cooldowns.droneCooldownUntilTick =
-    room.tick + getDroneCooldownTicks(tickHz);
-};
-
-const removeDrone = (
-  room: Room,
-  playerId: PlayerId,
-  droneId: number,
   tick: number,
-  debrisSink: Debris[],
-): void => {
-  if (!room.world) {
-    return;
+): PlanetPublic => {
+  let nextPlanet = planet;
+
+  switch (contents.kind) {
+    case "heavyAmmo":
+      privateState.ammo.heavy += 1;
+      break;
+    case "seekerPack":
+      privateState.ammo.seeker += 2;
+      break;
+    case "repair":
+      nextPlanet = {
+        ...planet,
+        hp: Math.min(PLANET_HP, planet.hp + REPAIR_AMOUNT),
+      };
+      break;
+    case "shieldExt":
+      privateState.nextShieldExt = true;
+      break;
+    case "foresightExt":
+      privateState.nextForesightExt = true;
+      privateState.cooldowns.foresightActiveUntilTick = 0;
+      privateState.cooldowns.foresightCooldownUntilTick = 0;
+      privateState.cooldowns.foresightDurationTicks = getForesightDurationTicks(
+        planet.archetype,
+        tickHz,
+        false,
+      );
+      break;
+    case "wildcard":
+      if (contents.wildcard.kind === "gravityPulse") {
+        privateState.gravityPulseHeld = true;
+      } else {
+        privateState.cloakHeld = true;
+      }
+      break;
   }
 
-  const droneIndex = findDroneIndexById(room.world.drones, droneId);
-  if (droneIndex < 0) {
-    return;
-  }
-
-  const [drone] = room.world.drones.splice(droneIndex, 1);
-  if (!drone) {
-    return;
-  }
-
-  debrisSink.push(
-    ...createDebrisBurst(
-      room,
-      drone,
-      DRONE_DEBRIS_PIECES,
-      DRONE_DEBRIS_SPEED,
-      DRONE_DEBRIS_SPEED_VARIANCE,
-      tick,
-      playerId,
-    ),
-  );
   room.queueEvent({
-    kind: "droneDown",
+    kind: "cachePickup",
     tick,
-    ownerPlayerId: playerId,
-    droneId,
+    playerId,
+    planetId,
+    contents,
   });
 
-  const runtime = room.combatRuntimeFor(playerId);
-  if (runtime.activeDroneId === droneId) {
-    runtime.activeDroneId = null;
-    runtime.controlMode = "planet";
-    runtime.droneTurnLeft = false;
-    runtime.droneTurnRight = false;
-  }
+  return nextPlanet;
 };
 
 const syncBlackHole = (room: Room, nextTick: number, tickHz: number): void => {
@@ -1027,7 +917,6 @@ const applyQueuedCombatMessages = (room: Room, config: AppConfig): void => {
 
   for (const message of room.drainCombatMessages()) {
     const intent = room.intentFor(message.playerId);
-    const runtime = room.combatRuntimeFor(message.playerId);
 
     switch (message.type) {
       case "input":
@@ -1039,9 +928,6 @@ const applyQueuedCombatMessages = (room: Room, config: AppConfig): void => {
         break;
 
       case "shieldAim": {
-        if (runtime.controlMode !== "planet") {
-          continue;
-        }
         intent.shieldAimDir = normalizeDir(message.dir, intent.shieldAimDir);
         const planetIndex = findPlanetIndexByPlayerId(
           room.world.planets,
@@ -1080,18 +966,6 @@ const applyQueuedCombatMessages = (room: Room, config: AppConfig): void => {
           message.aimDir,
           config.tickHz,
         );
-        break;
-
-      case "droneLaunch":
-        launchDrone(room, message.playerId, message.aimDir, config.tickHz);
-        break;
-
-      case "droneSteer":
-        if (runtime.controlMode !== "drone") {
-          continue;
-        }
-        runtime.droneTurnLeft = message.turn > 0;
-        runtime.droneTurnRight = message.turn < 0;
         break;
     }
   }
@@ -1370,57 +1244,6 @@ const stepRockets = (
     .filter((rocket) => rocket.ttlUntilTick > room.tick + 1);
 };
 
-const stepDrones = (
-  room: Room,
-  planets: readonly PlanetPublic[],
-  suns: readonly Sun[],
-  blackHole: BlackHole | undefined,
-  config: AppConfig,
-): Drone[] => {
-  if (!room.world) {
-    return [];
-  }
-
-  const dtSec = 1 / config.tickHz;
-
-  return room.world.drones.map((drone) => {
-    const runtime = room.combatRuntimeFor(drone.ownerId);
-    let nextDrone = drone;
-    if (runtime.activeDroneId === drone.id && runtime.controlMode === "drone") {
-      const turnInput = getDroneTurnInput(
-        runtime.droneTurnLeft,
-        runtime.droneTurnRight,
-      );
-      const forwardDir = getDroneForwardDir(nextDrone);
-      const turnAngleRad =
-        ((DRONE_SPEC.turnRateDeg * Math.PI) / 180) * dtSec * turnInput;
-      const thrustDir =
-        turnInput === 0 ? forwardDir : rotateVec2(forwardDir, turnAngleRad);
-      const currentSpeed = Math.max(
-        len(nextDrone.vel),
-        DRONE_LAUNCH_SPEED * 0.75,
-      );
-      nextDrone = {
-        ...nextDrone,
-        vel: clampLen(
-          add(
-            scale(thrustDir, currentSpeed),
-            scale(thrustDir, DRONE_SPEC.thrust * dtSec),
-          ),
-          DRONE_SPEC.speed,
-        ),
-      };
-    }
-
-    nextDrone = stepBody(nextDrone, suns, dtSec, blackHole);
-
-    return {
-      ...nextDrone,
-      vel: clampLen(nextDrone.vel, DRONE_SPEC.speed),
-    };
-  });
-};
-
 const stepCaches = (
   room: Room,
   suns: readonly Sun[],
@@ -1447,7 +1270,6 @@ const applyRocketCollisions = (
   room: Room,
   planets: PlanetPublic[],
   rockets: Rocket[],
-  drones: Drone[],
   caches: Cache[],
   suns: readonly Sun[],
   blackHole: BlackHole | undefined,
@@ -1457,13 +1279,11 @@ const applyRocketCollisions = (
 ): {
   planets: PlanetPublic[];
   rockets: Rocket[];
-  drones: Drone[];
   caches: Cache[];
 } => {
   const survivingRockets: Rocket[] = [];
   const destroyedRocketIds = new Set<number>();
   const destroyedCacheIds = new Set<number>();
-  const destroyedDroneIds = new Set<number>();
 
   for (let index = 0; index < rockets.length; index += 1) {
     const rocket = rockets[index]!;
@@ -1487,10 +1307,6 @@ const applyRocketCollisions = (
       }
     }
   }
-
-  const scheduleDroneRemoval = (droneId: number): void => {
-    destroyedDroneIds.add(droneId);
-  };
 
   for (const rocket of rockets) {
     const runtime = getRocketRuntime(room, rocket);
@@ -1567,32 +1383,6 @@ const applyRocketCollisions = (
 
     for (const sun of suns) {
       if (dist(rocket.pos, sun.pos) <= rocket.radius + sun.radius) {
-        consumed = true;
-        break;
-      }
-    }
-    if (consumed) {
-      room.rocketRuntime.delete(rocket.id);
-      debrisSink.push(
-        ...createDebrisBurst(
-          room,
-          rocket,
-          ROCKET_DEBRIS_PIECES,
-          ROCKET_DEBRIS_SPEED,
-          ROCKET_DEBRIS_SPEED_VARIANCE,
-          nextTick,
-        ),
-      );
-      continue;
-    }
-
-    for (const drone of drones) {
-      if (destroyedDroneIds.has(drone.id)) {
-        continue;
-      }
-
-      if (dist(rocket.pos, drone.pos) <= rocket.radius + drone.radius) {
-        scheduleDroneRemoval(drone.id);
         consumed = true;
         break;
       }
@@ -1735,16 +1525,6 @@ const applyRocketCollisions = (
 
     survivingRockets.push(rocket);
   }
-
-  for (const droneId of destroyedDroneIds) {
-    const drone = drones.find((item) => item.id === droneId);
-    if (!drone) {
-      continue;
-    }
-    removeDrone(room, drone.ownerId, droneId, nextTick, debrisSink);
-  }
-
-  const survivingDrones = room.world?.drones ?? drones;
   const survivingCaches: Cache[] = [];
   for (const cache of caches) {
     if (destroyedCacheIds.has(cache.id)) {
@@ -1767,118 +1547,26 @@ const applyRocketCollisions = (
   return {
     planets,
     rockets: survivingRockets,
-    drones: survivingDrones,
     caches: survivingCaches,
   };
 };
 
-const applyDroneAndCacheCollisions = (
+const applyCacheCollisions = (
   room: Room,
   planets: PlanetPublic[],
-  drones: Drone[],
   caches: Cache[],
   suns: readonly Sun[],
   blackHole: BlackHole | undefined,
   nextTick: number,
   config: AppConfig,
   debrisSink: Debris[],
-): {
-  drones: Drone[];
-  caches: Cache[];
-} => {
-  if (!room.world) {
-    return { drones, caches };
-  }
-
-  room.world.drones = drones;
-  room.world.caches = caches;
-
-  const destroyedCacheIds = new Set<number>();
-
-  for (const drone of [...room.world.drones]) {
-    if (drone.ttlUntilTick <= nextTick || isInsideBlackHole(drone, blackHole)) {
-      removeDrone(room, drone.ownerId, drone.id, nextTick, debrisSink);
-      continue;
-    }
-
-    let removed = false;
-    for (const sun of suns) {
-      if (dist(drone.pos, sun.pos) <= drone.radius + sun.radius) {
-        removeDrone(room, drone.ownerId, drone.id, nextTick, debrisSink);
-        removed = true;
-        break;
-      }
-    }
-    if (removed) {
-      continue;
-    }
-
-    for (let planetIndex = 0; planetIndex < planets.length; planetIndex += 1) {
-      const planet = planets[planetIndex]!;
-      if (dist(drone.pos, planet.pos) > drone.radius + planet.radius) {
-        continue;
-      }
-
-      if (planet.playerId === drone.ownerId) {
-        continue;
-      }
-
-      if (shieldProtectsImpact(planet, drone.pos, nextTick)) {
-        planets[planetIndex] = applyShieldDamage(planet, DRONE_SPEC.damage);
-        removeDrone(room, drone.ownerId, drone.id, nextTick, debrisSink);
-        removed = true;
-        break;
-      }
-
-      const hpAfter = Math.max(0, planet.hp - DRONE_SPEC.damage);
-      planets[planetIndex] = {
-        ...planet,
-        hp: hpAfter,
-      };
-      if (hpAfter <= 0) {
-        room.combatRuntimeFor(drone.ownerId).kills += 1;
-        queueKillEvent(room, nextTick, planet, "rocket", drone.ownerId);
-        debrisSink.push(
-          ...createDebrisBurst(
-            room,
-            planet,
-            PLANET_DEBRIS_PIECES,
-            PLANET_DEBRIS_SPEED,
-            PLANET_DEBRIS_SPEED_VARIANCE,
-            nextTick,
-            planet.playerId,
-          ),
-        );
-        markPlayerDeath(room, planet.playerId, nextTick);
-        planets.splice(planetIndex, 1);
-      }
-
-      removeDrone(room, drone.ownerId, drone.id, nextTick, debrisSink);
-      removed = true;
-      break;
-    }
-    if (removed) {
-      continue;
-    }
-  }
-
+): Cache[] => {
   const remainingCaches: Cache[] = [];
-  for (const cache of room.world.caches) {
-    if (isInsideBlackHole(cache, blackHole)) {
-      destroyedCacheIds.add(cache.id);
-    } else if (
-      suns.some((sun) => dist(cache.pos, sun.pos) <= cache.radius + sun.radius)
-    ) {
-      destroyedCacheIds.add(cache.id);
-    } else if (
-      planets.some(
-        (planet) => dist(cache.pos, planet.pos) <= cache.radius + planet.radius,
-      )
-    ) {
-      destroyedCacheIds.add(cache.id);
-    }
-
-    if (destroyedCacheIds.has(cache.id)) {
+  for (const cache of caches) {
+    const consumedByHazard =
+      isInsideBlackHole(cache, blackHole) ||
+      suns.some((sun) => dist(cache.pos, sun.pos) <= cache.radius + sun.radius);
+    if (consumedByHazard) {
       debrisSink.push(
         ...createDebrisBurst(
           room,
@@ -1893,6 +1581,28 @@ const applyDroneAndCacheCollisions = (
       continue;
     }
 
+    const pickupPlanetIndex = planets.findIndex(
+      (planet) => dist(cache.pos, planet.pos) <= cache.radius + planet.radius,
+    );
+    if (pickupPlanetIndex >= 0) {
+      const planet = planets[pickupPlanetIndex]!;
+      const privateState = room.privateStates.get(planet.playerId);
+      if (privateState !== undefined) {
+        planets[pickupPlanetIndex] = applyCachePickup(
+          room,
+          planet.playerId,
+          planet.id,
+          privateState,
+          planet,
+          cache.contents,
+          config.tickHz,
+          nextTick,
+        );
+        queueCacheRespawn(room, nextTick + getCacheRespawnTicks(config.tickHz));
+        continue;
+      }
+    }
+
     remainingCaches.push(cache);
   }
 
@@ -1905,10 +1615,7 @@ const applyDroneAndCacheCollisions = (
     remainingCaches.push(createOuterRingCache(room));
   }
 
-  return {
-    drones: room.world.drones,
-    caches: remainingCaches,
-  };
+  return remainingCaches;
 };
 
 const applyCooldownsAndRegen = (
@@ -2046,7 +1753,6 @@ const updateWorld = (room: Room, config: AppConfig): void => {
   }
 
   let nextPlanets = stepPlanets(room, nextSuns, blackHole, nextTick, config);
-  ensurePlanetPointers(room, nextPlanets);
 
   const debris: Debris[] = [];
 
@@ -2084,14 +1790,12 @@ const updateWorld = (room: Room, config: AppConfig): void => {
     blackHole,
     config,
   );
-  const nextDrones = stepDrones(room, nextPlanets, nextSuns, blackHole, config);
   const nextCaches = stepCaches(room, nextSuns, blackHole, config);
 
   const rocketCollisionState = applyRocketCollisions(
     room,
     nextPlanets,
     nextRockets,
-    nextDrones,
     nextCaches,
     nextSuns,
     blackHole,
@@ -2100,10 +1804,9 @@ const updateWorld = (room: Room, config: AppConfig): void => {
     debris,
   );
 
-  const droneAndCacheState = applyDroneAndCacheCollisions(
+  const survivingCaches = applyCacheCollisions(
     room,
     rocketCollisionState.planets,
-    rocketCollisionState.drones,
     rocketCollisionState.caches,
     nextSuns,
     blackHole,
@@ -2120,8 +1823,7 @@ const updateWorld = (room: Room, config: AppConfig): void => {
     suns: nextSuns,
     planets: rocketCollisionState.planets,
     rockets: rocketCollisionState.rockets,
-    drones: droneAndCacheState.drones,
-    caches: droneAndCacheState.caches,
+    caches: survivingCaches,
     debris: [
       ...room.world.debris
         .filter((piece) => piece.ttlUntilTick > nextTick)
@@ -2129,7 +1831,6 @@ const updateWorld = (room: Room, config: AppConfig): void => {
       ...debris,
     ],
   };
-  ensurePlanetPointers(room, room.world.planets);
   room.tick = nextTick;
   room.recordPlanetPositions(lagCompHistoryEntries(config.tickHz));
   room.recordSnapshotState(config.snapshotHistoryTicks);
@@ -2165,10 +1866,6 @@ export const buildRoomDeltaSnapshot = (
     baseState.world.rockets,
     room.world.rockets,
   );
-  const drones = diffEntityCollection(
-    baseState.world.drones,
-    room.world.drones,
-  );
   const caches = diffEntityCollection(
     baseState.world.caches,
     room.world.caches,
@@ -2189,7 +1886,6 @@ export const buildRoomDeltaSnapshot = (
       ...(neutronStars.changed ? { neutronStars: neutronStars.changed } : {}),
       ...(planets.changed ? { planets: planets.changed } : {}),
       ...(rockets.changed ? { rockets: rockets.changed } : {}),
-      ...(drones.changed ? { drones: drones.changed } : {}),
       ...(caches.changed ? { caches: caches.changed } : {}),
       ...(debris.changed ? { debris: debris.changed } : {}),
       ...(currentBlackHole !== null &&
@@ -2202,7 +1898,6 @@ export const buildRoomDeltaSnapshot = (
       ...(neutronStars.removed ? { neutronStars: neutronStars.removed } : {}),
       ...(planets.removed ? { planets: planets.removed } : {}),
       ...(rockets.removed ? { rockets: rockets.removed } : {}),
-      ...(drones.removed ? { drones: drones.removed } : {}),
       ...(caches.removed ? { caches: caches.removed } : {}),
       ...(debris.removed ? { debris: debris.removed } : {}),
       ...(previousBlackHole !== null && currentBlackHole === null

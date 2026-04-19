@@ -16,13 +16,10 @@ const CURRENT_TUNING_FILE_PATH = join(
 );
 
 const serializeEditorTuningDocument = (value: GameTuningDocument): unknown => {
-  const { drone: _visualDrone, ...visuals } = value.visuals;
-  const { drone: _gameplayDrone, ...gameplay } = value.gameplay;
-
   return {
     ...value,
-    gameplay,
-    visuals,
+    gameplay: value.gameplay,
+    visuals: value.visuals,
   };
 };
 

@@ -23,8 +23,6 @@ const getIntentExpiryTicks = (
       return tick + 10;
     case "contestCache":
       return tick + 18;
-    case "deployDrone":
-      return tick + 16;
     default:
       return tick + 14;
   }
@@ -168,27 +166,6 @@ export const scoreCombatAiIntents = ({
         scoreRange(primaryTargetFact.distance, 320, 1200) * 24 +
         currentIntentBias("lockSeeker");
 
-  const earlyDroneUnlocked =
-    tick >= 4 * 120 || (bestCache?.contestScore ?? 0) >= 90;
-  const strongCacheDroneWindow =
-    bestCache !== undefined && bestCache.contestScore >= 76;
-  const longRangeDroneWindow =
-    primaryTargetFact !== undefined &&
-    primaryTargetFact.distance >= 680 &&
-    perception.laneQuality <= 0.52;
-  const deployDroneScore =
-    !earlyDroneUnlocked || (topThreat?.urgency ?? 0) > 0.7
-      ? -Infinity
-      : perception.droneReady &&
-          (strongCacheDroneWindow || longRangeDroneWindow)
-        ? (strongCacheDroneWindow ? (bestCache?.contestScore ?? 0) * 0.28 : 0) +
-          (longRangeDroneWindow
-            ? scoreRange(primaryTargetFact!.distance, 680, 1280) * 18
-            : 0) +
-          (1 - perception.laneQuality) * 16 +
-          currentIntentBias("deployDrone")
-        : -Infinity;
-
   const wildcardHeld = perception.gravityPulseHeld || perception.cloakHeld;
   const useWildcardScore =
     !wildcardHeld || topThreat === undefined
@@ -267,14 +244,6 @@ export const scoreCombatAiIntents = ({
       targetPlayerId: primaryTarget?.playerId,
       targetPlanetId: primaryTarget?.id,
       reason: "seeker lane favored by chaos",
-    },
-    {
-      kind: "deployDrone",
-      score: deployDroneScore,
-      targetPlayerId: primaryTarget?.playerId,
-      targetPlanetId: primaryTarget?.id,
-      targetCacheId: bestCache?.cacheId,
-      reason: "drone can extend pressure or cache reach",
     },
     {
       kind: "useWildcard",

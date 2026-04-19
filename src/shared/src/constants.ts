@@ -35,15 +35,6 @@ export interface GravityPulseSpec {
   radius: number;
 }
 
-export interface DroneSpec {
-  damage: number;
-  speed: number;
-  thrust: number;
-  turnRateDeg: number;
-  ttlSec: number;
-  cooldownSec: number;
-}
-
 export interface CacheSpec {
   count: number;
   respawnSec: number;
@@ -122,10 +113,6 @@ export const BOOST_SPEC: BoostSpec = {
 
 export const GRAVITY_PULSE_SPEC: GravityPulseSpec = {
   ...initialGameplay.abilities.gravityPulse,
-};
-
-export const DRONE_SPEC: DroneSpec = {
-  ...initialGameplay.drone,
 };
 
 export const CACHE_SPEC: CacheSpec = {
@@ -214,8 +201,6 @@ export const CACHE_DROP_SPEED_SCALE = 0.52;
 export const CACHE_TANGENTIAL_SPEED_MIN = 32;
 export const CACHE_TANGENTIAL_SPEED_MAX = 58;
 
-export let DRONE_LAUNCH_SPEED = DRONE_SPEC.speed * 0.48;
-
 export const getOuterRingMin = (arenaRadius = ARENA_RADIUS): number =>
   arenaRadius * OUTER_RING_MIN_RATIO;
 
@@ -250,12 +235,10 @@ export const applyGameplayTuning = (gameplay: GameplayTuning) => {
   Object.assign(SHIELD_SPEC, gameplay.abilities.shield);
   Object.assign(BOOST_SPEC, gameplay.abilities.boost);
   Object.assign(GRAVITY_PULSE_SPEC, gameplay.abilities.gravityPulse);
-  Object.assign(DRONE_SPEC, gameplay.drone);
   Object.assign(CACHE_SPEC, gameplay.cache);
   Object.assign(BLACK_HOLE_SPEC, gameplay.blackHole);
   Object.assign(NEUTRON_STAR_SPEC, gameplay.neutronStars);
   Object.assign(MATCH_TIMERS, gameplay.timers);
-  DRONE_LAUNCH_SPEED = DRONE_SPEC.speed * 0.48;
   GRAVITY_PULSE_RADIUS = GRAVITY_PULSE_SPEC.radius;
   GRAVITY_PULSE_IMPULSE = GRAVITY_PULSE_SPEC.force;
 };

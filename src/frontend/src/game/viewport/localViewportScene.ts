@@ -27,13 +27,11 @@ import {
   Points,
   type PointsNodeMaterial,
   Quaternion,
-  Sprite,
   Vector3,
 } from "three/webgpu";
 import type {
   CombatSandboxCache,
   CombatSandboxDebris,
-  CombatSandboxDrone,
   CombatSandboxImpactBurst,
   CombatSandboxPlanet,
   CombatSandboxRocket,
@@ -67,7 +65,6 @@ import type { RocketMeshSilhouette } from "../rocketMeshSilhouette";
 import type {
   CacheIconKey,
   CacheSpriteAssets,
-  CacheSpriteMaterialMap,
   CacheVisual,
 } from "./cacheVisuals";
 import { getCacheArenaBadgeSize } from "./cacheVisuals";
@@ -317,14 +314,6 @@ interface PlanetExplosionState {
   visual: PlanetExplosionVisual;
 }
 
-interface DroneVisual {
-  glowMesh: Mesh;
-  group: Group;
-  hullMesh: Mesh;
-  noseMesh: Mesh;
-  wingMesh: Mesh;
-}
-
 interface CannonFireState {
   flashStartSec: number;
   lastAmmo: Record<RocketKind, number>;
@@ -333,7 +322,6 @@ interface CannonFireState {
 const getRuntimeVisuals = () => getRuntimeTuningDocument().visuals;
 const getForesightPathTuning = () => getRuntimeVisuals().abilities.foresight;
 const getCacheBadgeBaseSize = () => getRuntimeVisuals().caches.badgeBaseSize;
-const getDroneColor = () => getRuntimeVisuals().drone.activeColor;
 const getWeaponColors = (): Record<RocketKind, { accent: string }> => ({
   heavy: {
     accent: getRuntimeVisuals().rockets.heavy.hudAccent,
@@ -1162,42 +1150,6 @@ const setRocketPartMatrix = ({
   mesh.setMatrixAt(index, matrix);
 };
 
-const updateDroneVisual = (
-  visual: DroneVisual,
-  drone: CombatSandboxDrone | null,
-  nowSec: number,
-  _spriteMaterials: CacheSpriteMaterialMap,
-) => {
-  visual.group.visible = drone !== null;
-  if (drone === null) {
-    return;
-  }
-
-  const accent = getDroneColor();
-  const hullMaterial = visual.hullMesh.material as MeshBasicMaterial;
-  const wingMaterial = visual.wingMesh.material as MeshBasicMaterial;
-  const glowMaterial = visual.glowMesh.material as MeshBasicMaterial;
-  const noseMaterial = visual.noseMesh.material as MeshBasicMaterial;
-  const angle =
-    len(drone.vel) > 18 ? Math.atan2(drone.vel.y, drone.vel.x) : nowSec * 0.4;
-
-  hullMaterial.color.set(accent);
-  wingMaterial.color.set(accent);
-  glowMaterial.color.set(accent);
-  glowMaterial.opacity = 0.24;
-  noseMaterial.color.set("#f4fbff");
-
-  visual.group.position.set(drone.pos.x, drone.pos.y, 4.4);
-  visual.group.rotation.z = angle - Math.PI / 2;
-  visual.group.scale.set(1, 1, 1);
-  visual.glowMesh.scale.set(36, 24, 1);
-  visual.hullMesh.scale.set(10, 28, 1);
-  visual.wingMesh.position.set(0, -5.5, 0.2);
-  visual.wingMesh.scale.set(18, 7, 1);
-  visual.noseMesh.position.set(0, 15, 0.34);
-  visual.noseMesh.scale.set(4.5, 7.5, 1);
-};
-
 const hidePlanetExplosionVisual = (visual: PlanetExplosionVisual) => {
   visual.group.visible = false;
   visual.glowMesh.visible = false;
@@ -1505,7 +1457,6 @@ export const resetLocalViewportSceneState = ({
   cloakVisuals,
   debrisVisual,
   disposeCacheVisual,
-  droneVisual,
   foresightVisuals,
   gravityPulseVisual,
   hiddenRocketMatrix,
@@ -1534,7 +1485,6 @@ export const resetLocalViewportSceneState = ({
   currentState: CombatSandboxState;
   debrisVisual: DebrisVisual;
   disposeCacheVisual: (visual: CacheVisual) => void;
-  droneVisual: DroneVisual;
   foresightVisuals: ReadonlyMap<number, ForesightVisual>;
   gravityPulseVisual: GravityPulseVisual;
   hiddenRocketMatrix: Matrix4;
@@ -1690,7 +1640,6 @@ export const resetLocalViewportSceneState = ({
     currentState.elapsedSec,
   );
   shieldGroup.visible = false;
-  droneVisual.group.visible = false;
   for (const visual of cacheVisuals.values()) {
     hostScene.remove(visual.group);
     disposeCacheVisual(visual);
@@ -1702,7 +1651,6 @@ interface UpdateLocalViewportSceneParams {
   activeGravityPulse: LocalSandboxGravityPulseState | null;
   activeBoostBursts: BoostBurstState[];
   activeCacheIds: Set<number>;
-  activeDrone: CombatSandboxDrone | null;
   activePlanetExplosions: PlanetExplosionState[];
   activeRocketTrailIds: Set<number>;
   blackHoleGroup: Group;
@@ -1737,7 +1685,6 @@ interface UpdateLocalViewportSceneParams {
   currentState: CombatSandboxState;
   debrisVisual: DebrisVisual;
   disposeCacheVisual: (visual: CacheVisual) => void;
-  droneVisual: DroneVisual;
   foresightPathsByEntityId: ReadonlyMap<number, readonly Vec2[]>;
   foresightVisuals: ReadonlyMap<number, ForesightVisual>;
   getCacheIconKey: (contents: CombatSandboxCache["contents"]) => CacheIconKey;
@@ -1809,7 +1756,6 @@ export const updateLocalViewportScene = ({
   activeGravityPulse,
   activeBoostBursts,
   activeCacheIds,
-  activeDrone,
   activePlanetExplosions,
   activeRocketTrailIds,
   blackHoleGroup,
@@ -1838,7 +1784,6 @@ export const updateLocalViewportScene = ({
   currentState,
   debrisVisual,
   disposeCacheVisual,
-  droneVisual,
   foresightPathsByEntityId,
   foresightVisuals,
   getCacheIconKey,
@@ -2082,13 +2027,6 @@ export const updateLocalViewportScene = ({
       renderedCacheKeysById.delete(cacheId);
     }
   }
-
-  updateDroneVisual(
-    droneVisual,
-    activeDrone,
-    nowSec,
-    cacheSpriteAssets.iconMaterials,
-  );
 
   for (const rocketKind of weaponKinds) {
     rocketsByKind[rocketKind].length = 0;
@@ -2686,10 +2624,7 @@ export const updateLocalViewportScene = ({
   ) {
     const aimDelta = sub(inputState.aimWorld, controlledBody.pos);
     const aimAngle = Math.atan2(aimDelta.y, aimDelta.x);
-    const weaponAccent =
-      renderState.player.controlMode === "drone"
-        ? getDroneColor()
-        : getWeaponColors()[inputState.selectedRocketKind].accent;
+    const weaponAccent = getWeaponColors()[inputState.selectedRocketKind].accent;
     const aimSurfaceOffset =
       controlledBody.kind === "planet"
         ? getRenderedPlanetRadius(controlledBody)
@@ -2786,7 +2721,6 @@ export const updateLocalViewportScene = ({
     }
 
     const lockTarget =
-      renderState.player.controlMode === "drone" ||
       renderState.player.lockTargetId === null
         ? null
         : (renderPlanetsById.get(renderState.player.lockTargetId) ?? null);

@@ -6,10 +6,6 @@ describe("createGameViewportInputController", () => {
     const canvasElement = document.createElement("canvas");
     const controller = createGameViewportInputController({
       canvasElement,
-      getPlayerControlState: () => ({
-        activeDroneId: null,
-        controlMode: "planet",
-      }),
       isShieldActive: () => false,
       initialPlayer: {
         aimWorld: { x: 0, y: 0 },
@@ -35,10 +31,6 @@ describe("createGameViewportInputController", () => {
     let shieldActive = true;
     const controller = createGameViewportInputController({
       canvasElement,
-      getPlayerControlState: () => ({
-        activeDroneId: null,
-        controlMode: "planet",
-      }),
       isShieldActive: () => shieldActive,
       initialPlayer: {
         aimWorld: { x: 0, y: 0 },
@@ -76,10 +68,6 @@ describe("createGameViewportInputController", () => {
 
     const controller = createGameViewportInputController({
       canvasElement,
-      getPlayerControlState: () => ({
-        activeDroneId: null,
-        controlMode: "planet",
-      }),
       isShieldActive: () => false,
       initialPlayer: {
         aimWorld: { x: 0, y: 0 },
@@ -114,10 +102,6 @@ describe("createGameViewportInputController", () => {
     const canvasElement = document.createElement("canvas");
     const controller = createGameViewportInputController({
       canvasElement,
-      getPlayerControlState: () => ({
-        activeDroneId: null,
-        controlMode: "planet",
-      }),
       isShieldActive: () => false,
       initialPlayer: {
         aimWorld: { x: 0, y: 0 },
@@ -142,10 +126,6 @@ describe("createGameViewportInputController", () => {
     const canvasElement = document.createElement("canvas");
     const controller = createGameViewportInputController({
       canvasElement,
-      getPlayerControlState: () => ({
-        activeDroneId: null,
-        controlMode: "planet",
-      }),
       isShieldActive: () => false,
       initialPlayer: {
         aimWorld: { x: 0, y: 0 },
@@ -177,10 +157,6 @@ describe("createGameViewportInputController", () => {
     const canvasElement = document.createElement("canvas");
     const controller = createGameViewportInputController({
       canvasElement,
-      getPlayerControlState: () => ({
-        activeDroneId: null,
-        controlMode: "planet",
-      }),
       isShieldActive: () => false,
       initialPlayer: {
         aimWorld: { x: 0, y: 0 },
@@ -217,10 +193,6 @@ describe("createGameViewportInputController", () => {
     const canvasElement = document.createElement("canvas");
     const controller = createGameViewportInputController({
       canvasElement,
-      getPlayerControlState: () => ({
-        activeDroneId: null,
-        controlMode: "planet",
-      }),
       isShieldActive: () => false,
       initialPlayer: {
         aimWorld: { x: 0, y: 0 },

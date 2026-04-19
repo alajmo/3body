@@ -39,7 +39,6 @@ export type PlanetPublic = EntityBase & {
   shieldLoad: number;
   shieldMaxLoad: number;
   hideTrailUntilTick: number;
-  pilotingDroneId?: EntityId;
   debuffs: PlanetDebuffs;
 };
 
@@ -57,7 +56,6 @@ export interface PlanetCooldowns {
   foresightCooldownUntilTick: number;
   foresightDurationTicks: number;
   nextBoostChargeAtTick?: number;
-  droneCooldownUntilTick: number;
 }
 
 export interface PlanetPrivateState {
@@ -92,12 +90,6 @@ export type CacheContents =
       wildcard: { kind: WildcardKind };
     };
 
-export type Drone = EntityBase & {
-  kind: "drone";
-  ownerId: PlayerId;
-  ttlUntilTick: number;
-};
-
 export type Cache = EntityBase & {
   kind: "cache";
   contents: CacheContents;
@@ -125,7 +117,6 @@ export interface World {
   neutronStars: NeutronStar[];
   planets: PlanetPublic[];
   rockets: Rocket[];
-  drones: Drone[];
   caches: Cache[];
   blackHole?: BlackHole;
   debris: Debris[];
@@ -137,7 +128,6 @@ export type WorldEntity =
   | NeutronStar
   | PlanetPublic
   | Rocket
-  | Drone
   | Cache
   | BlackHole
   | Debris;

@@ -115,11 +115,6 @@ export const applyDeltaSnapshotToWorld = (
     deltaSnapshot.changed.rockets,
     deltaSnapshot.removed.rockets,
   ),
-  drones: mergeEntityCollection(
-    baseWorld.drones,
-    deltaSnapshot.changed.drones,
-    deltaSnapshot.removed.drones,
-  ),
   caches: mergeEntityCollection(
     baseWorld.caches,
     deltaSnapshot.changed.caches,

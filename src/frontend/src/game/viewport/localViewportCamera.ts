@@ -1,7 +1,7 @@
 import type { Vec2 } from "@3body/shared";
 import { clamp, lerp } from "@3body/shared";
 import type { Mesh, OrthographicCamera, WebGPURenderer } from "three/webgpu";
-import type { CombatSandboxDrone, CombatSandboxPlanet } from "../combatSandbox";
+import type { CombatSandboxPlanet } from "../combatSandbox";
 import { getRuntimeTuningDocument } from "../runtimeTuning";
 import { syncBackdropFrame } from "../showcaseVisuals";
 import {
@@ -81,10 +81,6 @@ const getSandboxFocusPlanet = (
   null;
 
 const getSandboxFocusBody = (state: {
-  drones: readonly {
-    id: number;
-    pos: Vec2;
-  }[];
   planets: readonly {
     alive: boolean;
     id: number;
@@ -92,26 +88,10 @@ const getSandboxFocusBody = (state: {
     pos: Vec2;
   }[];
   player: {
-    activeDroneId: number | null;
-    controlMode: "planet" | "drone";
     planetId: number;
   };
   followAlivePlanetWhenPlayerDown: boolean;
 }) => {
-  const activeDrone =
-    state.player.controlMode === "drone" && state.player.activeDroneId !== null
-      ? (state.drones.find(
-          (drone) => drone.id === state.player.activeDroneId,
-        ) ?? null)
-      : null;
-
-  if (activeDrone !== null) {
-    return {
-      label: "Drone",
-      pos: activeDrone.pos,
-    };
-  }
-
   const focusPlanet = getSandboxFocusPlanet(
     state.planets,
     state.player.planetId,
@@ -126,28 +106,12 @@ const getSandboxFocusBody = (state: {
 };
 
 export const getLocalViewportControlledBody = (state: {
-  drones: readonly CombatSandboxDrone[];
   planets: readonly CombatSandboxPlanet[];
   player: {
-    activeDroneId: number | null;
-    controlMode: "planet" | "drone";
     planetId: number;
   };
-}) => {
-  if (
-    state.player.controlMode === "drone" &&
-    state.player.activeDroneId !== null
-  ) {
-    return (
-      state.drones.find((drone) => drone.id === state.player.activeDroneId) ??
-      null
-    );
-  }
-
-  return (
-    state.planets.find((planet) => planet.id === state.player.planetId) ?? null
-  );
-};
+}) =>
+  state.planets.find((planet) => planet.id === state.player.planetId) ?? null;
 
 export const createLocalViewportCameraState = ({
   cameraWorldHeightOverride,
@@ -257,11 +221,8 @@ export const getLocalViewportCameraFrame = ({
   useArenaStageCamera?: boolean;
   state: {
     blackHole: { pos: Vec2; radius: number } | null;
-    drones: readonly CombatSandboxDrone[];
     planets: readonly CombatSandboxPlanet[];
     player: {
-      activeDroneId: number | null;
-      controlMode: "planet" | "drone";
       planetId: number;
     };
     suns: readonly {
@@ -309,10 +270,6 @@ export const getLocalViewportCameraFrame = ({
       }
 
       expandCameraBounds(bounds, planet.pos, planet.radius * 1.8);
-    }
-
-    for (const drone of state.drones) {
-      expandCameraBounds(bounds, drone.pos, drone.radius * 1.6);
     }
 
     if (Number.isFinite(bounds.minX) && Number.isFinite(bounds.minY)) {

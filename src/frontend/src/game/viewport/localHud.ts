@@ -10,7 +10,6 @@ import {
 } from "@3body/shared";
 import type {
   CombatSandboxDebugSnapshot,
-  CombatSandboxDrone,
   CombatSandboxState,
 } from "../combatSandbox";
 import { getActiveCombatSuns } from "../combatSandbox";
@@ -29,8 +28,6 @@ import type { ViewportEffectsQuality } from "./renderQuality";
 
 interface LocalSandboxHudColors {
   boost: string;
-  drone: string;
-  droneReturn: string;
   foresight: string;
   shield: string;
   weapon: Record<RocketKind, { accent: string }>;
@@ -38,7 +35,6 @@ interface LocalSandboxHudColors {
 }
 
 export interface BuildLocalSandboxHudStateParams {
-  activeDrone: CombatSandboxDrone | null;
   blackHoleRemainingSec: number;
   blackHoleSettings: BlackHoleSpec;
   botsEnabled: boolean;
@@ -58,7 +54,6 @@ export interface BuildLocalSandboxHudStateParams {
     | "blackHole"
     | "caches"
     | "debris"
-    | "drones"
     | "elapsedSec"
     | "impactBursts"
     | "planets"
@@ -68,7 +63,6 @@ export interface BuildLocalSandboxHudStateParams {
     | "tick"
   >;
   debug: CombatSandboxDebugSnapshot;
-  droneTtlRemainingSec: number;
   foresightActiveRemainingSec: number;
   foresightCooldownRemainingSec: number;
   foresightMode: HudStatusMode;
@@ -251,7 +245,7 @@ const buildProfilerDebugItems = ({
           },
           {
             label: "Entities",
-            value: `P ${currentState.planets.length} · R ${currentState.rockets.length} · D ${currentState.drones.length} · C ${currentState.caches.length}`,
+            value: `P ${currentState.planets.length} · R ${currentState.rockets.length} · C ${currentState.caches.length}`,
           },
           {
             label: "FX",
@@ -500,18 +494,12 @@ export const buildLocalSandboxHudState = (
     ) ?? null;
   const playerMotion = getPlayerMotionHud(playerPlanet?.vel);
   const highlightedMinimapEntity =
-    params.currentState.player.controlMode === "drone" &&
-    params.activeDrone !== null
+    playerPlanet?.alive
       ? {
-          id: params.activeDrone.id,
-          kind: "drone" as const,
+          id: playerPlanet.id,
+          kind: "planet" as const,
         }
-      : playerPlanet?.alive
-        ? {
-            id: playerPlanet.id,
-            kind: "planet" as const,
-          }
-        : null;
+      : null;
 
   return {
     abilities: buildAbilities(params),
@@ -533,7 +521,6 @@ export const buildLocalSandboxHudState = (
       state: "local",
     },
     contextualShortcuts: buildContextualShortcuts(params),
-    controlMode: params.currentState.player.controlMode,
     currentPresetId: params.currentPresetId,
     damageFlash: params.playerDamageFlash,
     debugItems: buildProfilerDebugItems(params),
@@ -544,7 +531,6 @@ export const buildLocalSandboxHudState = (
       arenaRadius: ARENA_RADIUS,
       blackHole: params.currentState.blackHole,
       caches: params.currentState.caches,
-      drones: params.currentState.drones,
       highlightedEntity: highlightedMinimapEntity,
       planets: params.currentState.planets.filter((planet) => planet.alive),
       suns: getActiveCombatSuns(params.currentState.suns),

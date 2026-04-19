@@ -164,7 +164,7 @@ const CACHE_EFFECT_COPY: Record<
   wildcardGravityPulse: {
     title: "Gravity Pulse",
     description:
-      "Wildcard cache. Press G to emit a pulse that blasts planets, rockets, drones, and caches within its blast radius away from your planet. Force falls off linearly with distance.",
+      "Wildcard cache. Press G to emit a pulse that blasts planets, rockets, and caches within its blast radius away from your planet. Force falls off linearly with distance.",
   },
   wildcardCloak: {
     title: "Cloak",
@@ -175,7 +175,7 @@ const CACHE_EFFECT_COPY: Record<
 const WILDCARD_ABILITY_COPY = {
   gravityPulse: {
     description:
-      "Press G to emit a pulse that shoves planets, rockets, drones, and caches within its blast radius away from you. Force falls off linearly with distance.",
+      "Press G to emit a pulse that shoves planets, rockets, and caches within its blast radius away from you. Force falls off linearly with distance.",
     title: "Gravity Pulse",
   },
   cloak: {
@@ -954,13 +954,10 @@ const resetItemToDefaults = (
 };
 
 const serializeEditorTuningDocument = (value: GameTuningDocument): unknown => {
-  const { drone: _visualDrone, ...visuals } = value.visuals;
-  const { drone: _gameplayDrone, ...gameplay } = value.gameplay;
-
   return {
     ...value,
-    gameplay,
-    visuals,
+    gameplay: value.gameplay,
+    visuals: value.visuals,
   };
 };
 

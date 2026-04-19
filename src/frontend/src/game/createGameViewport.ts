@@ -178,8 +178,6 @@ const getShieldColor = () => getRuntimeVisuals().abilities.shieldColor;
 const getBoostColor = () => getRuntimeVisuals().abilities.boostColor;
 const getForesightColor = () => getRuntimeVisuals().abilities.foresightColor;
 const getWildcardColor = () => getRuntimeVisuals().abilities.wildcardColor;
-const getDroneColor = () => getRuntimeVisuals().drone.activeColor;
-const getDroneReturnColor = () => getDroneColor();
 const getBackgroundVisuals = () => getRuntimeVisuals().background;
 const getWeaponColors = (): Record<RocketKind, { accent: string }> => ({
   heavy: {
@@ -471,7 +469,6 @@ export function createGameViewport(
         boundaryDebrisVisual,
         cloakVisuals,
         debrisVisual,
-        droneVisual,
         gravityPulseVisual,
         hiddenTrailUntilByPlanetId,
         impactBurstVisuals,
@@ -519,7 +516,6 @@ export function createGameViewport(
         debrisSampleLimit: MAX_DEBRIS_SAMPLES,
         disposeCacheVisual,
         disposables,
-        droneColor: getDroneColor(),
         getBlackHoleCoreRadius,
         getBlackHoleLensRadius,
         getBlackHoleRingRadius,
@@ -573,7 +569,6 @@ export function createGameViewport(
 
       inputController = createGameViewportInputController({
         canvasElement: nextRenderer.domElement,
-        getPlayerControlState: () => simulationState.currentState.player,
         isShieldActive: () => simulationState.currentState.player.shieldActive,
         initialPlayer: initialState.player,
         isSandboxPaused: () => sandboxSettings.sandboxPaused,
@@ -684,7 +679,6 @@ export function createGameViewport(
           currentState: simulationState.currentState,
           debrisVisual,
           disposeCacheVisual,
-          droneVisual,
           foresightVisuals,
           gravityPulseVisual,
           hiddenRocketMatrix,
@@ -823,7 +817,6 @@ export function createGameViewport(
             activeGravityPulse: simulationState.activeGravityPulse,
             activeBoostBursts: simulationState.activeBoostBursts,
             activeCacheIds,
-            activeDrone: simulationFrame.activeDrone,
             activePlanetExplosions,
             activeRocketTrailIds,
             blackHoleGroup,
@@ -852,7 +845,6 @@ export function createGameViewport(
             currentState: simulationState.currentState,
             debrisVisual,
             disposeCacheVisual,
-            droneVisual,
             foresightPathsByEntityId: simulationState.foresightPathsByEntityId,
             foresightVisuals,
             getCacheIconKey: getSharedCacheIconKey,
@@ -910,7 +902,6 @@ export function createGameViewport(
             })
           ) {
             const currentState = simulationState.currentState;
-            const activeDrone = simulationFrame.activeDrone;
             const playerPlanet = simulationFrame.playerPlanet;
             const debug = getSandboxDebugSnapshot(currentState);
             const foresightActiveRemainingSec =
@@ -949,11 +940,6 @@ export function createGameViewport(
                 : "ready";
             const boostMode =
               boostRecoveryRemainingSec > 0 ? "cooldown" : "ready";
-            const droneTtlRemainingSec =
-              activeDrone === null
-                ? 0
-                : Math.max(0, activeDrone.ttlUntilTick - currentState.tick) *
-                  FIXED_STEP_SEC;
 
             pruneLocalSandboxKillFeedEntries({
               nowSec,
@@ -978,7 +964,6 @@ export function createGameViewport(
                 : getPlanetArchetypeVisuals(playerPlanet.archetype);
             emitHudState(
               buildLocalSandboxHudState({
-                activeDrone,
                 blackHoleRemainingSec,
                 blackHoleSettings,
                 botsEnabled: sandboxSettings.botsEnabled,
@@ -989,8 +974,6 @@ export function createGameViewport(
                 cacheBadgeScale,
                 colors: {
                   boost: getBoostColor(),
-                  drone: getDroneColor(),
-                  droneReturn: getDroneReturnColor(),
                   foresight: getForesightColor(),
                   shield: getShieldColor(),
                   weapon: getWeaponColors(),
@@ -1003,7 +986,6 @@ export function createGameViewport(
                 currentSsaaLevel,
                 currentState,
                 debug,
-                droneTtlRemainingSec,
                 foresightActiveRemainingSec,
                 foresightCooldownRemainingSec,
                 foresightMode,

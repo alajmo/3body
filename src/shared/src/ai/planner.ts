@@ -1,9 +1,4 @@
-import type {
-  Drone,
-  PlanetPrivateState,
-  PlanetPublic,
-  World,
-} from "../entities";
+import type { PlanetPrivateState, PlanetPublic, World } from "../entities";
 import type { BotDifficulty } from "../protocol";
 import { dot, len, normalize, scale, sub } from "../vec2";
 import type { Vec2 } from "../vec2";
@@ -34,8 +29,6 @@ const planExpiryTicks = (intent: CombatAiIntent): number => {
       return 8;
     case "contestCache":
       return 12;
-    case "deployDrone":
-      return 10;
     default:
       return 10;
   }
@@ -52,32 +45,6 @@ const findTarget = (
     : (world.planets.find((planet) => planet.id === targetId) ?? null);
 };
 
-const findDrone = (
-  self: PlanetPublic,
-  world: World,
-  activeDroneId: number | null,
-): Drone | null => {
-  if (activeDroneId !== null) {
-    return world.drones.find((drone) => drone.id === activeDroneId) ?? null;
-  }
-
-  return world.drones.find((drone) => drone.ownerId === self.playerId) ?? null;
-};
-
-const turnSignalForDrone = (drone: Drone, desiredDir: Vec2): -1 | 0 | 1 => {
-  const forward = normalize(drone.vel);
-  const targetDir = normalize(desiredDir);
-  if (len(forward) === 0 || len(targetDir) === 0) {
-    return 0;
-  }
-
-  const cross = forward.x * targetDir.y - forward.y * targetDir.x;
-  if (Math.abs(cross) <= 0.08) {
-    return 0;
-  }
-  return cross > 0 ? 1 : -1;
-};
-
 const executionStateForIntent = (
   intent: CombatAiIntent,
 ): CombatAiPlan["executionState"] => {
@@ -92,8 +59,6 @@ const executionStateForIntent = (
       return "cacheRun";
     case "finish":
       return "finishWindow";
-    case "deployDrone":
-      return "droneRun";
     case "useWildcard":
       return "wildcardSetup";
     case "recover":
@@ -321,7 +286,6 @@ const buildAbilityPolicy = ({
   bestMoveDelta,
   boostCommitThreshold,
   chosenShot,
-  drone,
   intent,
   lastBoostTick,
   moveGoal,
@@ -338,7 +302,6 @@ const buildAbilityPolicy = ({
   bestMoveDelta: number;
   boostCommitThreshold: number;
   chosenShot: CombatAiShotScore | null;
-  drone: Drone | null;
   intent: CombatAiIntent;
   lastBoostTick: number;
   moveGoal: CombatAiMoveGoal | null;
@@ -445,31 +408,6 @@ const buildAbilityPolicy = ({
     reasons.push("cloak swing window");
   }
 
-  const droneLaunch =
-    perception.droneReady &&
-    self.pilotingDroneId === undefined &&
-    self.playerId !== undefined &&
-    intent.kind === "deployDrone" &&
-    self.shieldActive === false;
-  if (droneLaunch) {
-    reasons.push("launch drone");
-  }
-
-  const droneDir =
-    intent.targetCacheId !== undefined &&
-    world.caches.find((cache) => cache.id === intent.targetCacheId) !==
-      undefined
-      ? normalize(
-          sub(
-            world.caches.find((cache) => cache.id === intent.targetCacheId)!
-              .pos,
-            drone?.pos ?? self.pos,
-          ),
-        )
-      : target !== null
-        ? normalize(sub(target.pos, drone?.pos ?? self.pos))
-        : defaultCombatAiAimDir();
-
   return {
     shield,
     shieldDir: shieldThreat?.escapeDir
@@ -485,9 +423,6 @@ const buildAbilityPolicy = ({
     foresight,
     gravityPulse,
     cloak,
-    droneLaunch,
-    droneDir,
-    droneTurn: drone !== null ? turnSignalForDrone(drone, droneDir) : 0,
     reason: reasons,
   };
 };
@@ -527,11 +462,10 @@ const buildFireGate = ({
   const fireSuppressed =
     (executionState === "evade" && !boundaryEvadeLightWindow) ||
     (executionState === "recover" && !lowAmmoLightOverride) ||
-    executionState === "droneRun" ||
     (executionState === "cacheRun" &&
       chosenShot.confidence <
         COMBAT_AI_TUNING.execution.cacheRunFireConfidence &&
-      !lowAmmoLightOverride);
+        !lowAmmoLightOverride);
   const pressureLightOverride =
     intent.kind === "pressure" && isPressureLightProbeShot(chosenShot);
   const allowFire =
@@ -650,7 +584,6 @@ export const buildCombatAiPlan = ({
       : [];
   const chosenShot = chooseShotForIntent(intent, privateState, shotScores);
   const executionState = executionStateForIntent(intent);
-  const drone = findDrone(self, world, blackboard.self.activeDroneId);
   const fireGate = buildFireGate({
     chosenShot,
     executionState,
@@ -686,7 +619,6 @@ export const buildCombatAiPlan = ({
     bestMoveDelta,
     boostCommitThreshold,
     chosenShot,
-    drone,
     intent,
     lastBoostTick: blackboard.history.lastBoostTick,
     moveGoal,
@@ -701,38 +633,30 @@ export const buildCombatAiPlan = ({
     world,
   });
   const aimGoal =
-    executionState === "droneRun" && abilityPolicy.droneDir !== undefined
+    chosenShot !== null
       ? {
-          dir: abilityPolicy.droneDir,
-          confidence: 0.6,
-          targetId: target?.id,
-          targetPlayerId: target?.playerId,
-          reason: "drone vector",
+          dir: chosenShot.aimDir,
+          confidence: chosenShot.confidence,
+          targetId: chosenShot.targetId,
+          targetPlayerId: chosenShot.targetPlayerId,
+          weaponKind: chosenShot.weaponKind,
+          reason: fireGate.allowFire
+            ? `${chosenShot.weaponKind} firing lane`
+            : (chosenShot.holdReason ?? "track firing lane"),
         }
-      : chosenShot !== null
+      : moveGoal !== null
         ? {
-            dir: chosenShot.aimDir,
-            confidence: chosenShot.confidence,
-            targetId: chosenShot.targetId,
-            targetPlayerId: chosenShot.targetPlayerId,
-            weaponKind: chosenShot.weaponKind,
-            reason: fireGate.allowFire
-              ? `${chosenShot.weaponKind} firing lane`
-              : (chosenShot.holdReason ?? "track firing lane"),
+            dir: moveGoal.dir,
+            confidence: clampAimConfidence(moveGoal.totalScore),
+            targetPlayerId: target?.playerId,
+            targetId: target?.id,
+            reason: moveGoal.reason,
           }
-        : moveGoal !== null
-          ? {
-              dir: moveGoal.dir,
-              confidence: clampAimConfidence(moveGoal.totalScore),
-              targetPlayerId: target?.playerId,
-              targetId: target?.id,
-              reason: moveGoal.reason,
-            }
-          : {
-              dir: defaultCombatAiAimDir(),
-              confidence: 0.2,
-              reason: "no tactical aim",
-            };
+        : {
+            dir: defaultCombatAiAimDir(),
+            confidence: 0.2,
+            reason: "no tactical aim",
+          };
 
   return {
     generatedAtTick: tick,

@@ -15,7 +15,6 @@ export type CombatAiExecutionMode =
   | "reposition"
   | "cacheRun"
   | "finishWindow"
-  | "droneRun"
   | "wildcardSetup"
   | "recover";
 
@@ -29,7 +28,6 @@ export type CombatAiIntentKind =
   | "recover"
   | "zoneWithHeavy"
   | "lockSeeker"
-  | "deployDrone"
   | "useWildcard";
 
 export type CombatAiThreatKind =
@@ -74,8 +72,6 @@ export interface CombatAiSelfState {
   cloakHeld: boolean;
   nextShieldExt: boolean;
   nextForesightExt: boolean;
-  activeDroneId: EntityId | null;
-  controlMode: "planet" | "drone";
 }
 
 export interface CombatAiThreat {
@@ -139,7 +135,6 @@ export interface CombatAiPerception {
   shieldReady: boolean;
   boostReady: boolean;
   foresightReady: boolean;
-  droneReady: boolean;
   gravityPulseHeld: boolean;
   cloakHeld: boolean;
 }
@@ -173,7 +168,7 @@ export interface CombatAiMoveGoalBreakdown {
 }
 
 export interface CombatAiMoveGoal {
-  kind: "hold" | "escape" | "band" | "cache" | "commit" | "drone" | "explore";
+  kind: "hold" | "escape" | "band" | "cache" | "commit" | "explore";
   dir: Vec2;
   usesBoost: boolean;
   label: string;
@@ -231,9 +226,6 @@ export interface CombatAiAbilityPolicy {
   foresight: boolean;
   gravityPulse: boolean;
   cloak: boolean;
-  droneLaunch: boolean;
-  droneDir?: Vec2;
-  droneTurn: -1 | 0 | 1;
   reason: string[];
 }
 

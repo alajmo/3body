@@ -52,7 +52,6 @@ import {
   RingGeometry,
   type Scene,
   SphereGeometry,
-  Sprite,
   Vector3,
 } from "three/webgpu";
 import {
@@ -219,15 +218,6 @@ interface PlanetExplosionVisual {
   shockwaveMesh: Mesh;
 }
 
-interface DroneVisual {
-  cargoSprite: Sprite;
-  glowMesh: Mesh;
-  group: Group;
-  hullMesh: Mesh;
-  noseMesh: Mesh;
-  wingMesh: Mesh;
-}
-
 interface CannonFireState {
   flashStartSec: number;
   lastAmmo: Record<RocketKind, number>;
@@ -313,7 +303,6 @@ export const createLocalViewportVisualResources = ({
   debrisSampleLimit,
   disposeCacheVisual,
   disposables,
-  droneColor,
   getBlackHoleCoreRadius,
   getBlackHoleLensRadius,
   getBlackHoleRingRadius,
@@ -411,7 +400,6 @@ export const createLocalViewportVisualResources = ({
   debrisSampleLimit: number;
   disposeCacheVisual: (visual: CacheVisual) => void;
   disposables: Array<{ dispose: () => void }>;
-  droneColor: string;
   getBlackHoleCoreRadius: () => number;
   getBlackHoleLensRadius: () => number;
   getBlackHoleRingRadius: () => number;
@@ -644,67 +632,6 @@ export const createLocalViewportVisualResources = ({
       disposeCacheSpriteAssets(cacheSpriteAssets);
     },
   });
-
-  const droneGlowMaterial = new MeshBasicMaterial({
-    blending: AdditiveBlending,
-    color: droneColor,
-    depthWrite: false,
-    opacity: 0.28,
-    transparent: true,
-  });
-  const droneHullMaterial = new MeshBasicMaterial({
-    color: droneColor,
-    depthWrite: false,
-  });
-  const droneWingMaterial = new MeshBasicMaterial({
-    color: droneColor,
-    depthWrite: false,
-    opacity: 0.92,
-    transparent: true,
-  });
-  const droneNoseMaterial = new MeshBasicMaterial({
-    color: "#f4fbff",
-    depthWrite: false,
-  });
-  const droneGlowGeometry = new CircleGeometry(1, 40);
-  const droneHullGeometry = new CircleGeometry(1, 3);
-  const droneWingGeometry = new PlaneGeometry(1, 1);
-  const droneNoseGeometry = new CircleGeometry(1, 20);
-  const droneGroup = new Group();
-  const droneGlowMesh = new Mesh(droneGlowGeometry, droneGlowMaterial);
-  const droneWingMesh = new Mesh(droneWingGeometry, droneWingMaterial);
-  const droneHullMesh = new Mesh(droneHullGeometry, droneHullMaterial);
-  const droneNoseMesh = new Mesh(droneNoseGeometry, droneNoseMaterial);
-  const droneCargoSprite = new Sprite(
-    cacheSpriteAssets.iconMaterials.heavyAmmo.material,
-  );
-  droneGlowMesh.position.z = 0.1;
-  droneWingMesh.position.z = 0.2;
-  droneHullMesh.position.z = 0.3;
-  droneNoseMesh.position.set(0, 12, 0.34);
-  droneCargoSprite.position.z = 0.35;
-  droneGlowMesh.renderOrder = 10;
-  droneWingMesh.renderOrder = 11;
-  droneHullMesh.renderOrder = 12;
-  droneNoseMesh.renderOrder = 13;
-  droneCargoSprite.renderOrder = 14;
-  droneGroup.visible = false;
-  droneGroup.add(
-    droneGlowMesh,
-    droneWingMesh,
-    droneHullMesh,
-    droneNoseMesh,
-    droneCargoSprite,
-  );
-  scene.add(droneGroup);
-  const droneVisual = {
-    cargoSprite: droneCargoSprite,
-    glowMesh: droneGlowMesh,
-    group: droneGroup,
-    hullMesh: droneHullMesh,
-    noseMesh: droneNoseMesh,
-    wingMesh: droneWingMesh,
-  } satisfies DroneVisual;
 
   const rocketPools = rocketWeaponKinds.reduce(
     (pools, rocketKind) => {
@@ -1482,14 +1409,6 @@ export const createLocalViewportVisualResources = ({
     warpGeometry,
     neutronStarJetGeometry,
     planetGeometry,
-    droneGlowGeometry,
-    droneHullGeometry,
-    droneWingGeometry,
-    droneNoseGeometry,
-    droneGlowMaterial,
-    droneHullMaterial,
-    droneWingMaterial,
-    droneNoseMaterial,
     cannonStemGeometry,
     cannonBreechGeometry,
     cannonBarrelGeometry,
@@ -1544,7 +1463,6 @@ export const createLocalViewportVisualResources = ({
     cannonStemMesh,
     boundaryDebrisVisual,
     debrisVisual,
-    droneVisual,
     gravityPulseVisual,
     hiddenTrailUntilByPlanetId,
     impactBurstVisuals,

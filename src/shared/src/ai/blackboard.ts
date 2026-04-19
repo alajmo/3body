@@ -28,9 +28,6 @@ const createEmptyPerception = (
   foresightReady:
     self.cooldowns.foresightActiveUntilTick <= self.tick &&
     self.cooldowns.foresightCooldownUntilTick <= self.tick,
-  droneReady:
-    self.activeDroneId === null &&
-    self.cooldowns.droneCooldownUntilTick <= self.tick,
   gravityPulseHeld: self.gravityPulseHeld,
   cloakHeld: self.cloakHeld,
 });

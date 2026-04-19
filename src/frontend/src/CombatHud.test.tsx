@@ -36,7 +36,6 @@ describe("CombatHud", () => {
   it("renders the current combat summary, warnings, and shortcut cards", () => {
     const hud: GameViewportHudState = {
       ...createInitialHudState(),
-      controlMode: "drone" as const,
       playerHeadingDeg: 45,
       playerHp: 52,
       playerSpeed: 318,

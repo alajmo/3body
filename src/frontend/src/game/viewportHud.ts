@@ -10,7 +10,6 @@ import {
   type BlackHoleSpec,
   type BoostSpec,
   type Cache,
-  type Drone,
   type PlanetPublic,
   type RocketKind,
   type Sun,
@@ -99,7 +98,6 @@ export interface GameViewportConnectionState {
 export type GameViewportMinimapEntityKind =
   | "blackHole"
   | "cache"
-  | "drone"
   | "planet"
   | "sun";
 
@@ -129,7 +127,6 @@ export interface GameViewportHudState {
   cacheBadgeScale: number;
   connection: GameViewportConnectionState;
   contextualShortcuts: GameViewportShortcut[];
-  controlMode: "drone" | "planet";
   currentPresetId: string;
   damageFlash: number;
   debugItems: GameViewportDebugItem[];
@@ -237,7 +234,6 @@ const createMinimapEntity = (
   entity:
     | Pick<BlackHole, "id" | "pos">
     | Pick<Cache, "id" | "pos" | "radius">
-    | Pick<Drone, "id" | "pos" | "radius">
     | Pick<PlanetPublic, "id" | "pos" | "radius">
     | Pick<Sun, "id" | "pos" | "radius">,
   kind: GameViewportMinimapEntityKind,
@@ -258,7 +254,6 @@ export const createHudMinimapState = ({
   arenaRadius,
   blackHole,
   caches,
-  drones,
   highlightedEntity,
   planets,
   suns,
@@ -266,7 +261,6 @@ export const createHudMinimapState = ({
   arenaRadius: number;
   blackHole?: BlackHole | null;
   caches: readonly Cache[];
-  drones: readonly Drone[];
   highlightedEntity?: {
     id: number;
     kind: GameViewportMinimapEntityKind;
@@ -304,12 +298,6 @@ export const createHudMinimapState = ({
   for (const cache of caches) {
     entities.push(
       createMinimapEntity(cache, "cache", isHighlighted(cache.id, "cache")),
-    );
-  }
-
-  for (const drone of drones) {
-    entities.push(
-      createMinimapEntity(drone, "drone", isHighlighted(drone.id, "drone")),
     );
   }
 
@@ -353,7 +341,6 @@ export const createInitialHudState = (): GameViewportHudState => {
       state: "local",
     },
     contextualShortcuts: [],
-    controlMode: "planet",
     currentPresetId: DEFAULT_ORBIT_PRESET.id,
     damageFlash: 0,
     debugItems: [],
@@ -444,7 +431,6 @@ export const areHudStatesEqual = (
   current.botsEnabled === next.botsEnabled &&
   current.cacheBadgeScale === next.cacheBadgeScale &&
   areConnectionStatesEqual(current.connection, next.connection) &&
-  current.controlMode === next.controlMode &&
   current.currentPresetId === next.currentPresetId &&
   current.damageFlash === next.damageFlash &&
   current.hudOpacity === next.hudOpacity &&

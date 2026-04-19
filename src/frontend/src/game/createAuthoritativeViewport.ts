@@ -1,6 +1,5 @@
 import type {
   ClientMsg,
-  Drone,
   PlanetPrivateState,
   PlanetPublic,
   Rocket,
@@ -162,14 +161,6 @@ interface NeutronStarVisual {
   spinSpeed: number;
 }
 
-interface DroneVisual {
-  finMesh: Mesh;
-  glowMesh: Mesh;
-  group: Group;
-  hullMesh: Mesh;
-  noseMesh: Mesh;
-}
-
 interface CreateAuthoritativeViewportOptions {
   dispatchMessage: (message: ClientMsg) => void;
   getPerformanceState: () => {
@@ -208,11 +199,6 @@ const interpolateDynamicEntity = <
   };
 };
 
-const getControlledBody = (
-  playerPlanet: PlanetPublic | null,
-  activeDrone: Drone | null,
-) => activeDrone ?? playerPlanet;
-
 const getGameplayCameraHeights = () => {
   const cameraTuning = getRuntimeTuningDocument().gameplay.camera;
 
@@ -224,7 +210,6 @@ const getGameplayCameraHeights = () => {
 const getCameraFrame = (
   world: World | null,
   playerPlanet: PlanetPublic | null,
-  activeDrone: Drone | null,
 ): { centerX: number; centerY: number; visibleWorldHeight: number } => {
   const { followWorldHeight } = getGameplayCameraHeights();
 
@@ -236,8 +221,7 @@ const getCameraFrame = (
     };
   }
 
-  const controlledBody = getControlledBody(playerPlanet, activeDrone);
-  if (controlledBody === null) {
+  if (playerPlanet === null) {
     return {
       centerX: 0,
       centerY: 0,
@@ -246,8 +230,8 @@ const getCameraFrame = (
   }
 
   return {
-    centerX: controlledBody.pos.x,
-    centerY: controlledBody.pos.y,
+    centerX: playerPlanet.pos.x,
+    centerY: playerPlanet.pos.y,
     visibleWorldHeight: followWorldHeight,
   };
 };
@@ -351,7 +335,6 @@ export function createAuthoritativeViewport(
   const planetVisuals = new Map<number, PlanetVisual>();
   const planetTrails = new Map<number, PlanetTrailVisual>();
   const rocketVisuals = new Map<number, RocketVisual>();
-  const droneVisuals = new Map<number, DroneVisual>();
   const cacheVisuals = new Map<number, CacheVisual>();
   const cameraState = {
     centerX: 0,
@@ -450,9 +433,6 @@ export function createAuthoritativeViewport(
     for (const visual of rocketVisuals.values()) {
       sceneRemoveSafe(visual.group);
     }
-    for (const visual of droneVisuals.values()) {
-      sceneRemoveSafe(visual.group);
-    }
     for (const visual of cacheVisuals.values()) {
       sceneRemoveSafe(visual.group);
     }
@@ -460,7 +440,6 @@ export function createAuthoritativeViewport(
     planetVisuals.clear();
     planetTrails.clear();
     rocketVisuals.clear();
-    droneVisuals.clear();
     cacheVisuals.clear();
 
     disposeViewportDisposables(disposables, "authoritative viewport resource");
@@ -543,13 +522,9 @@ export function createAuthoritativeViewport(
       const warpGeometry = new RingGeometry(0.55, 1, 72);
       const rocketGeometry = new CylinderGeometry(0.58, 1, 1, 18, 1);
       const ribbonGeometry = new PlaneGeometry(1, 1);
-      const droneHullGeometry = new BoxGeometry(1, 1, 1);
-      const droneFinGeometry = new PlaneGeometry(1, 1);
-      const droneNoseGeometry = new CylinderGeometry(0, 1, 1, 16, 1);
       const blackHoleCoreGeometry = new CircleGeometry(1, 64);
       const boundaryGeometry = new RingGeometry(0.995, 1.005, 256);
       rocketGeometry.rotateZ(-Math.PI / 2);
-      droneNoseGeometry.rotateZ(-Math.PI / 2);
       disposables.push(
         sunGeometry,
         planetGeometry,
@@ -557,9 +532,6 @@ export function createAuthoritativeViewport(
         warpGeometry,
         rocketGeometry,
         ribbonGeometry,
-        droneHullGeometry,
-        droneFinGeometry,
-        droneNoseGeometry,
         blackHoleCoreGeometry,
         boundaryGeometry,
       );
@@ -619,11 +591,6 @@ export function createAuthoritativeViewport(
             ? null
             : (world.planets.find((planet) => planet.playerId === playerId) ??
               null);
-        const activeDrone =
-          playerId === null || world === null
-            ? null
-            : (world.drones.find((drone) => drone.ownerId === playerId) ??
-              null);
         const controlsEnabled =
           runtime.phase === "combat" &&
           runtime.connectionState === "connected" &&
@@ -639,7 +606,6 @@ export function createAuthoritativeViewport(
         const performanceState = options.getPerformanceState();
         emitHudState(
           buildAuthoritativeHudState({
-            activeDrone,
             connection: {
               extrapolating,
               fps: runtimeStats.fps,
@@ -676,21 +642,6 @@ export function createAuthoritativeViewport(
 
       inputController = createGameViewportInputController({
         canvasElement: nextRenderer.domElement,
-        getPlayerControlState: () => {
-          const runtime = options.getRuntimeState();
-          const world = runtime.snapshot?.world;
-          const playerId = runtime.playerId;
-          if (world === undefined || playerId === null) {
-            return { activeDroneId: null, controlMode: "planet" } as const;
-          }
-
-          const activeDrone =
-            world.drones.find((drone) => drone.ownerId === playerId) ?? null;
-          return {
-            activeDroneId: activeDrone?.id ?? null,
-            controlMode: activeDrone === null ? "planet" : "drone",
-          } as const;
-        },
         isShieldActive: () => {
           const runtime = options.getRuntimeState();
           const world = runtime.snapshot?.world;
@@ -832,9 +783,6 @@ export function createAuthoritativeViewport(
                   const previousRocketsById = new Map(
                     previousWorld.rockets.map((rocket) => [rocket.id, rocket]),
                   );
-                  const previousDronesById = new Map(
-                    previousWorld.drones.map((drone) => [drone.id, drone]),
-                  );
                   const previousCachesById = new Map(
                     previousWorld.caches.map((cache) => [cache.id, cache]),
                   );
@@ -867,13 +815,6 @@ export function createAuthoritativeViewport(
                       interpolateDynamicEntity(
                         rocket,
                         previousRocketsById,
-                        interpolationAlpha,
-                      ),
-                    ),
-                    drones: snapshot.world.drones.map((drone) =>
-                      interpolateDynamicEntity(
-                        drone,
-                        previousDronesById,
                         interpolationAlpha,
                       ),
                     ),
@@ -919,13 +860,7 @@ export function createAuthoritativeViewport(
               ? null
               : (world.planets.find((planet) => planet.playerId === playerId) ??
                 null);
-          const activeDrone =
-            playerId === null || world === null
-              ? null
-              : (world.drones.find((drone) => drone.ownerId === playerId) ??
-                null);
-
-          const frame = getCameraFrame(world, playerPlanet, activeDrone);
+          const frame = getCameraFrame(world, playerPlanet);
           const cameraMoveAlpha =
             1 - Math.exp(-CAMERA_FOLLOW_LERP * frameDeltaSec);
           const cameraZoomAlpha =
@@ -971,11 +906,10 @@ export function createAuthoritativeViewport(
             world !== null &&
             playerId !== null
           ) {
-            const controlledBody = getControlledBody(playerPlanet, activeDrone);
-            if (controlledBody !== null) {
+            if (playerPlanet !== null) {
               const aimDelta = sub(
                 viewportInputController.state.inputState.aimWorld,
-                controlledBody.pos,
+                playerPlanet.pos,
               );
               const aimDir =
                 len(aimDelta) > 0
@@ -1036,7 +970,6 @@ export function createAuthoritativeViewport(
           const rocketVisualTuning = tuning.visuals.rockets;
           const scaledRocketVisualTuning =
             getScaledRocketVisuals(rocketVisualTuning);
-          const droneVisualTuning = tuning.visuals.drone;
           const renderTick = snapshot?.tick ?? 0;
 
           const activeSunIds = new Set<number>();
@@ -1396,68 +1329,6 @@ export function createAuthoritativeViewport(
               (visual.trail.material as { dispose: () => void }).dispose();
               (visual.flame.material as { dispose: () => void }).dispose();
               rocketVisuals.delete(rocketId);
-            }
-          }
-
-          const activeDroneIds = new Set<number>();
-          for (const drone of world?.drones ?? []) {
-            activeDroneIds.add(drone.id);
-            let visual = droneVisuals.get(drone.id);
-            if (visual === undefined) {
-              const glowMaterial = new MeshBasicMaterial({
-                blending: AdditiveBlending,
-                color: droneVisualTuning.activeColor,
-                depthWrite: false,
-                opacity: 0.26,
-                transparent: true,
-              });
-              const hullMaterial = new MeshBasicMaterial({
-                color: droneVisualTuning.activeColor,
-              });
-              const finMaterial = new MeshBasicMaterial({
-                color: droneVisualTuning.activeColor,
-                depthWrite: false,
-                opacity: 0.9,
-                transparent: true,
-              });
-              const noseMaterial = new MeshBasicMaterial({
-                color: "#f4fbff",
-                depthWrite: false,
-              });
-              const glowMesh = new Mesh(glowGeometry, glowMaterial);
-              const hullMesh = new Mesh(droneHullGeometry, hullMaterial);
-              const finMesh = new Mesh(droneFinGeometry, finMaterial);
-              const noseMesh = new Mesh(droneNoseGeometry, noseMaterial);
-              const group = new Group();
-              glowMesh.position.z = -0.1;
-              finMesh.position.set(-7, 0, 0.1);
-              noseMesh.position.set(12, 0, 0.2);
-              group.add(glowMesh, finMesh, hullMesh, noseMesh);
-              scene.add(group);
-              visual = { finMesh, glowMesh, group, hullMesh, noseMesh };
-              droneVisuals.set(drone.id, visual);
-            }
-
-            const accent = droneVisualTuning.activeColor;
-            (visual.hullMesh.material as MeshBasicMaterial).color.set(accent);
-            (visual.finMesh.material as MeshBasicMaterial).color.set(accent);
-            (visual.glowMesh.material as MeshBasicMaterial).color.set(accent);
-            visual.group.position.set(drone.pos.x, drone.pos.y, 4);
-            visual.group.rotation.z =
-              len(drone.vel) > 0 ? Math.atan2(drone.vel.y, drone.vel.x) : 0;
-            visual.hullMesh.scale.set(22, 6, 6);
-            visual.finMesh.scale.set(12, 10, 1);
-            visual.noseMesh.scale.set(8, 6, 6);
-            visual.glowMesh.scale.set(40, 24, 1);
-          }
-          for (const [droneId, visual] of droneVisuals) {
-            if (!activeDroneIds.has(droneId)) {
-              scene.remove(visual.group);
-              (visual.finMesh.material as { dispose: () => void }).dispose();
-              (visual.glowMesh.material as { dispose: () => void }).dispose();
-              (visual.hullMesh.material as { dispose: () => void }).dispose();
-              (visual.noseMesh.material as { dispose: () => void }).dispose();
-              droneVisuals.delete(droneId);
             }
           }
 

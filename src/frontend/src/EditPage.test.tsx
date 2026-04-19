@@ -446,7 +446,7 @@ describe("EditPage", () => {
 
     expect(
       await screen.findByText(
-        /Press G to emit a pulse that blasts planets, rockets, drones, and caches within its blast radius away from your planet\./i,
+        /Press G to emit a pulse that blasts planets, rockets, and caches within its blast radius away from your planet\./i,
       ),
     ).toBeInTheDocument();
     expect(

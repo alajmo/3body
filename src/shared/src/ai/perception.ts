@@ -751,9 +751,6 @@ export const buildCombatAiPerception = ({
     foresightReady:
       privateState.cooldowns.foresightActiveUntilTick <= tick &&
       privateState.cooldowns.foresightCooldownUntilTick <= tick,
-    droneReady:
-      privateState.cooldowns.droneCooldownUntilTick <= tick &&
-      blackboard.self.activeDroneId === null,
     gravityPulseHeld: privateState.gravityPulseHeld,
     cloakHeld: privateState.cloakHeld,
   };

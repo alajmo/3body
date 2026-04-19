@@ -36,8 +36,6 @@ export const buildCombatAiCommandDirective = (
         foresight: false,
         gravityPulse: false,
         cloak: false,
-        droneLaunch: false,
-        droneTurn: 0,
         reason: [],
       },
     notes,

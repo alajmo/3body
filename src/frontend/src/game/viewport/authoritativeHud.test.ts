@@ -1,9 +1,4 @@
-import type {
-  Drone,
-  PlanetPrivateState,
-  PlanetPublic,
-  World,
-} from "@3body/shared";
+import type { PlanetPrivateState, PlanetPublic, World } from "@3body/shared";
 import {
   FIXED_STEP_SEC,
   FORESIGHT_SPEC,
@@ -28,17 +23,6 @@ const createWorld = (): World =>
       },
     ],
     debris: [],
-    drones: [
-      {
-        id: 3,
-        kind: "drone",
-        ownerId: "pilot-1",
-        pos: { x: 360, y: -120 },
-        radius: 24,
-        ttlUntilTick: 24,
-        vel: { x: 0, y: 0 },
-      },
-    ],
     neutronStars: [],
     planets: [
       {
@@ -49,7 +33,6 @@ const createWorld = (): World =>
         debuffs: {},
         hideTrailUntilTick: 0,
         hp: 87,
-        pilotingDroneId: undefined,
         pos: { x: 220, y: 140 },
         radius: 68,
         shieldActive: false,
@@ -66,7 +49,6 @@ const createWorld = (): World =>
         debuffs: {},
         hideTrailUntilTick: 0,
         hp: 92,
-        pilotingDroneId: undefined,
         pos: { x: -180, y: -260 },
         radius: 72,
         shieldActive: false,
@@ -110,7 +92,6 @@ const createSelf = (): PlanetPrivateState =>
     },
     boostCharges: 1,
     cooldowns: {
-      droneCooldownUntilTick: 0,
       foresightActiveUntilTick: 0,
       foresightCooldownUntilTick: 0,
       foresightDurationTicks: 0,
@@ -132,7 +113,6 @@ const createPlayerPlanet = (): PlanetPublic =>
     hp: 87,
     id: 1,
     kind: "planet",
-    pilotingDroneId: undefined,
     pos: {
       x: 220,
       y: 140,
@@ -150,21 +130,9 @@ const createPlayerPlanet = (): PlanetPublic =>
     },
   }) satisfies PlanetPublic;
 
-const createActiveDrone = (): Drone =>
-  ({
-    id: 3,
-    kind: "drone",
-    ownerId: "pilot-1",
-    pos: { x: 360, y: -120 },
-    radius: 24,
-    ttlUntilTick: 24,
-    vel: { x: 0, y: 0 },
-  }) satisfies Drone;
-
 describe("buildAuthoritativeHudState", () => {
   it("surfaces profiler debug items for the authoritative viewport", () => {
     const hud = buildAuthoritativeHudState({
-      activeDrone: createActiveDrone(),
       connection: {
         extrapolating: true,
         fps: 58,
@@ -225,7 +193,7 @@ describe("buildAuthoritativeHudState", () => {
         }),
         expect.objectContaining({
           label: "Entities",
-          value: "P 2 · R 1 · D 1 · C 1",
+          value: "P 2 · R 1 · C 1",
         }),
         expect.objectContaining({
           label: "Net State",
@@ -237,7 +205,8 @@ describe("buildAuthoritativeHudState", () => {
     expect(hud.playerHeadingDeg).toBeCloseTo(45);
     expect(
       hud.minimap.entities.some(
-        (entity) => entity.kind === "drone" && entity.highlighted,
+        (entity) =>
+          entity.kind === "planet" && entity.id === 1 && entity.highlighted,
       ),
     ).toBe(true);
     expect(hud.minimap.entities.some((entity) => entity.kind === "sun")).toBe(
@@ -247,7 +216,6 @@ describe("buildAuthoritativeHudState", () => {
 
   it("omits profiler debug items when profiling is disabled", () => {
     const hud = buildAuthoritativeHudState({
-      activeDrone: null,
       connection: {
         extrapolating: false,
         fps: 0,
@@ -286,7 +254,6 @@ describe("buildAuthoritativeHudState", () => {
     const baseShieldCapacity = getShieldLoadCapacity("terra");
     const depletedShieldCapacity = baseShieldCapacity - 15;
     const hud = buildAuthoritativeHudState({
-      activeDrone: null,
       connection: {
         extrapolating: false,
         fps: 58,
@@ -346,7 +313,6 @@ describe("buildAuthoritativeHudState", () => {
     self.cooldowns.foresightDurationTicks = extendedDurationTicks;
 
     const cooldownHud = buildAuthoritativeHudState({
-      activeDrone: null,
       connection: {
         extrapolating: false,
         fps: 58,
@@ -388,7 +354,6 @@ describe("buildAuthoritativeHudState", () => {
     );
 
     const rechargingHud = buildAuthoritativeHudState({
-      activeDrone: null,
       connection: {
         extrapolating: false,
         fps: 58,
@@ -436,7 +401,6 @@ describe("buildAuthoritativeHudState", () => {
     self.cloakHeld = true;
 
     const hud = buildAuthoritativeHudState({
-      activeDrone: null,
       connection: {
         extrapolating: false,
         fps: 58,
@@ -455,7 +419,7 @@ describe("buildAuthoritativeHudState", () => {
             kind: "cachePickup",
             tick: 118,
             playerId: "pilot-1",
-            droneId: 3,
+            planetId: 1,
             contents: { kind: "wildcard", wildcard: { kind: "cloak" } },
           },
           id: 1,
@@ -512,7 +476,6 @@ describe("buildAuthoritativeHudState", () => {
 
   it("describes neutron star kills in the event feed", () => {
     const hud = buildAuthoritativeHudState({
-      activeDrone: null,
       connection: {
         extrapolating: false,
         fps: 58,

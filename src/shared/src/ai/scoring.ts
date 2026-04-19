@@ -630,15 +630,6 @@ const scoreMovementIntent = (
         metrics.pressure * 16 +
         commitment * 16
       );
-    case "deployDrone":
-      return (
-        metrics.survival * 46 +
-        metrics.resource * 26 +
-        metrics.pressure * 16 +
-        metrics.orbitBand * 12 +
-        metrics.targetProgress * 10 +
-        commitment * 18
-      );
     case "useWildcard":
       return (
         metrics.survival * 52 +
@@ -685,7 +676,6 @@ const estimateDesiredRange = (
     | "zoneWithHeavy"
     | "lockSeeker"
     | "recover"
-    | "deployDrone"
     | "useWildcard",
 ) => {
   switch (intentKind) {

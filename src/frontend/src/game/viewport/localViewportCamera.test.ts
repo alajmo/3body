@@ -82,11 +82,8 @@ describe("getLocalViewportCameraFrame", () => {
       aspect: 16 / 9,
       state: {
         blackHole: null,
-        drones: [],
         planets: [],
         player: {
-          activeDroneId: null,
-          controlMode: "planet",
           planetId: 1,
         },
         suns: [],

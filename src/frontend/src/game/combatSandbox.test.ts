@@ -54,9 +54,6 @@ const createStepInput = (
   boostRequested: false,
   gravityPulseRequested: false,
   cloakRequested: false,
-  droneLaunchRequested: false,
-  droneTurnLeftHeld: false,
-  droneTurnRightHeld: false,
   ...overrides,
 });
 
@@ -1146,46 +1143,6 @@ describe("combatSandbox", () => {
     ).toBeGreaterThan(baseDurationTicks);
   });
 
-  it("launches a drone and detonates it when the fuse expires", () => {
-    const { state } = createLinearCombatState();
-
-    const launched = stepSandbox(
-      state,
-      createStepInput({
-        aimWorld: { x: 220, y: 0 },
-        droneLaunchRequested: true,
-      }),
-      DISABLED_BLACK_HOLE_SPEC,
-    );
-
-    expect(launched.drones).toHaveLength(1);
-    expect(launched.player.controlMode).toBe("drone");
-    expect(launched.player.activeDroneId).toBe(launched.drones[0]!.id);
-
-    const armed = {
-      ...launched,
-      drones: [
-        {
-          ...launched.drones[0]!,
-          ttlUntilTick: launched.tick + 1,
-        },
-      ],
-    };
-
-    const detonated = stepSandbox(
-      armed,
-      createStepInput({
-        aimWorld: { x: 220, y: 0 },
-      }),
-      DISABLED_BLACK_HOLE_SPEC,
-    );
-
-    expect(detonated.drones).toHaveLength(0);
-    expect(detonated.player.controlMode).toBe("planet");
-    expect(detonated.player.activeDroneId).toBeNull();
-    expect(detonated.debris.length).toBeGreaterThan(0);
-  });
-
   it("cloaks the player planet when cloak is activated", () => {
     const { state } = createLinearCombatState();
     state.player.cloakHeld = true;
@@ -1218,20 +1175,9 @@ describe("combatSandbox", () => {
         pos: { x: 60, y: 80 },
       }),
     ];
-    state.drones = [
-      {
-        id: 702,
-        kind: "drone",
-        ownerId: "bot-drone",
-        pos: { x: 120, y: -100 },
-        vel: { x: 0, y: 0 },
-        radius: 18,
-        ttlUntilTick: 40,
-      },
-    ];
     state.caches = [
       {
-        id: 703,
+        id: 702,
         kind: "cache",
         contents: { kind: "repair" },
         pos: { x: 200, y: 140 },
@@ -1255,9 +1201,6 @@ describe("combatSandbox", () => {
     expect(pushedEnemy.vel.x).toBeGreaterThan(0);
     expect(
       Math.hypot(next.rockets[0]!.vel.x, next.rockets[0]!.vel.y),
-    ).toBeGreaterThan(0);
-    expect(
-      Math.hypot(next.drones[0]!.vel.x, next.drones[0]!.vel.y),
     ).toBeGreaterThan(0);
     expect(
       Math.hypot(next.caches[0]!.vel.x, next.caches[0]!.vel.y),
@@ -1408,7 +1351,7 @@ describe("combatSandbox", () => {
     );
   });
 
-  it("surfaces debug labels for caches, wildcards, locks, and active drones", () => {
+  it("surfaces debug labels for caches, wildcards, and locks", () => {
     const { state, enemyPlanetId } = createLinearCombatState();
     const enemyPlanet = state.planets.find(
       (planet) => planet.id === enemyPlanetId,
@@ -1436,18 +1379,6 @@ describe("combatSandbox", () => {
         radius: 24,
       },
     ];
-    state.drones = [
-      {
-        id: 502,
-        kind: "drone",
-        ownerId: "player",
-        pos: { x: 10, y: 0 },
-        vel: { x: 0, y: 0 },
-        radius: 18,
-        ttlUntilTick: 20,
-      },
-    ];
-    state.player.activeDroneId = 502;
 
     const snapshot = getSandboxDebugSnapshot(state);
 
@@ -1455,7 +1386,6 @@ describe("combatSandbox", () => {
     expect(snapshot.lockTargetLabel).toBe(enemyPlanet.label);
     expect(snapshot.blackHoleActive).toBe(true);
     expect(snapshot.cacheCount).toBe(1);
-    expect(snapshot.droneMode).toBe("active");
     expect(snapshot.gravityPulseHeld).toBe(false);
     expect(snapshot.cloakHeld).toBe(true);
     expect(

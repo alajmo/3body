@@ -8,7 +8,6 @@ import {
   SHIELD_SPEC,
   getShieldLoadCapacity,
   type CacheContents,
-  type Drone,
   type PlanetPrivateState,
   type PlanetPublic,
   type RocketKind,
@@ -58,7 +57,6 @@ const getShieldDisplayCapacity = (planet: PlanetPublic): number => {
 };
 
 interface BuildAuthoritativeHudStateParams {
-  activeDrone: Drone | null;
   connection: GameViewportConnectionState;
   controlsEnabled: boolean;
   currentEffectsQuality: ViewportEffectsQuality;
@@ -157,7 +155,7 @@ const buildProfilerDebugItems = ({
     },
     {
       label: "Entities",
-      value: `P ${world?.planets.length ?? 0} · R ${world?.rockets.length ?? 0} · D ${world?.drones.length ?? 0} · C ${world?.caches.length ?? 0}`,
+      value: `P ${world?.planets.length ?? 0} · R ${world?.rockets.length ?? 0} · C ${world?.caches.length ?? 0}`,
     },
     {
       label: "Net State",
@@ -324,7 +322,6 @@ const buildContextualShortcuts = (
     : [];
 
 export const buildAuthoritativeHudState = ({
-  activeDrone,
   connection,
   controlsEnabled,
   currentEffectsQuality,
@@ -552,17 +549,12 @@ export const buildAuthoritativeHudState = ({
           })),
         ];
   const highlightedMinimapEntity =
-    activeDrone !== null
+    playerPlanet !== null
       ? {
-          id: activeDrone.id,
-          kind: "drone" as const,
+          id: playerPlanet.id,
+          kind: "planet" as const,
         }
-      : playerPlanet !== null
-        ? {
-            id: playerPlanet.id,
-            kind: "planet" as const,
-          }
-        : null;
+      : null;
 
   return {
     ...initialHudState,
@@ -579,7 +571,6 @@ export const buildAuthoritativeHudState = ({
     cacheBadgeScale: tuning.visuals.caches.badgeScale,
     connection: connectionState,
     contextualShortcuts: buildContextualShortcuts(controlsEnabled),
-    controlMode: activeDrone !== null ? "drone" : "planet",
     currentPresetId: "authoritative-match",
     debugItems: buildProfilerDebugItems({
       connection,
@@ -600,7 +591,6 @@ export const buildAuthoritativeHudState = ({
             arenaRadius: world.arenaRadius,
             blackHole: world.blackHole,
             caches: world.caches,
-            drones: world.drones,
             highlightedEntity: highlightedMinimapEntity,
             planets: world.planets,
             suns: world.suns,

@@ -13,7 +13,6 @@ import {
 import type {
   CombatSandboxSun,
   CombatPlanetDeathReason,
-  CombatSandboxDrone,
   CombatSandboxPlanet,
   CombatSandboxState,
 } from "../combatSandbox";
@@ -127,20 +126,13 @@ const isPlanetExplosionDeath = (
 
 const syncLocalSandboxEntityLookups = (
   planetsById: Map<number, CombatSandboxPlanet>,
-  dronesById: Map<number, CombatSandboxDrone>,
   state: {
-    drones: readonly CombatSandboxDrone[];
     planets: readonly CombatSandboxPlanet[];
   },
 ) => {
   planetsById.clear();
   for (const planet of state.planets) {
     planetsById.set(planet.id, planet);
-  }
-
-  dronesById.clear();
-  for (const drone of state.drones) {
-    dronesById.set(drone.id, drone);
   }
 };
 
@@ -241,7 +233,6 @@ export const createLocalSandboxSimulationState = (
     playerHpPulse: 0,
     previousFrameTimeSec: null as number | null,
     previousState: initialState,
-    renderDronesById: new Map<number, CombatSandboxDrone>(),
     renderInterpolationCache: createSandboxInterpolationCache(),
     renderPlanetsById: new Map<number, CombatSandboxPlanet>(),
     renderState: createInterpolatedSandboxState(initialState),
@@ -251,11 +242,7 @@ export const createLocalSandboxSimulationState = (
     },
     runtimeStatsTracker: createRuntimeStatsTracker(),
   };
-  syncLocalSandboxEntityLookups(
-    state.renderPlanetsById,
-    state.renderDronesById,
-    state.currentState,
-  );
+  syncLocalSandboxEntityLookups(state.renderPlanetsById, state.currentState);
   return state;
 };
 
@@ -302,11 +289,7 @@ export const resetLocalSandboxSimulationState = ({
   simulationState.playerHpPulse = 0;
   inputController?.resetForPlayer(nextState.player);
   resetLocalSandboxSimulationProfiling(simulationState);
-  syncLocalSandboxEntityLookups(
-    simulationState.renderPlanetsById,
-    simulationState.renderDronesById,
-    nextState,
-  );
+  syncLocalSandboxEntityLookups(simulationState.renderPlanetsById, nextState);
 };
 
 export const decayLocalSandboxFrameEffects = ({
@@ -437,9 +420,6 @@ export const runLocalSandboxSimulationFrame = ({
     simulationState.accumulatorSec >= FIXED_STEP_SEC &&
     stepCount < MAX_STEPS_PER_FRAME
   ) {
-    const previousControlMode = simulationState.currentState.player.controlMode;
-    const previousActiveDroneId =
-      simulationState.currentState.player.activeDroneId;
     const previousGravityPulseHeld =
       simulationState.currentState.player.gravityPulseHeld;
     const previousCloakHeld = simulationState.currentState.player.cloakHeld;
@@ -454,9 +434,6 @@ export const runLocalSandboxSimulationFrame = ({
         aimWorld: inputRuntime.inputState.aimWorld,
         boostRequested: inputRuntime.pendingAbilityRequests.boost,
         cloakRequested: inputRuntime.pendingAbilityRequests.cloak,
-        droneLaunchRequested: inputRuntime.pendingDroneRequests.launch,
-        droneTurnLeftHeld: inputRuntime.droneSteering.leftHeld,
-        droneTurnRightHeld: inputRuntime.droneSteering.rightHeld,
         fireRequested: fireRequestedThisStep,
         foresightRequested: inputRuntime.pendingAbilityRequests.foresight,
         gravityPulseRequested: inputRuntime.pendingAbilityRequests.gravityPulse,
@@ -522,14 +499,6 @@ export const runLocalSandboxSimulationFrame = ({
         }
         simulationState.nextKillFeedId += 1;
       }
-    }
-
-    if (
-      previousControlMode !== simulationState.currentState.player.controlMode ||
-      previousActiveDroneId !==
-        simulationState.currentState.player.activeDroneId
-    ) {
-      onViewportFocusChanged?.(simulationState.currentState);
     }
 
     for (const controller of getBoostVisualControllers(
@@ -636,18 +605,11 @@ export const runLocalSandboxSimulationFrame = ({
   );
   syncLocalSandboxEntityLookups(
     simulationState.renderPlanetsById,
-    simulationState.renderDronesById,
     simulationState.renderState,
   );
   const interpolationProfilerEndMs = profilingEnabled ? performance.now() : 0;
 
   return {
-    activeDrone:
-      simulationState.renderState.player.activeDroneId === null
-        ? null
-        : (simulationState.renderDronesById.get(
-            simulationState.renderState.player.activeDroneId,
-          ) ?? null),
     frameDeltaSec,
     interpolationMs: interpolationProfilerEndMs - interpolationProfilerStartMs,
     playerPlanet:

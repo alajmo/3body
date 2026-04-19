@@ -5,7 +5,6 @@ import type {
   BlackHoleSpec,
   BoostSpec,
   CacheSpec,
-  DroneSpec,
   GravityPulseSpec,
   MatchTimerSpec,
   NeutronStarSpec,
@@ -244,10 +243,6 @@ export interface ForesightPathVisualTuning {
   showLine: boolean;
 }
 
-export interface DroneVisualTuning {
-  activeColor: string;
-}
-
 export interface CacheVisualTuning {
   badgeBaseSize: number;
   badgeScale: number;
@@ -308,7 +303,6 @@ export interface VisualTuning {
   blackHole: BlackHoleVisualTuning;
   caches: CacheVisualTuning;
   cannon: CannonVisualTuning;
-  drone: DroneVisualTuning;
   hud: HudVisualTuning;
   neutronStars: NeutronStarVisualTuning;
   orbits: OrbitVisualTuning;
@@ -414,7 +408,6 @@ export interface GameplayTuning {
   blackHole: BlackHoleSpec;
   cache: CacheSpec;
   camera: GameplayCameraTuning;
-  drone: DroneSpec;
   neutronStars: NeutronStarSpec;
   orbits: OrbitGameplayTuning;
   rockets: Record<RocketKind, RocketSpec>;
@@ -1514,9 +1507,6 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
       boostColor: "#8bc6ff",
       wildcardColor: "#ffd37a",
     },
-    drone: {
-      activeColor: "#91ffd2",
-    },
     caches: {
       badgeScale: 1,
       badgeBaseSize: 80,
@@ -1749,14 +1739,6 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
         radius: 2_000,
       },
     },
-    drone: {
-      damage: 55,
-      speed: 620,
-      thrust: 220,
-      turnRateDeg: 240,
-      ttlSec: 5,
-      cooldownSec: 8,
-    },
     cache: {
       count: 3,
       respawnSec: 15,
@@ -1882,32 +1864,6 @@ const sanitizeGravityPulseSpec = (
   return {
     force: sanitizeNumber(source.force, fallback.force, 0, 20_000),
     radius: sanitizeNumber(source.radius, fallback.radius, 50, 10_000),
-  };
-};
-
-const sanitizeDroneSpec = (value: unknown, fallback: DroneSpec): DroneSpec => {
-  const source =
-    value !== null && typeof value === "object"
-      ? (value as Partial<Record<keyof DroneSpec, unknown>>)
-      : {};
-
-  return {
-    cooldownSec: sanitizeNumber(
-      source.cooldownSec,
-      fallback.cooldownSec,
-      0.05,
-      300,
-    ),
-    damage: sanitizeNumber(source.damage, fallback.damage, 0, 10_000),
-    speed: sanitizeNumber(source.speed, fallback.speed, 1, 4_000),
-    thrust: sanitizeNumber(source.thrust, fallback.thrust, 0, 4_000),
-    turnRateDeg: sanitizeNumber(
-      source.turnRateDeg,
-      fallback.turnRateDeg,
-      0,
-      1_080,
-    ),
-    ttlSec: sanitizeNumber(source.ttlSec, fallback.ttlSec, 0.1, 300),
   };
 };
 
@@ -2837,12 +2793,6 @@ export const sanitizeGameTuning = (value: unknown): GameTuningDocument => {
           fallback.visuals.abilities.wildcardColor,
         ),
       },
-      drone: {
-        activeColor: sanitizeHexColor(
-          visuals.drone?.activeColor,
-          fallback.visuals.drone.activeColor,
-        ),
-      },
       caches: {
         badgeBaseSize: sanitizeNumber(
           visuals.caches?.badgeBaseSize,
@@ -3029,7 +2979,6 @@ export const sanitizeGameTuning = (value: unknown): GameTuningDocument => {
           fallback.gameplay.abilities.gravityPulse,
         ),
       },
-      drone: sanitizeDroneSpec(gameplay.drone, fallback.gameplay.drone),
       cache: sanitizeCacheSpec(gameplay.cache, fallback.gameplay.cache),
       timers: sanitizeMatchTimerSpec(gameplay.timers, fallback.gameplay.timers),
     },

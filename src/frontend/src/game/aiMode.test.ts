@@ -74,7 +74,6 @@ const createPrivateState = (
     foresightActiveUntilTick: 0,
     foresightCooldownUntilTick: 0,
     foresightDurationTicks: 0,
-    droneCooldownUntilTick: 0,
     ...overrides.cooldowns,
   },
   boostCharges: overrides.boostCharges ?? 2,
@@ -92,7 +91,6 @@ const createWorld = (
   neutronStars: overrides.neutronStars ?? [],
   planets,
   rockets: overrides.rockets ?? [],
-  drones: overrides.drones ?? [],
   caches: overrides.caches ?? [],
   blackHole: overrides.blackHole,
   debris: overrides.debris ?? [],
@@ -121,8 +119,6 @@ const createContext = ({
   self,
   privateState,
   runtime: runtime ?? {
-    activeDroneId: null,
-    controlMode: "planet",
   },
 });
 
@@ -137,9 +133,6 @@ const createStepInput = (
   boostRequested: false,
   gravityPulseRequested: false,
   cloakRequested: false,
-  droneLaunchRequested: false,
-  droneTurnLeftHeld: false,
-  droneTurnRightHeld: false,
   ...overrides,
 });
 
@@ -1093,7 +1086,6 @@ describe("AI mode", () => {
     state = stepSandbox(state, createStepInput(), DISABLED_BLACK_HOLE_SPEC);
     const debug = getSandboxDebugSnapshot(state);
     const hud = buildLocalSandboxHudState({
-      activeDrone: null,
       blackHoleRemainingSec: 30,
       blackHoleSettings: BLACK_HOLE_SPEC,
       botsEnabled: true,
@@ -1104,8 +1096,6 @@ describe("AI mode", () => {
       cacheBadgeScale: 1,
       colors: {
         boost: "#ff8d4a",
-        drone: "#77d6ff",
-        droneReturn: "#ffd166",
         foresight: "#7cf2ff",
         shield: "#7ab8ff",
         weapon: {
@@ -1122,7 +1112,6 @@ describe("AI mode", () => {
       currentSsaaLevel: 1,
       currentState: state,
       debug,
-      droneTtlRemainingSec: 0,
       foresightActiveRemainingSec: 0,
       foresightCooldownRemainingSec: 0,
       foresightMode: "ready",

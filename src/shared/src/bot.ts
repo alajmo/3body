@@ -43,13 +43,9 @@ const FIRE_CADENCE_TICKS = {
   hard: 6,
 } as const satisfies Record<BotDifficulty, number>;
 const PLAN_REFRESH_TICKS = 6;
-const DRONE_LAUNCH_CADENCE_TICKS = 18;
 const WILDCARD_CADENCE_TICKS = 10;
 
-export interface CombatBotRuntime {
-  activeDroneId: number | null;
-  controlMode: "planet" | "drone";
-}
+export interface CombatBotRuntime {}
 
 export interface CombatBotContext {
   difficulty: BotDifficulty;
@@ -65,7 +61,6 @@ export interface CombatBotMemory {
   cachedAimDir: Vec2;
   lastAimTick: number;
   lastBoostTick: number;
-  lastDroneLaunchTick: number;
   lastFireTick: number;
   lastForesightTick: number;
   lastShieldTick: number;
@@ -94,14 +89,6 @@ export type CombatBotCommand =
       type: "ability";
       slot: AbilitySlot;
       aimDir?: Vec2;
-    }
-  | {
-      type: "droneLaunch";
-      aimDir: Vec2;
-    }
-  | {
-      type: "droneSteer";
-      turn: -1 | 0 | 1;
     };
 
 const normalizeDir = (dir: Vec2, fallback: Vec2 = DEFAULT_DIR): Vec2 => {
@@ -132,15 +119,12 @@ const placeholderSelfState = (): CombatAiSelfState => ({
     foresightActiveUntilTick: 0,
     foresightCooldownUntilTick: 0,
     foresightDurationTicks: 0,
-    droneCooldownUntilTick: 0,
   },
   boostCharges: 0,
   gravityPulseHeld: false,
   cloakHeld: false,
   nextShieldExt: false,
   nextForesightExt: false,
-  activeDroneId: null,
-  controlMode: "planet",
 });
 
 const hashBotSeed = (value: string): number => {
@@ -159,7 +143,6 @@ export const createCombatBotMemory = (): CombatBotMemory => ({
   cachedAimDir: { ...DEFAULT_DIR },
   lastAimTick: -1,
   lastBoostTick: -1,
-  lastDroneLaunchTick: -1,
   lastFireTick: -1,
   lastForesightTick: -1,
   lastShieldTick: -1,
@@ -173,7 +156,6 @@ export const cloneCombatBotMemory = (
   cachedAimDir: { ...memory.cachedAimDir },
   lastAimTick: memory.lastAimTick,
   lastBoostTick: memory.lastBoostTick,
-  lastDroneLaunchTick: memory.lastDroneLaunchTick,
   lastFireTick: memory.lastFireTick,
   lastForesightTick: memory.lastForesightTick,
   lastShieldTick: memory.lastShieldTick,
@@ -205,8 +187,6 @@ const buildCombatAiSelfState = (
   cloakHeld: context.privateState.cloakHeld,
   nextShieldExt: context.privateState.nextShieldExt,
   nextForesightExt: context.privateState.nextForesightExt,
-  activeDroneId: context.runtime.activeDroneId,
-  controlMode: context.runtime.controlMode,
 });
 
 const ensureBlackboard = (
@@ -293,9 +273,6 @@ export const decideCombatAi = (
           context.tick &&
         context.privateState.cooldowns.foresightCooldownUntilTick <=
           context.tick,
-      droneReady:
-        context.privateState.cooldowns.droneCooldownUntilTick <= context.tick &&
-        context.runtime.activeDroneId === null,
       gravityPulseHeld: context.privateState.gravityPulseHeld,
       cloakHeld: context.privateState.cloakHeld,
     };
@@ -422,10 +399,6 @@ const setCommandTrace = (
         return `fire:${command.kind}`;
       case "ability":
         return `ability:${command.slot}`;
-      case "droneLaunch":
-        return "droneLaunch";
-      case "droneSteer":
-        return `droneSteer:${command.turn}`;
     }
   });
   blackboard.debug = buildCombatAiDebugState(blackboard);
@@ -522,30 +495,7 @@ export const decideCombatBot = (
   }
 
   if (
-    directive.abilityPolicy.droneLaunch &&
-    directive.abilityPolicy.droneDir !== undefined &&
-    context.runtime.controlMode === "planet" &&
-    actionReady(
-      memory.lastDroneLaunchTick,
-      DRONE_LAUNCH_CADENCE_TICKS,
-      context.tick,
-    )
-  ) {
-    commands.push({
-      type: "droneLaunch",
-      aimDir: normalizeDir(directive.abilityPolicy.droneDir, aimDir),
-    });
-    memory.lastDroneLaunchTick = context.tick;
-  } else if (context.runtime.controlMode === "drone") {
-    commands.push({
-      type: "droneSteer",
-      turn: directive.abilityPolicy.droneTurn,
-    });
-  }
-
-  if (
     directive.fire !== undefined &&
-    context.runtime.controlMode === "planet" &&
     actionReady(
       memory.lastFireTick,
       FIRE_CADENCE_TICKS[context.difficulty],

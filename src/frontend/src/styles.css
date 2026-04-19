@@ -471,7 +471,6 @@ body {
 .edit-object-preview__shield-arc,
 .edit-object-preview__shield-core,
 .edit-object-preview__boost-wave,
-.edit-object-preview__drone-state,
 .edit-object-preview__hud-panel,
 .edit-object-preview__hud-pill {
   position: absolute;
@@ -1015,18 +1014,6 @@ body {
   transform: rotate(18deg);
 }
 
-.edit-object-preview--drone {
-  display: flex;
-  gap: 6px;
-}
-
-.edit-object-preview__drone-state {
-  position: static;
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
-}
-
 .edit-object-preview__cache-badge {
   display: grid;
   width: 20px;
@@ -1173,8 +1160,7 @@ body {
 .editor-preview-cannon,
 .editor-preview-foresight,
 .editor-preview-shield,
-.editor-preview-boost,
-.editor-preview-drone {
+.editor-preview-boost {
   position: absolute;
   inset: 0;
 }
@@ -1458,50 +1444,6 @@ body {
   border-radius: 999px;
   background: var(--preview-accent);
   box-shadow: 0 0 14px
-    color-mix(in srgb, var(--preview-accent) 38%, transparent);
-}
-
-.editor-preview-drone__body,
-.editor-preview-drone__return,
-.editor-preview-drone__path {
-  position: absolute;
-}
-
-.editor-preview-drone__body {
-  left: 38%;
-  top: 50%;
-  width: 54px;
-  height: 54px;
-  transform: translate(-50%, -50%) rotate(45deg);
-  border-radius: 16px;
-  background: radial-gradient(
-    circle at 30% 30%,
-    color-mix(in srgb, var(--preview-accent) 88%, white 12%),
-    color-mix(in srgb, var(--preview-accent) 64%, #09111d) 72%
-  );
-  box-shadow: 0 0 38px
-    color-mix(in srgb, var(--preview-accent) 24%, transparent);
-}
-
-.editor-preview-drone__path {
-  left: 42%;
-  top: 50%;
-  width: 28%;
-  height: 2px;
-  transform: translateY(-50%);
-  border-top: 2px dashed var(--preview-accent);
-  opacity: 0.7;
-}
-
-.editor-preview-drone__return {
-  left: 72%;
-  top: 50%;
-  width: 24px;
-  height: 24px;
-  transform: translate(-50%, -50%);
-  border-radius: 999px;
-  background: var(--preview-accent);
-  box-shadow: 0 0 26px
     color-mix(in srgb, var(--preview-accent) 38%, transparent);
 }
 
@@ -2579,12 +2521,6 @@ section.sandbox-panel--dock {
   stroke-width: 0.8;
 }
 
-.minimap__marker--drone {
-  fill: #96edff;
-  stroke: rgba(226, 252, 255, 0.88);
-  stroke-width: 1;
-}
-
 .minimap__marker--sun {
   fill: #ffd97b;
   stroke: rgba(255, 245, 199, 0.92);
@@ -2956,10 +2892,6 @@ section.sandbox-panel--dock {
   );
   box-shadow: 0 0 0 1px
     color-mix(in srgb, var(--selected-weapon-accent, #8ed8ff) 28%, transparent);
-}
-
-.combat-tray--drone .combat-tray__row {
-  justify-content: space-between;
 }
 
 .shortcuts-dock__section {

@@ -8,15 +8,6 @@ interface PendingAbilityRequests {
   cloak: boolean;
 }
 
-interface PendingDroneRequests {
-  launch: boolean;
-}
-
-interface DroneSteeringState {
-  leftHeld: boolean;
-  rightHeld: boolean;
-}
-
 interface PointerState {
   clientX: number;
   clientY: number;
@@ -30,10 +21,8 @@ export interface GameViewportInputRuntimeState {
     selectedRocketKind: RocketKind;
   };
   pendingAbilityRequests: PendingAbilityRequests;
-  pendingDroneRequests: PendingDroneRequests;
   pendingShots: number;
   pointerState: PointerState;
-  droneSteering: DroneSteeringState;
 }
 
 export interface ViewportInputPlayerSeed {
@@ -41,14 +30,8 @@ export interface ViewportInputPlayerSeed {
   selectedRocketKind: RocketKind;
 }
 
-export interface ViewportPlayerControlState {
-  activeDroneId: number | null;
-  controlMode: "planet" | "drone";
-}
-
 interface CreateGameViewportInputControllerOptions {
   canvasElement: HTMLCanvasElement;
-  getPlayerControlState: () => ViewportPlayerControlState;
   isShieldActive: () => boolean;
   initialPlayer: ViewportInputPlayerSeed;
   isSandboxPaused: () => boolean;
@@ -63,15 +46,6 @@ const createPendingAbilityRequests = (): PendingAbilityRequests => ({
   shield: false,
   gravityPulse: false,
   cloak: false,
-});
-
-const createPendingDroneRequests = (): PendingDroneRequests => ({
-  launch: false,
-});
-
-const createDroneSteeringState = (): DroneSteeringState => ({
-  leftHeld: false,
-  rightHeld: false,
 });
 
 const isEditableTarget = (target: EventTarget | null): target is HTMLElement =>
@@ -114,14 +88,12 @@ export const createGameViewportInputController = (
       selectedRocketKind: options.initialPlayer.selectedRocketKind,
     },
     pendingAbilityRequests: createPendingAbilityRequests(),
-    pendingDroneRequests: createPendingDroneRequests(),
     pendingShots: 0,
     pointerState: {
       clientX: 0,
       clientY: 0,
       hasPointer: false,
     },
-    droneSteering: createDroneSteeringState(),
   };
   let boostHeld = false;
 
@@ -133,7 +105,6 @@ export const createGameViewportInputController = (
     state.pendingAbilityRequests.boost = boostHeld;
     state.pendingAbilityRequests.gravityPulse = false;
     state.pendingAbilityRequests.cloak = false;
-    state.pendingDroneRequests.launch = false;
   };
 
   const clearPendingGameplayRequests = () => {
@@ -148,8 +119,6 @@ export const createGameViewportInputController = (
       y: player.aimWorld.y,
     };
     state.inputState.selectedRocketKind = player.selectedRocketKind;
-    state.droneSteering.leftHeld = false;
-    state.droneSteering.rightHeld = false;
     clearPendingGameplayRequests();
   };
 
@@ -273,11 +242,6 @@ export const createGameViewportInputController = (
     }
 
     if (event.button === 2) {
-      event.preventDefault();
-      return;
-    }
-
-    if (options.getPlayerControlState().controlMode === "drone") {
       event.preventDefault();
       return;
     }

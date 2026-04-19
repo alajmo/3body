@@ -58,7 +58,6 @@ const createHudParams = (controlsEnabled: boolean) => {
   const debug = getSandboxDebugSnapshot(currentState);
 
   return {
-    activeDrone: null,
     blackHoleRemainingSec: 24,
     blackHoleSettings: BLACK_HOLE_SPEC,
     botsEnabled: true,
@@ -69,8 +68,6 @@ const createHudParams = (controlsEnabled: boolean) => {
     cacheBadgeScale: 1,
     colors: {
       boost: "#ff8d4a",
-      drone: "#77d6ff",
-      droneReturn: "#ffd166",
       foresight: "#7cf2ff",
       shield: "#7ab8ff",
       weapon: {
@@ -87,7 +84,6 @@ const createHudParams = (controlsEnabled: boolean) => {
     currentSsaaLevel: 1,
     currentState,
     debug,
-    droneTtlRemainingSec: 0,
     foresightActiveRemainingSec: 0,
     foresightCooldownRemainingSec: 0,
     foresightMode: "ready",
