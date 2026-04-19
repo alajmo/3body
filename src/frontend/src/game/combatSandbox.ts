@@ -555,13 +555,24 @@ const createControllerState = (
   nextForesightExt: false,
 });
 
+interface CloneControllerStateOptions {
+  aimWorld?: Vec2;
+  selectedRocketKind?: RocketKind;
+}
+
 const cloneControllerState = <T extends CombatSandboxControllerState>(
   controller: T,
+  options: CloneControllerStateOptions = {},
 ): T => ({
   ...controller,
+  selectedRocketKind:
+    options.selectedRocketKind ?? controller.selectedRocketKind,
   ammo: { ...controller.ammo },
   reloadUntilTick: { ...controller.reloadUntilTick },
-  aimWorld: { x: controller.aimWorld.x, y: controller.aimWorld.y },
+  aimWorld:
+    options.aimWorld === undefined
+      ? { x: controller.aimWorld.x, y: controller.aimWorld.y }
+      : { x: options.aimWorld.x, y: options.aimWorld.y },
   shieldAimDir: {
     x: controller.shieldAimDir.x,
     y: controller.shieldAimDir.y,
@@ -617,12 +628,7 @@ const toBotPrivateState = (
 const createBotWorld = (
   state: Pick<
     CombatSandboxState,
-    | "blackHole"
-    | "caches"
-    | "debris"
-    | "planets"
-    | "rockets"
-    | "suns"
+    "blackHole" | "caches" | "debris" | "planets" | "rockets" | "suns"
   >,
 ): PlanetPublic[] => state.planets.filter((planet) => planet.alive);
 
@@ -921,17 +927,25 @@ const syncBlackHole = (
   };
 };
 
+const findPlayerPlanetIndex = (
+  planets: readonly CombatSandboxPlanet[],
+  playerPlanetId: number,
+): number => {
+  for (let index = 0; index < planets.length; index += 1) {
+    if (planets[index]!.id === playerPlanetId) {
+      return index;
+    }
+  }
+
+  return -1;
+};
+
 const findPlayerPlanet = (
   planets: readonly CombatSandboxPlanet[],
   playerPlanetId: number,
 ): CombatSandboxPlanet | null => {
-  for (const planet of planets) {
-    if (planet.id === playerPlanetId) {
-      return planet;
-    }
-  }
-
-  return null;
+  const index = findPlayerPlanetIndex(planets, playerPlanetId);
+  return index < 0 ? null : planets[index]!;
 };
 
 const getPlayerArchetypeId = (
@@ -1413,7 +1427,10 @@ const markEnvironmentalPlanetDeaths = (
     }
 
     for (const neutronStar of neutronStars) {
-      if (dist(planet.pos, neutronStar.pos) <= planet.radius + neutronStar.radius) {
+      if (
+        dist(planet.pos, neutronStar.pos) <=
+        planet.radius + neutronStar.radius
+      ) {
         planets[index] = killPlanet(planet, "neutronStar");
         deathPlanetIds.add(planet.id);
         break;
@@ -1531,10 +1548,11 @@ const applyCacheDelivery = (
   planets: CombatSandboxPlanet[],
   contents: CacheContents,
 ) => {
-  const playerPlanet = findPlayerPlanet(planets, controller.planetId);
-  if (playerPlanet === null) {
+  const playerPlanetIndex = findPlayerPlanetIndex(planets, controller.planetId);
+  if (playerPlanetIndex < 0) {
     return;
   }
+  const playerPlanet = planets[playerPlanetIndex]!;
 
   switch (contents.kind) {
     case "heavyAmmo":
@@ -1544,7 +1562,10 @@ const applyCacheDelivery = (
       controller.ammo.seeker += 2;
       break;
     case "repair":
-      playerPlanet.hp = Math.min(PLANET_HP, playerPlanet.hp + REPAIR_AMOUNT);
+      planets[playerPlanetIndex] = {
+        ...playerPlanet,
+        hp: Math.min(PLANET_HP, playerPlanet.hp + REPAIR_AMOUNT),
+      };
       break;
     case "shieldExt":
       controller.nextShieldExt = true;
@@ -1602,8 +1623,12 @@ const activateWildcard = (
   player: CombatSandboxPlayerState,
   currentTick: number,
 ): boolean => {
-  const playerPlanet = findPlayerPlanet(planets, player.planetId);
-  if (playerPlanet === null || !playerPlanet.alive) {
+  const playerPlanetIndex = findPlayerPlanetIndex(planets, player.planetId);
+  if (playerPlanetIndex < 0) {
+    return false;
+  }
+  const playerPlanet = planets[playerPlanetIndex]!;
+  if (!playerPlanet.alive) {
     return false;
   }
 
@@ -1631,7 +1656,10 @@ const activateWildcard = (
       return true;
 
     case "cloak":
-      playerPlanet.hideTrailUntilTick = currentTick + CLOAK_DURATION_TICKS;
+      planets[playerPlanetIndex] = {
+        ...playerPlanet,
+        hideTrailUntilTick: currentTick + CLOAK_DURATION_TICKS,
+      };
       return true;
   }
 };
@@ -1784,7 +1812,9 @@ export const createSandboxState = (
         : DEFAULT_LOCAL_PLAYER_DISPLAY_NAME;
   const planets = planetSeeds.map((planetSeed, index) => {
     const displayName =
-      planetSeed.id === playerPlanetId ? playerDisplayName : nextBotDisplayName();
+      planetSeed.id === playerPlanetId
+        ? playerDisplayName
+        : nextBotDisplayName();
 
     return clonePlanetSeed(planetSeed, index, playerPlanetId, displayName);
   });
@@ -1885,9 +1915,8 @@ export const stepSandbox = (
     DEFAULT_ROCKET_PLANET_IMPACT_RADIUS_MULTIPLIER;
   const player =
     state.playerBot === null
-      ? cloneControllerState({
-          ...state.player,
-          aimWorld: { x: input.aimWorld.x, y: input.aimWorld.y },
+      ? cloneControllerState(state.player, {
+          aimWorld: input.aimWorld,
           selectedRocketKind: input.selectedRocketKind,
         })
       : cloneControllerState(state.player);
@@ -1916,9 +1945,9 @@ export const stepSandbox = (
     ...bots.map((bot) => [bot.playerId, createControllerFrame()] as const),
   ]);
 
-  let planets = state.planets.map(clonePlanet);
-  let rockets = state.rockets.map(cloneRocket);
-  let caches = state.caches.map(cloneCache);
+  let planets = state.planets.slice();
+  let rockets = state.rockets.slice();
+  let caches = state.caches.slice();
   const cacheRespawnAtTicks = [...state.cacheRespawnAtTicks];
   let nextEntityId = state.nextEntityId;
 
@@ -1992,7 +2021,6 @@ export const stepSandbox = (
     });
   }
 
-  syncControllersToPlanets(planets, controllerByPlayerId);
   const debrisBursts: CombatSandboxDebris[] = [];
   const impactBursts = stepImpactBursts(state.impactBursts, nextTick);
   const launchBursts = stepLaunchBursts(state.launchBursts, nextTick);
@@ -2012,10 +2040,7 @@ export const stepSandbox = (
       controller.shieldAimDir,
     );
 
-    if (
-      frame.foresightRequested &&
-      planetBeforeStep?.alive
-    ) {
+    if (frame.foresightRequested && planetBeforeStep?.alive) {
       const storedDurationTicks =
         state.tick >= controller.foresightActiveUntilTick &&
         state.tick >= controller.foresightCooldownUntilTick
@@ -2067,10 +2092,7 @@ export const stepSandbox = (
       }
     }
 
-    if (
-      frame.shieldRequested &&
-      planetBeforeStep?.alive
-    ) {
+    if (frame.shieldRequested && planetBeforeStep?.alive) {
       if (hasActiveShield(controller, state.tick)) {
         controller.shieldActive = false;
       } else if (controller.shieldLoad > 0) {
@@ -2146,7 +2168,6 @@ export const stepSandbox = (
     }
   }
 
-  syncControllersToPlanets(planets, controllerByPlayerId);
   const spawnedLaunchBursts: CombatSandboxRocketLaunchBurst[] = [];
   const spawnedRockets: CombatSandboxRocket[] = [];
   for (const controller of controllers) {
@@ -2282,11 +2303,8 @@ export const stepSandbox = (
 
   for (const controller of controllers) {
     const nextLockTargetId =
-      findAliveTargetPlanet(
-        planets,
-        controller.planetId,
-        controller.aimWorld,
-      )?.id ?? null;
+      findAliveTargetPlanet(planets, controller.planetId, controller.aimWorld)
+        ?.id ?? null;
     if (nextLockTargetId === null) {
       controller.seekerLockAcquiredAtTick = null;
     } else if (controller.lockTargetId !== nextLockTargetId) {
@@ -2426,7 +2444,10 @@ export const stepSandbox = (
     let consumed = false;
 
     for (const neutronStar of state.neutronStars) {
-      if (dist(rocket.pos, neutronStar.pos) <= rocket.radius + neutronStar.radius) {
+      if (
+        dist(rocket.pos, neutronStar.pos) <=
+        rocket.radius + neutronStar.radius
+      ) {
         emitRocketImpact(rocket);
         consumed = true;
         break;
@@ -2709,19 +2730,11 @@ export const createInterpolatedSandboxState = (
   state: CombatSandboxState,
 ): CombatSandboxState => ({
   ...state,
-  player: cloneControllerState(state.player),
-  playerBot: state.playerBot === null ? null : clonePlayerBotState(state.playerBot),
-  bots: state.bots.map(cloneBotState),
-  suns: state.suns.map(cloneSun),
-  neutronStars: state.neutronStars.map((star) => ({
-    ...star,
-    pos: { ...star.pos },
-    vel: { ...star.vel },
-  })),
-  planets: state.planets.map(clonePlanet),
-  rockets: state.rockets.map(cloneRocket),
-  caches: state.caches.map(cloneCache),
-  debris: state.debris.map(cloneDebris),
+  suns: state.suns.slice(),
+  planets: state.planets.slice(),
+  rockets: state.rockets.slice(),
+  caches: state.caches.slice(),
+  debris: state.debris.slice(),
 });
 
 const fillEntityMap = <T extends { id: number }>(
@@ -2879,19 +2892,20 @@ const syncInterpolatedEntityArray = <T extends { id: number }>(
 ) => {
   for (let index = 0; index < currentEntities.length; index += 1) {
     const currentEntity = currentEntities[index]!;
+    const previousEntity = getPrevious(currentEntity.id);
     let targetEntity = targetEntities[index];
 
-    if (targetEntity === undefined || targetEntity.id !== currentEntity.id) {
+    if (
+      targetEntity === undefined ||
+      targetEntity.id !== currentEntity.id ||
+      targetEntity === currentEntity ||
+      targetEntity === previousEntity
+    ) {
       targetEntity = cloneEntity(currentEntity);
       targetEntities[index] = targetEntity;
     }
 
-    syncEntity(
-      targetEntity,
-      getPrevious(currentEntity.id),
-      currentEntity,
-      alpha,
-    );
+    syncEntity(targetEntity, previousEntity, currentEntity, alpha);
   }
 
   targetEntities.length = currentEntities.length;
@@ -2934,32 +2948,39 @@ export const syncInterpolatedSandboxState = (
 
   for (let index = 0; index < currentState.suns.length; index += 1) {
     const currentSun = currentState.suns[index]!;
+    const previousSun = previousState.suns[index]!;
     let targetSun = targetState.suns[index];
 
-    if (targetSun === undefined || targetSun.id !== currentSun.id) {
+    if (
+      targetSun === undefined ||
+      targetSun.id !== currentSun.id ||
+      targetSun === currentSun ||
+      targetSun === previousSun
+    ) {
       targetSun = cloneSun(currentSun);
       targetState.suns[index] = targetSun;
     }
 
-    syncSunInto(targetSun, previousState.suns[index]!, currentSun, alpha);
+    syncSunInto(targetSun, previousSun, currentSun, alpha);
   }
   targetState.suns.length = currentState.suns.length;
 
   for (let index = 0; index < currentState.planets.length; index += 1) {
     const currentPlanet = currentState.planets[index]!;
+    const previousPlanet = previousState.planets[index]!;
     let targetPlanet = targetState.planets[index];
 
-    if (targetPlanet === undefined || targetPlanet.id !== currentPlanet.id) {
+    if (
+      targetPlanet === undefined ||
+      targetPlanet.id !== currentPlanet.id ||
+      targetPlanet === currentPlanet ||
+      targetPlanet === previousPlanet
+    ) {
       targetPlanet = clonePlanet(currentPlanet);
       targetState.planets[index] = targetPlanet;
     }
 
-    syncPlanetInto(
-      targetPlanet,
-      previousState.planets[index]!,
-      currentPlanet,
-      alpha,
-    );
+    syncPlanetInto(targetPlanet, previousPlanet, currentPlanet, alpha);
   }
   targetState.planets.length = currentState.planets.length;
 
@@ -3033,10 +3054,10 @@ export const getSandboxDebugSnapshot = (
       debug.currentTargetId === null
         ? null
         : (findPlayerPlanet(state.planets, debug.currentTargetId)?.label ??
-            state.planets.find(
-              (planet) => planet.playerId === debug.currentTargetPlayerId,
-            )?.label ??
-            null);
+          state.planets.find(
+            (planet) => planet.playerId === debug.currentTargetPlayerId,
+          )?.label ??
+          null);
 
     return {
       playerId,

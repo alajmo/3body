@@ -611,7 +611,9 @@ describe("combatSandbox", () => {
     );
 
     expect(getSeekerLockTicks()).toBe(
-      Math.round(tunedDocument.gameplay.rockets.seeker.lockSec / FIXED_STEP_SEC),
+      Math.round(
+        tunedDocument.gameplay.rockets.seeker.lockSec / FIXED_STEP_SEC,
+      ),
     );
     expect(next.rockets).toHaveLength(1);
     expect(next.player.ammo.seeker).toBe(seekerAmmoBefore - 1);
@@ -1143,6 +1145,40 @@ describe("combatSandbox", () => {
     ).toBeGreaterThan(baseDurationTicks);
   });
 
+  it("does not mutate the prior state when repair caches are collected", () => {
+    const { state } = createLinearCombatState();
+    const playerPlanetIndex = state.planets.findIndex(
+      (planet) => planet.id === state.player.planetId,
+    );
+    state.planets[playerPlanetIndex] = {
+      ...state.planets[playerPlanetIndex]!,
+      hp: PLANET_HP - 50,
+    };
+    state.caches = [
+      {
+        id: 603,
+        kind: "cache",
+        contents: { kind: "repair" },
+        pos: {
+          x: state.planets[playerPlanetIndex]!.pos.x,
+          y: state.planets[playerPlanetIndex]!.pos.y,
+        },
+        vel: { x: 0, y: 0 },
+        radius: 24,
+      },
+    ];
+    const hpBefore = state.planets[playerPlanetIndex]!.hp;
+
+    const delivered = stepSandbox(
+      state,
+      createStepInput(),
+      DISABLED_BLACK_HOLE_SPEC,
+    );
+
+    expect(state.planets[playerPlanetIndex]!.hp).toBe(hpBefore);
+    expect(delivered.planets[playerPlanetIndex]!.hp).toBeGreaterThan(hpBefore);
+  });
+
   it("cloaks the player planet when cloak is activated", () => {
     const { state } = createLinearCombatState();
     state.player.cloakHeld = true;
@@ -1283,6 +1319,14 @@ describe("combatSandbox", () => {
     const { state, enemyPlanetId } = createLinearCombatState();
     state.player.gravityPulseHeld = true;
     state.player.cloakHeld = true;
+    const playerPlanetBefore = state.planets.find(
+      (planet) => planet.id === state.player.planetId,
+    )!;
+    const enemyPlanetBefore = state.planets.find(
+      (planet) => planet.id === enemyPlanetId,
+    )!;
+    const playerHideTrailBefore = playerPlanetBefore.hideTrailUntilTick;
+    const enemyVelBefore = { ...enemyPlanetBefore.vel };
 
     const next = stepSandbox(
       state,
@@ -1303,6 +1347,15 @@ describe("combatSandbox", () => {
     expect(next.player.cloakHeld).toBe(false);
     expect(playerPlanetAfter.hideTrailUntilTick).toBeGreaterThan(next.tick);
     expect(enemyPlanetAfter.vel.x).toBeGreaterThan(0);
+    expect(state.player.gravityPulseHeld).toBe(true);
+    expect(state.player.cloakHeld).toBe(true);
+    expect(
+      state.planets.find((planet) => planet.id === state.player.planetId)!
+        .hideTrailUntilTick,
+    ).toBe(playerHideTrailBefore);
+    expect(
+      state.planets.find((planet) => planet.id === enemyPlanetId)!.vel,
+    ).toEqual(enemyVelBefore);
   });
 
   it("interpolates rockets by id but keeps dead planets on their current frame", () => {
@@ -1349,6 +1402,24 @@ describe("combatSandbox", () => {
     expect(interpolated.planets[previousEnemyIndex]!.vel).toEqual(
       current.planets[previousEnemyIndex]!.vel,
     );
+    expect(interpolated.rockets[0]).not.toBe(previous.rockets[0]);
+    expect(interpolated.rockets[0]).not.toBe(current.rockets[0]);
+    expect(interpolated.planets[previousEnemyIndex]).not.toBe(
+      previous.planets[previousEnemyIndex],
+    );
+    expect(interpolated.planets[previousEnemyIndex]).not.toBe(
+      current.planets[previousEnemyIndex],
+    );
+    expect(previous.rockets[0]!.pos).toEqual({ x: 20, y: 0 });
+    expect(current.rockets[0]!.pos).toEqual({ x: 60, y: 0 });
+    expect(previous.planets[previousEnemyIndex]!.pos).toEqual({
+      x: 180,
+      y: -24,
+    });
+    expect(current.planets[previousEnemyIndex]!.pos).toEqual({
+      x: 260,
+      y: 24,
+    });
   });
 
   it("surfaces debug labels for caches, wildcards, and locks", () => {
@@ -1462,7 +1533,11 @@ describe("combatSandbox", () => {
       },
     ];
 
-    const next = stepSandbox(state, createStepInput(), DISABLED_BLACK_HOLE_SPEC);
+    const next = stepSandbox(
+      state,
+      createStepInput(),
+      DISABLED_BLACK_HOLE_SPEC,
+    );
 
     const nextEnemy = next.planets.find(
       (planet) => planet.id === enemyPlanetId,
