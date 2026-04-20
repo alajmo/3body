@@ -126,13 +126,20 @@ const isPlanetExplosionDeath = (
 
 const syncLocalSandboxEntityLookups = (
   planetsById: Map<number, CombatSandboxPlanet>,
+  sunsById: Map<number, CombatSandboxSun>,
   state: {
     planets: readonly CombatSandboxPlanet[];
+    suns: readonly CombatSandboxSun[];
   },
 ) => {
   planetsById.clear();
   for (const planet of state.planets) {
     planetsById.set(planet.id, planet);
+  }
+
+  sunsById.clear();
+  for (const sun of state.suns) {
+    sunsById.set(sun.id, sun);
   }
 };
 
@@ -235,6 +242,7 @@ export const createLocalSandboxSimulationState = (
     previousState: initialState,
     renderInterpolationCache: createSandboxInterpolationCache(),
     renderPlanetsById: new Map<number, CombatSandboxPlanet>(),
+    renderSunsById: new Map<number, CombatSandboxSun>(),
     renderState: createInterpolatedSandboxState(initialState),
     runtimeStats: {
       fps: 0,
@@ -242,7 +250,11 @@ export const createLocalSandboxSimulationState = (
     },
     runtimeStatsTracker: createRuntimeStatsTracker(),
   };
-  syncLocalSandboxEntityLookups(state.renderPlanetsById, state.currentState);
+  syncLocalSandboxEntityLookups(
+    state.renderPlanetsById,
+    state.renderSunsById,
+    state.currentState,
+  );
   return state;
 };
 
@@ -289,7 +301,11 @@ export const resetLocalSandboxSimulationState = ({
   simulationState.playerHpPulse = 0;
   inputController?.resetForPlayer(nextState.player);
   resetLocalSandboxSimulationProfiling(simulationState);
-  syncLocalSandboxEntityLookups(simulationState.renderPlanetsById, nextState);
+  syncLocalSandboxEntityLookups(
+    simulationState.renderPlanetsById,
+    simulationState.renderSunsById,
+    nextState,
+  );
 };
 
 export const decayLocalSandboxFrameEffects = ({
@@ -605,6 +621,7 @@ export const runLocalSandboxSimulationFrame = ({
   );
   syncLocalSandboxEntityLookups(
     simulationState.renderPlanetsById,
+    simulationState.renderSunsById,
     simulationState.renderState,
   );
   const interpolationProfilerEndMs = profilingEnabled ? performance.now() : 0;

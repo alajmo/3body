@@ -93,7 +93,9 @@ describe("getLocalViewportCameraFrame", () => {
 
     expect(frame.centerX).toBe(0);
     expect(frame.centerY).toBe(0);
-    expect(frame.visibleWorldHeight).toBe(5040);
+    expect(frame.visibleWorldHeight).toBe(
+      CURRENT_GAME_TUNING.gameplay.arena.radius * 2 + 1040,
+    );
   });
 
   it("supports overriding the sandbox camera height for preview-only uses", () => {

@@ -4,6 +4,7 @@ import {
   CURRENT_GAME_TUNING,
   FIXED_STEP_SEC,
   consumeBlackHoleBodies,
+  GRAVITY_PULSE_RADIUS,
   getSeekerLockTicks,
   type BlackHoleSpec,
   PLANET_HP,
@@ -206,11 +207,50 @@ describe("combatSandbox", () => {
       botsEnabled: false,
     });
 
-    expect(state.suns[0]).toMatchObject({
-      pos: { x: -2400, y: 320 },
-      radius: 96,
-      vel: { x: 84, y: 126 },
-    });
+    const totalSunMass = tunedDocument.gameplay.orbits.suns.reduce(
+      (sum, sun) => sum + sun.mass,
+      0,
+    );
+    const sunCenterPosition = tunedDocument.gameplay.orbits.suns.reduce(
+      (center, sun) => ({
+        x: center.x + (sun.pos.x * sun.mass) / totalSunMass,
+        y: center.y + (sun.pos.y * sun.mass) / totalSunMass,
+      }),
+      { x: 0, y: 0 },
+    );
+    const sunCenterVelocity = tunedDocument.gameplay.orbits.suns.reduce(
+      (center, sun) => ({
+        x: center.x + (sun.vel.x * sun.mass) / totalSunMass,
+        y: center.y + (sun.vel.y * sun.mass) / totalSunMass,
+      }),
+      { x: 0, y: 0 },
+    );
+    const sunDistanceScale =
+      tunedDocument.gameplay.orbits.sunStartDistanceScale;
+    const sunVelocityScale = 1 / Math.sqrt(sunDistanceScale);
+    const tunedSun = tunedDocument.gameplay.orbits.suns[0]!;
+
+    expect(state.suns[0]!.radius).toBe(96);
+    expect(state.suns[0]!.pos.x).toBeCloseTo(
+      sunCenterPosition.x +
+        (tunedSun.pos.x - sunCenterPosition.x) * sunDistanceScale,
+      6,
+    );
+    expect(state.suns[0]!.pos.y).toBeCloseTo(
+      sunCenterPosition.y +
+        (tunedSun.pos.y - sunCenterPosition.y) * sunDistanceScale,
+      6,
+    );
+    expect(state.suns[0]!.vel.x).toBeCloseTo(
+      sunCenterVelocity.x +
+        (tunedSun.vel.x - sunCenterVelocity.x) * sunVelocityScale,
+      6,
+    );
+    expect(state.suns[0]!.vel.y).toBeCloseTo(
+      sunCenterVelocity.y +
+        (tunedSun.vel.y - sunCenterVelocity.y) * sunVelocityScale,
+      6,
+    );
     expect(state.planets[0]!.archetype).toBe("terra");
     expect(state.planets[0]!.radius).toBeCloseTo(31 * 1.5, 6);
 
@@ -223,17 +263,26 @@ describe("combatSandbox", () => {
     state.planets.forEach((planet, index) => {
       const expectedAngle = leadAngle + angleStep * index;
       expect(Math.hypot(planet.pos.x, planet.pos.y)).toBeCloseTo(
-        tunedDocument.gameplay.orbits.planetCircleRadius,
+        Math.min(
+          tunedDocument.gameplay.orbits.planetCircleRadius,
+          ARENA_RADIUS,
+        ),
         6,
       );
       expect(planet.pos.x).toBeCloseTo(
         Math.cos(expectedAngle) *
-          tunedDocument.gameplay.orbits.planetCircleRadius,
+          Math.min(
+            tunedDocument.gameplay.orbits.planetCircleRadius,
+            ARENA_RADIUS,
+          ),
         6,
       );
       expect(planet.pos.y).toBeCloseTo(
         Math.sin(expectedAngle) *
-          tunedDocument.gameplay.orbits.planetCircleRadius,
+          Math.min(
+            tunedDocument.gameplay.orbits.planetCircleRadius,
+            ARENA_RADIUS,
+          ),
         6,
       );
     });
@@ -824,7 +873,14 @@ describe("combatSandbox", () => {
       (planet) => planet.id === enemyPlanetId,
     )!;
     const rocket = buildRocket({
-      pos: { x: enemyPlanet.pos.x + 60, y: enemyPlanet.pos.y },
+      pos: {
+        x:
+          enemyPlanet.pos.x +
+          enemyPlanet.radius +
+          ROCKET_SPECS.light.radius +
+          1,
+        y: enemyPlanet.pos.y,
+      },
     });
 
     state.rockets = [rocket];
@@ -1250,7 +1306,7 @@ describe("combatSandbox", () => {
     );
     state.planets[enemyPlanetIndex] = {
       ...state.planets[enemyPlanetIndex]!,
-      pos: { x: ARENA_RADIUS * 0.85, y: 0 },
+      pos: { x: GRAVITY_PULSE_RADIUS * 0.85, y: 0 },
       vel: { x: 0, y: 0 },
     };
     state.player.gravityPulseHeld = true;
@@ -1277,7 +1333,7 @@ describe("combatSandbox", () => {
     );
     state.planets[enemyPlanetIndex] = {
       ...state.planets[enemyPlanetIndex]!,
-      pos: { x: ARENA_RADIUS * 0.8, y: 0 },
+      pos: { x: GRAVITY_PULSE_RADIUS * 0.8, y: 0 },
       vel: { x: 0, y: 0 },
     };
     state.player.gravityPulseHeld = true;

@@ -37,6 +37,7 @@ import type {
   CombatSandboxRocket,
   CombatSandboxRocketLaunchBurst,
   CombatSandboxState,
+  CombatSandboxSun,
 } from "../combatSandbox";
 import { getSandboxDebugSnapshot } from "../combatSandbox";
 import {
@@ -82,6 +83,12 @@ import {
   getCloakPlanetOpacity,
   getCloakRemainingSec,
 } from "./cloakVisual";
+import {
+  getForesightBodySurface,
+  getLocalViewportForesightPathTuning,
+  type ForesightVisual,
+  updateForesightVisual,
+} from "./localViewportForesight";
 import {
   getLocalSandboxLockProgress,
   type LocalSandboxGravityPulseState,
@@ -209,28 +216,6 @@ interface DebrisVisual {
 
 interface BoundaryDebrisVisual extends AmbientBoundaryDebrisVisual {}
 
-interface ForesightVisual {
-  line: Line;
-  lineGeometry: {
-    setDrawRange: (start: number, count: number) => void;
-  };
-  lineMaterial: LineBasicMaterial;
-  linePositionAttribute: Float32BufferAttribute;
-  pointColorUniform: {
-    value: Color;
-  };
-  pointGeometry: {
-    setDrawRange: (start: number, count: number) => void;
-  };
-  pointOpacityAttribute: Float32BufferAttribute;
-  pointOpacityUniform: {
-    value: number;
-  };
-  pointMaterial: PointsNodeMaterial;
-  pointPositionAttribute: Float32BufferAttribute;
-  points: Points;
-}
-
 interface BoostBurstState {
   direction: Vec2;
   origin: Vec2;
@@ -320,7 +305,6 @@ interface CannonFireState {
 }
 
 const getRuntimeVisuals = () => getRuntimeTuningDocument().visuals;
-const getForesightPathTuning = () => getRuntimeVisuals().abilities.foresight;
 const getCacheBadgeBaseSize = () => getRuntimeVisuals().caches.badgeBaseSize;
 const getWeaponColors = (): Record<RocketKind, { accent: string }> => ({
   heavy: {
@@ -500,62 +484,6 @@ const getBoostBurstAnchor = (
     origin: burst.origin,
     radius: burst.radius,
   };
-};
-
-const getForesightBodySurface = (
-  entityId: number,
-  renderState: CombatSandboxState,
-): { hiddenRadius: number; origin: Vec2 } | null => {
-  const planet =
-    renderState.planets.find((candidate) => candidate.id === entityId) ?? null;
-  if (planet?.alive) {
-    return {
-      hiddenRadius: getRenderedPlanetRadius(planet) + 2,
-      origin: planet.pos,
-    };
-  }
-
-  const sun =
-    renderState.suns.find((candidate) => candidate.id === entityId) ?? null;
-  if (sun !== null && sun.swallowedAtSec === null) {
-    return {
-      hiddenRadius: sun.radius + 2,
-      origin: sun.pos,
-    };
-  }
-
-  return null;
-};
-
-const updateForesightVisual = (
-  foresightVisual: ForesightVisual,
-  pathPoints: readonly Vec2[],
-  tuning: ReturnType<typeof getForesightPathTuning>,
-) => {
-  foresightVisual.lineMaterial.color.set(tuning.lineColor);
-  foresightVisual.lineMaterial.opacity = tuning.lineOpacity;
-  foresightVisual.pointColorUniform.value.set(tuning.dotColor);
-  foresightVisual.pointOpacityUniform.value = 0;
-  foresightVisual.pointMaterial.size = tuning.pointSize;
-
-  const lineArray = foresightVisual.linePositionAttribute.array as Float32Array;
-  const maxPoints = foresightVisual.linePositionAttribute.count;
-  const pointCount = Math.min(pathPoints.length, maxPoints);
-
-  for (let index = 0; index < pointCount; index += 1) {
-    const point = pathPoints[index]!;
-    const offset = index * 3;
-
-    lineArray[offset] = point.x;
-    lineArray[offset + 1] = point.y;
-    lineArray[offset + 2] = 0;
-  }
-
-  foresightVisual.lineGeometry.setDrawRange(0, pointCount);
-  foresightVisual.pointGeometry.setDrawRange(0, 0);
-  foresightVisual.linePositionAttribute.needsUpdate = true;
-  foresightVisual.line.visible = tuning.lineOpacity > 0.01 && pointCount > 1;
-  foresightVisual.points.visible = false;
 };
 
 const updateBoostBurstVisual = (
@@ -1608,7 +1536,7 @@ export const resetLocalViewportSceneState = ({
   debrisVisual.points.visible = false;
   boundaryDebrisVisual.bandGroup.visible = false;
   boundaryDebrisVisual.points.visible = false;
-  const foresightPathTuning = getForesightPathTuning();
+  const foresightPathTuning = getLocalViewportForesightPathTuning();
   for (const visual of foresightVisuals.values()) {
     updateForesightVisual(visual, [], foresightPathTuning);
   }
@@ -1712,6 +1640,7 @@ interface UpdateLocalViewportSceneParams {
   nowSec: number;
   playerPlanet: CombatSandboxPlanet | null;
   renderPlanetsById: ReadonlyMap<number, CombatSandboxPlanet>;
+  renderSunsById: ReadonlyMap<number, CombatSandboxSun>;
   renderQuality: ViewportRenderQualityProfile;
   renderState: CombatSandboxState;
   renderedCacheKeysById: Map<number, CacheIconKey>;
@@ -1808,6 +1737,7 @@ export const updateLocalViewportScene = ({
   nowSec,
   playerPlanet,
   renderPlanetsById,
+  renderSunsById,
   renderQuality,
   renderState,
   renderedCacheKeysById,
@@ -2497,9 +2427,13 @@ export const updateLocalViewportScene = ({
   ) {
     activeBoostBursts.shift();
   }
-  const foresightPathTuning = getForesightPathTuning();
+  const foresightPathTuning = getLocalViewportForesightPathTuning();
   for (const [entityId, visual] of foresightVisuals) {
-    const bodySurface = getForesightBodySurface(entityId, renderState);
+    const bodySurface = getForesightBodySurface(
+      entityId,
+      renderPlanetsById,
+      renderSunsById,
+    );
     const visiblePath =
       bodySurface === null
         ? (foresightPathsByEntityId.get(entityId) ?? [])
@@ -2623,7 +2557,8 @@ export const updateLocalViewportScene = ({
   ) {
     const aimDelta = sub(inputState.aimWorld, controlledBody.pos);
     const aimAngle = Math.atan2(aimDelta.y, aimDelta.x);
-    const weaponAccent = getWeaponColors()[inputState.selectedRocketKind].accent;
+    const weaponAccent =
+      getWeaponColors()[inputState.selectedRocketKind].accent;
     const aimSurfaceOffset =
       controlledBody.kind === "planet"
         ? getRenderedPlanetRadius(controlledBody)

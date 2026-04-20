@@ -783,19 +783,19 @@ describe("EditPage", () => {
       expect(
         getLastEditorPreviewStageProps()?.documentValue.visuals.background
           .starDensity,
-      ).toBe(CURRENT_GAME_TUNING.visuals.background.starDensity);
+      ).toBe(DEFAULT_GAME_TUNING.visuals.background.starDensity);
       expect(
         getLastEditorPreviewStageProps()?.documentValue.visuals.background
           .starBrightness,
-      ).toBe(CURRENT_GAME_TUNING.visuals.background.starBrightness);
+      ).toBe(DEFAULT_GAME_TUNING.visuals.background.starBrightness);
       expect(
         getLastEditorPreviewStageProps()?.documentValue.visuals.background
           .starSize,
-      ).toBe(CURRENT_GAME_TUNING.visuals.background.starSize);
+      ).toBe(DEFAULT_GAME_TUNING.visuals.background.starSize);
       expect(
         getLastEditorPreviewStageProps()?.documentValue.visuals.background
           .starTwinkleEnabled,
-      ).toBe(CURRENT_GAME_TUNING.visuals.background.starTwinkleEnabled);
+      ).toBe(DEFAULT_GAME_TUNING.visuals.background.starTwinkleEnabled);
     });
   });
 
@@ -819,7 +819,7 @@ describe("EditPage", () => {
     );
     expect(
       screen.getByLabelText("Randomize position inside playable circle"),
-    ).toBeChecked();
+    ).not.toBeChecked();
     expect(screen.getByLabelText("Halo scale")).toHaveValue(
       CURRENT_GAME_TUNING.visuals.neutronStars.haloScale,
     );
@@ -1036,18 +1036,18 @@ describe("EditPage", () => {
     ).toMatchObject({
       gameplay: {
         neutronStars: {
-          count: CURRENT_GAME_TUNING.gameplay.neutronStars.count,
-          maxSize: CURRENT_GAME_TUNING.gameplay.neutronStars.maxSize,
-          minMassKg: CURRENT_GAME_TUNING.gameplay.neutronStars.minMassKg,
+          count: DEFAULT_GAME_TUNING.gameplay.neutronStars.count,
+          maxSize: DEFAULT_GAME_TUNING.gameplay.neutronStars.maxSize,
+          minMassKg: DEFAULT_GAME_TUNING.gameplay.neutronStars.minMassKg,
           randomizePositionInsidePlayableCircle:
-            CURRENT_GAME_TUNING.gameplay.neutronStars
+            DEFAULT_GAME_TUNING.gameplay.neutronStars
               .randomizePositionInsidePlayableCircle,
         },
       },
       visuals: {
         neutronStars: {
-          haloScale: CURRENT_GAME_TUNING.visuals.neutronStars.haloScale,
-          jetOpacity: CURRENT_GAME_TUNING.visuals.neutronStars.jetOpacity,
+          haloScale: DEFAULT_GAME_TUNING.visuals.neutronStars.haloScale,
+          jetOpacity: DEFAULT_GAME_TUNING.visuals.neutronStars.jetOpacity,
         },
       },
     });
@@ -1466,8 +1466,8 @@ describe("EditPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /Foresight/i }));
 
     const showLineInput = await screen.findByLabelText("Show line");
-    expect(showLineInput).toBeChecked();
-    expect(screen.getByLabelText("Show dots")).not.toBeChecked();
+    expect(showLineInput).not.toBeChecked();
+    expect(screen.getByLabelText("Show dots")).toBeChecked();
     expect(screen.getByLabelText("Dot size")).toHaveValue(
       CURRENT_GAME_TUNING.visuals.abilities.foresight.pointSize,
     );
@@ -1485,7 +1485,7 @@ describe("EditPage", () => {
       visuals: {
         abilities: {
           foresight: {
-            showLine: false,
+            showLine: true,
           },
         },
       },

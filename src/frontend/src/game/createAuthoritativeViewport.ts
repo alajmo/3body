@@ -1,9 +1,4 @@
-import type {
-  ClientMsg,
-  PlanetPublic,
-  Vec2,
-  World,
-} from "@3body/shared";
+import type { ClientMsg, PlanetPublic, Vec2, World } from "@3body/shared";
 import {
   ARENA_RADIUS,
   clamp,
@@ -15,21 +10,15 @@ import {
   SNAPSHOT_HZ,
   sub,
 } from "@3body/shared";
-import { attribute, color, } from "three/tsl";
 import {
-  AdditiveBlending,
-  BufferGeometry,
   CircleGeometry,
   CylinderGeometry,
-  Float32BufferAttribute,
   Group,
   Mesh,
   MeshBasicMaterial,
   type Object3D,
   OrthographicCamera,
   PlaneGeometry,
-  Points,
-  PointsNodeMaterial,
   RingGeometry,
   Scene,
   SphereGeometry,
@@ -54,15 +43,24 @@ import { DEFAULT_VIEWPORT_RENDER_QUALITY_PROFILE } from "./viewport/renderQualit
 import { disposeViewportDisposables } from "./viewport/disposables";
 import {
   disposeViewportRendererSession,
-  initializeViewportRendererSession,
-  reportViewportRendererFailure,
   type ViewportRendererBootstrap,
 } from "./viewport/rendererBootstrap";
+import { createManagedViewportSession } from "./viewport/managedViewportSession";
+import {
+  createPlanetTrailVisual,
+  type PlanetTrailVisual,
+  pushPlanetTrailSample,
+  updatePlanetTrailVisual,
+} from "./viewport/authoritativeTrailVisual";
 import {
   createViewportRendererSizeState,
   getViewportHostSize,
   syncViewportRendererSize,
 } from "./viewport/rendererSizing";
+import {
+  createAuthoritativeInterpolationCache,
+  syncAuthoritativeInterpolatedWorld,
+} from "./viewport/authoritativeInterpolation";
 import { getScaledRocketVisuals } from "./rocketVisualTuning";
 import { createRuntimeStatsTracker } from "./viewport/runtimeStats";
 import {
@@ -123,14 +121,6 @@ interface PlanetVisual {
   spinPhase: number;
 }
 
-interface PlanetTrailVisual {
-  geometry: BufferGeometry;
-  opacityAttribute: Float32BufferAttribute;
-  points: Points;
-  positionAttribute: Float32BufferAttribute;
-  samples: Vec2[];
-}
-
 interface RocketVisual {
   body: Mesh;
   flame: Mesh;
@@ -166,34 +156,6 @@ interface CreateAuthoritativeViewportOptions {
   onHudStateChange?: (state: GameViewportHudState) => void;
 }
 
-const interpolateVec2 = (
-  previous: Vec2,
-  current: Vec2,
-  alpha: number,
-): Vec2 => ({
-  x: lerp(previous.x, current.x, alpha),
-  y: lerp(previous.y, current.y, alpha),
-});
-
-const interpolateDynamicEntity = <
-  T extends { id: number; pos: Vec2; vel: Vec2 },
->(
-  current: T,
-  previousById: ReadonlyMap<number, T>,
-  alpha: number,
-): T => {
-  const previous = previousById.get(current.id);
-  if (previous === undefined) {
-    return current;
-  }
-
-  return {
-    ...current,
-    pos: interpolateVec2(previous.pos, current.pos, alpha),
-    vel: interpolateVec2(previous.vel, current.vel, alpha),
-  };
-};
-
 const getGameplayCameraHeights = () => {
   const cameraTuning = getRuntimeTuningDocument().gameplay.camera;
 
@@ -228,68 +190,6 @@ const getCameraFrame = (
     centerX: playerPlanet.pos.x,
     centerY: playerPlanet.pos.y,
     visibleWorldHeight: followWorldHeight,
-  };
-};
-
-const pushTrailSample = (trail: PlanetTrailVisual, position: Vec2) => {
-  trail.samples.push({ x: position.x, y: position.y });
-  if (trail.samples.length > MAX_TRAIL_SAMPLES) {
-    trail.samples.shift();
-  }
-};
-
-const updateTrailVisual = (trail: PlanetTrailVisual) => {
-  const positionArray = trail.positionAttribute.array as Float32Array;
-  const opacityArray = trail.opacityAttribute.array as Float32Array;
-  const sampleCount = Math.min(trail.samples.length, MAX_TRAIL_SAMPLES);
-
-  for (let index = 0; index < sampleCount; index += 1) {
-    const sample = trail.samples[index]!;
-    const offset = index * 3;
-    const progress = sampleCount <= 1 ? 1 : index / (sampleCount - 1);
-    positionArray[offset] = sample.x;
-    positionArray[offset + 1] = sample.y;
-    positionArray[offset + 2] = 0;
-    opacityArray[index] = progress * progress * 0.75;
-  }
-
-  trail.geometry.setDrawRange(0, sampleCount);
-  trail.positionAttribute.needsUpdate = true;
-  trail.opacityAttribute.needsUpdate = true;
-  trail.points.visible = sampleCount > 1;
-};
-
-const createPlanetTrailVisual = (trailColor: string): PlanetTrailVisual => {
-  const geometry = new BufferGeometry();
-  const positions = new Float32Array(MAX_TRAIL_SAMPLES * 3);
-  const opacity = new Float32Array(MAX_TRAIL_SAMPLES);
-  const positionAttribute = new Float32BufferAttribute(positions, 3);
-  const opacityAttribute = new Float32BufferAttribute(opacity, 1);
-  geometry.setAttribute("position", positionAttribute);
-  geometry.setAttribute("trailOpacity", opacityAttribute);
-  geometry.setDrawRange(0, 0);
-
-  const material = new PointsNodeMaterial({
-    transparent: true,
-    depthWrite: false,
-    blending: AdditiveBlending,
-  });
-  material.colorNode = color(trailColor);
-  material.opacityNode = attribute("trailOpacity", "float");
-  material.size = TRAIL_POINT_SIZE;
-  material.alphaTest = 0.01;
-
-  const points = new Points(geometry, material);
-  points.frustumCulled = false;
-  points.position.z = -2;
-  points.renderOrder = -3;
-
-  return {
-    geometry,
-    opacityAttribute,
-    points,
-    positionAttribute,
-    samples: [],
   };
 };
 
@@ -331,6 +231,8 @@ export function createAuthoritativeViewport(
   const planetTrails = new Map<number, PlanetTrailVisual>();
   const rocketVisuals = new Map<number, RocketVisual>();
   const cacheVisuals = new Map<number, CacheVisual>();
+  const authoritativeInterpolationCache =
+    createAuthoritativeInterpolationCache();
   const cameraState = {
     centerX: 0,
     centerY: 0,
@@ -339,7 +241,11 @@ export function createAuthoritativeViewport(
     visibleWorldHeight: getGameplayCameraHeights().followWorldHeight,
   };
   const rendererSizeState = createViewportRendererSizeState();
-  let rendererSessionToken = 0;
+  const managedViewportSession = createManagedViewportSession({
+    failureLogLabel: "authoritative viewport",
+    hostElement,
+    isDisposed: () => disposed,
+  });
 
   const emitHudState = (nextState: GameViewportHudState) => {
     if (areHudStatesEqual(lastHudState, nextState)) {
@@ -410,7 +316,7 @@ export function createAuthoritativeViewport(
   };
 
   const disposeViewportSession = () => {
-    rendererSessionToken += 1;
+    managedViewportSession.invalidate();
     window.removeEventListener("resize", resizeViewport);
     inputController?.dispose();
     inputController = null;
@@ -418,6 +324,9 @@ export function createAuthoritativeViewport(
 
     for (const visual of sunVisuals.values()) {
       sceneRemoveSafe(visual.coreMesh, visual.glowMesh, visual.warpMesh);
+    }
+    for (const visual of neutronStarVisuals.values()) {
+      sceneRemoveSafe(visual.group);
     }
     for (const visual of planetVisuals.values()) {
       sceneRemoveSafe(visual.mesh, visual.glowMesh);
@@ -432,6 +341,7 @@ export function createAuthoritativeViewport(
       sceneRemoveSafe(visual.group);
     }
     sunVisuals.clear();
+    neutronStarVisuals.clear();
     planetVisuals.clear();
     planetTrails.clear();
     rocketVisuals.clear();
@@ -454,975 +364,942 @@ export function createAuthoritativeViewport(
 
   const handleViewportRenderError = (error: unknown) => {
     disposeViewportSession();
-    reportViewportRendererFailure({
-      error,
-      failureLogLabel: "authoritative viewport",
-      hostElement,
-      isDisposed: () => disposed,
-    });
+    managedViewportSession.reportFailure(error);
   };
 
   const startViewport = async () => {
-    const sessionToken = ++rendererSessionToken;
     try {
-      const rendererSession = await initializeViewportRendererSession({
-        failureLogLabel: "authoritative viewport",
-        hostElement,
-        isDisposed: () => disposed,
-      });
-      if (rendererSession === null || sessionToken !== rendererSessionToken) {
-        if (rendererSession !== null) {
-          disposeViewportRendererSession({
-            bootstrap: rendererSession.bootstrap,
-            hostElement,
-            renderer: rendererSession.renderer,
+      await managedViewportSession.start({
+        onReady: ({ bootstrap, renderer: nextRenderer }) => {
+          rendererBootstrap = bootstrap;
+          renderer = nextRenderer;
+
+          const backgroundVisuals =
+            getRuntimeTuningDocument().visuals.background;
+          const scene = new Scene();
+          scene.background = createSceneBackgroundColor(backgroundVisuals);
+
+          const nextCamera = new OrthographicCamera(-1, 1, 1, -1, -2000, 2000);
+          nextCamera.position.set(0, 0, CAMERA_DISTANCE);
+          nextCamera.lookAt(0, 0, 0);
+          camera = nextCamera;
+
+          const backdropGeometry = new PlaneGeometry(1, 1);
+          const backdropMaterial = createBackdropMaterial(backgroundVisuals);
+          backdropMesh = new Mesh(backdropGeometry, backdropMaterial);
+          backdropMesh.frustumCulled = false;
+          backdropMesh.renderOrder = -40;
+          scene.add(backdropMesh);
+          disposables.push(backdropGeometry, backdropMaterial);
+
+          const backgroundLayers = createBackgroundLayerConfigs(
+            backgroundVisuals,
+          ).map((layerConfig) => {
+            const layer = createBackgroundLayer(layerConfig);
+            scene.add(layer.group);
+            disposables.push(layer.geometry, layer.material);
+            return layer;
           });
-        }
-        return;
-      }
 
-      const { bootstrap, renderer: nextRenderer } = rendererSession;
-      rendererBootstrap = bootstrap;
-      renderer = nextRenderer;
+          const sunGeometry = new SphereGeometry(1, 40, 40);
+          const planetGeometry = new SphereGeometry(1, 56, 56);
+          const glowGeometry = new CircleGeometry(1, 48);
+          const warpGeometry = new RingGeometry(0.55, 1, 72);
+          const rocketGeometry = new CylinderGeometry(0.58, 1, 1, 18, 1);
+          const ribbonGeometry = new PlaneGeometry(1, 1);
+          const blackHoleCoreGeometry = new CircleGeometry(1, 64);
+          const boundaryGeometry = new RingGeometry(0.995, 1.005, 256);
+          rocketGeometry.rotateZ(-Math.PI / 2);
+          disposables.push(
+            sunGeometry,
+            planetGeometry,
+            glowGeometry,
+            warpGeometry,
+            rocketGeometry,
+            ribbonGeometry,
+            blackHoleCoreGeometry,
+            boundaryGeometry,
+          );
 
-      const backgroundVisuals = getRuntimeTuningDocument().visuals.background;
-      const scene = new Scene();
-      scene.background = createSceneBackgroundColor(backgroundVisuals);
+          const boundaryMaterial = new MeshBasicMaterial({
+            color: "#6988ad",
+            depthWrite: false,
+            opacity: 0.28,
+            transparent: true,
+          });
+          const boundaryMesh = new Mesh(boundaryGeometry, boundaryMaterial);
+          boundaryMesh.position.z = -6;
+          boundaryMesh.scale.set(ARENA_RADIUS, ARENA_RADIUS, 1);
+          scene.add(boundaryMesh);
+          disposables.push(boundaryMaterial);
 
-      const nextCamera = new OrthographicCamera(-1, 1, 1, -1, -2000, 2000);
-      nextCamera.position.set(0, 0, CAMERA_DISTANCE);
-      nextCamera.lookAt(0, 0, 0);
-      camera = nextCamera;
+          const blackHoleRingMaterial = new MeshBasicMaterial({
+            color: "#b8dbff",
+            depthWrite: false,
+            opacity: 0.22,
+            transparent: true,
+          });
+          const blackHoleCoreMaterial = new MeshBasicMaterial({
+            color: "#03060b",
+            depthWrite: false,
+          });
+          const blackHoleGroup = new Group();
+          const blackHoleRing = new Mesh(glowGeometry, blackHoleRingMaterial);
+          const blackHoleCore = new Mesh(
+            blackHoleCoreGeometry,
+            blackHoleCoreMaterial,
+          );
+          blackHoleRing.position.z = -1;
+          blackHoleCore.position.z = 0;
+          blackHoleGroup.visible = false;
+          blackHoleGroup.add(blackHoleRing, blackHoleCore);
+          scene.add(blackHoleGroup);
+          disposables.push(blackHoleRingMaterial, blackHoleCoreMaterial);
 
-      const backdropGeometry = new PlaneGeometry(1, 1);
-      const backdropMaterial = createBackdropMaterial(backgroundVisuals);
-      backdropMesh = new Mesh(backdropGeometry, backdropMaterial);
-      backdropMesh.frustumCulled = false;
-      backdropMesh.renderOrder = -40;
-      scene.add(backdropMesh);
-      disposables.push(backdropGeometry, backdropMaterial);
-
-      const backgroundLayers = createBackgroundLayerConfigs(
-        backgroundVisuals,
-      ).map((layerConfig) => {
-        const layer = createBackgroundLayer(layerConfig);
-        scene.add(layer.group);
-        disposables.push(layer.geometry, layer.material);
-        return layer;
-      });
-
-      const sunGeometry = new SphereGeometry(1, 40, 40);
-      const planetGeometry = new SphereGeometry(1, 56, 56);
-      const glowGeometry = new CircleGeometry(1, 48);
-      const warpGeometry = new RingGeometry(0.55, 1, 72);
-      const rocketGeometry = new CylinderGeometry(0.58, 1, 1, 18, 1);
-      const ribbonGeometry = new PlaneGeometry(1, 1);
-      const blackHoleCoreGeometry = new CircleGeometry(1, 64);
-      const boundaryGeometry = new RingGeometry(0.995, 1.005, 256);
-      rocketGeometry.rotateZ(-Math.PI / 2);
-      disposables.push(
-        sunGeometry,
-        planetGeometry,
-        glowGeometry,
-        warpGeometry,
-        rocketGeometry,
-        ribbonGeometry,
-        blackHoleCoreGeometry,
-        boundaryGeometry,
-      );
-
-      const boundaryMaterial = new MeshBasicMaterial({
-        color: "#6988ad",
-        depthWrite: false,
-        opacity: 0.28,
-        transparent: true,
-      });
-      const boundaryMesh = new Mesh(boundaryGeometry, boundaryMaterial);
-      boundaryMesh.position.z = -6;
-      boundaryMesh.scale.set(ARENA_RADIUS, ARENA_RADIUS, 1);
-      scene.add(boundaryMesh);
-      disposables.push(boundaryMaterial);
-
-      const blackHoleRingMaterial = new MeshBasicMaterial({
-        color: "#b8dbff",
-        depthWrite: false,
-        opacity: 0.22,
-        transparent: true,
-      });
-      const blackHoleCoreMaterial = new MeshBasicMaterial({
-        color: "#03060b",
-        depthWrite: false,
-      });
-      const blackHoleGroup = new Group();
-      const blackHoleRing = new Mesh(glowGeometry, blackHoleRingMaterial);
-      const blackHoleCore = new Mesh(
-        blackHoleCoreGeometry,
-        blackHoleCoreMaterial,
-      );
-      blackHoleRing.position.z = -1;
-      blackHoleCore.position.z = 0;
-      blackHoleGroup.visible = false;
-      blackHoleGroup.add(blackHoleRing, blackHoleCore);
-      scene.add(blackHoleGroup);
-      disposables.push(blackHoleRingMaterial, blackHoleCoreMaterial);
-
-      const cacheSpriteAssets = createCacheSpriteAssets(
-        hostElement.ownerDocument,
-      );
-      disposables.push({
-        dispose: () => {
-          disposeCacheSpriteAssets(cacheSpriteAssets);
-        },
-      });
-
-      const emitConnectionHud = (timeMs: number, extrapolating: boolean) => {
-        const runtime = options.getRuntimeState();
-        const snapshot = runtime.snapshot;
-        const world = snapshot?.world ?? null;
-        const self = snapshot?.self ?? null;
-        const playerId = runtime.playerId;
-        const playerPlanet =
-          playerId === null || world === null
-            ? null
-            : (world.planets.find((planet) => planet.playerId === playerId) ??
-              null);
-        const controlsEnabled =
-          runtime.phase === "combat" &&
-          runtime.connectionState === "connected" &&
-          world !== null &&
-          self !== null &&
-          playerId !== null;
-        const connectionLabel = runtime.roomId
-          ? `${runtime.roomId} · ${runtime.phase}`
-          : runtime.phase;
-        const rosterNameByPlayerId = new Map(
-          runtime.roomRoster.map((entry) => [entry.playerId, entry.name]),
-        );
-        const performanceState = options.getPerformanceState();
-        emitHudState(
-          buildAuthoritativeHudState({
-            connection: {
-              extrapolating,
-              fps: runtimeStats.fps,
-              frameTimeMs: runtimeStats.frameTimeMs,
-              label: connectionLabel,
-              rttMs: runtime.rttMs,
-              state:
-                runtime.connectionState === "connected"
-                  ? "connected"
-                  : "reconnecting",
+          const cacheSpriteAssets = createCacheSpriteAssets(
+            hostElement.ownerDocument,
+          );
+          disposables.push({
+            dispose: () => {
+              disposeCacheSpriteAssets(cacheSpriteAssets);
             },
-            controlsEnabled,
-            currentEffectsQuality: renderQuality.effectsQuality,
-            currentTick: snapshot?.tick ?? 0,
-            currentMaxPixelRatio,
-            eventLog: runtime.recentEvents,
-            extrapolating,
-            playerId,
-            playerPlanet,
-            profilerSnapshot: performanceState.profilingEnabled
-              ? performanceProfiler.getSnapshot()
-              : null,
-            profilingEnabled: performanceState.profilingEnabled,
-            recentEventsNowMs: timeMs,
-            rosterNameByPlayerId,
-            runtimeStats,
-            selectedWeapon:
-              inputController?.state.inputState.selectedRocketKind ?? "light",
-            self,
-            world,
-          }),
-        );
-      };
+          });
 
-      inputController = createGameViewportInputController({
-        canvasElement: nextRenderer.domElement,
-        isShieldActive: () => {
-          const runtime = options.getRuntimeState();
-          const world = runtime.snapshot?.world;
-          const playerId = runtime.playerId;
-          if (world === undefined || playerId === null) {
-            return false;
-          }
+          const emitConnectionHud = (
+            timeMs: number,
+            extrapolating: boolean,
+          ) => {
+            const runtime = options.getRuntimeState();
+            const snapshot = runtime.snapshot;
+            const world = snapshot?.world ?? null;
+            const self = snapshot?.self ?? null;
+            const playerId = runtime.playerId;
+            const playerPlanet =
+              playerId === null || world === null
+                ? null
+                : (world.planets.find(
+                    (planet) => planet.playerId === playerId,
+                  ) ?? null);
+            const controlsEnabled =
+              runtime.phase === "combat" &&
+              runtime.connectionState === "connected" &&
+              world !== null &&
+              self !== null &&
+              playerId !== null;
+            const connectionLabel = runtime.roomId
+              ? `${runtime.roomId} · ${runtime.phase}`
+              : runtime.phase;
+            const rosterNameByPlayerId = new Map(
+              runtime.roomRoster.map((entry) => [entry.playerId, entry.name]),
+            );
+            const performanceState = options.getPerformanceState();
+            emitHudState(
+              buildAuthoritativeHudState({
+                connection: {
+                  extrapolating,
+                  fps: runtimeStats.fps,
+                  frameTimeMs: runtimeStats.frameTimeMs,
+                  label: connectionLabel,
+                  rttMs: runtime.rttMs,
+                  state:
+                    runtime.connectionState === "connected"
+                      ? "connected"
+                      : "reconnecting",
+                },
+                controlsEnabled,
+                currentEffectsQuality: renderQuality.effectsQuality,
+                currentTick: snapshot?.tick ?? 0,
+                currentMaxPixelRatio,
+                eventLog: runtime.recentEvents,
+                extrapolating,
+                playerId,
+                playerPlanet,
+                profilerSnapshot: performanceState.profilingEnabled
+                  ? performanceProfiler.getSnapshot()
+                  : null,
+                profilingEnabled: performanceState.profilingEnabled,
+                recentEventsNowMs: timeMs,
+                rosterNameByPlayerId,
+                runtimeStats,
+                selectedWeapon:
+                  inputController?.state.inputState.selectedRocketKind ??
+                  "light",
+                self,
+                world,
+              }),
+            );
+          };
 
-          return (
-            world.planets.find((planet) => planet.playerId === playerId)
-              ?.shieldActive === true
-          );
-        },
-        initialPlayer: {
-          aimWorld: { x: 0, y: 0 },
-          selectedRocketKind: "light",
-        },
-        isSandboxPaused: () => false,
-        sandboxControlsEnabled: () => {
-          const runtime = options.getRuntimeState();
-          return (
-            runtime.phase === "combat" &&
-            runtime.connectionState === "connected"
-          );
-        },
-        syncAimWorldToPointer: () => {
-          syncAimWorldToPointer?.();
-        },
-        windowTarget: window,
-      });
-      const viewportInputController = inputController;
+          inputController = createGameViewportInputController({
+            canvasElement: nextRenderer.domElement,
+            isShieldActive: () => {
+              const runtime = options.getRuntimeState();
+              const world = runtime.snapshot?.world;
+              const playerId = runtime.playerId;
+              if (world === undefined || playerId === null) {
+                return false;
+              }
 
-      const screenToWorld = (clientX: number, clientY: number): Vec2 => {
-        const rect = nextRenderer.domElement.getBoundingClientRect();
-        const width = Math.max(1, rect.width);
-        const height = Math.max(1, rect.height);
-        const aspect = width / height;
-        const halfHeight = cameraState.visibleWorldHeight / 2;
-        const halfWidth = halfHeight * aspect;
-        const normalizedX = (clientX - rect.left) / width;
-        const normalizedY = (clientY - rect.top) / height;
+              return (
+                world.planets.find((planet) => planet.playerId === playerId)
+                  ?.shieldActive === true
+              );
+            },
+            initialPlayer: {
+              aimWorld: { x: 0, y: 0 },
+              selectedRocketKind: "light",
+            },
+            isSandboxPaused: () => false,
+            sandboxControlsEnabled: () => {
+              const runtime = options.getRuntimeState();
+              return (
+                runtime.phase === "combat" &&
+                runtime.connectionState === "connected"
+              );
+            },
+            syncAimWorldToPointer: () => {
+              syncAimWorldToPointer?.();
+            },
+            windowTarget: window,
+          });
+          const viewportInputController = inputController;
 
-        return {
-          x:
-            cameraState.renderCenterX +
-            lerp(-halfWidth, halfWidth, normalizedX),
-          y:
-            cameraState.renderCenterY +
-            lerp(halfHeight, -halfHeight, normalizedY),
-        };
-      };
+          const screenToWorld = (clientX: number, clientY: number): Vec2 => {
+            const rect = nextRenderer.domElement.getBoundingClientRect();
+            const width = Math.max(1, rect.width);
+            const height = Math.max(1, rect.height);
+            const aspect = width / height;
+            const halfHeight = cameraState.visibleWorldHeight / 2;
+            const halfWidth = halfHeight * aspect;
+            const normalizedX = (clientX - rect.left) / width;
+            const normalizedY = (clientY - rect.top) / height;
 
-      syncAimWorldToPointer = () => {
-        const pointerState = viewportInputController.state.pointerState;
-        if (!pointerState?.hasPointer) {
-          return;
-        }
+            return {
+              x:
+                cameraState.renderCenterX +
+                lerp(-halfWidth, halfWidth, normalizedX),
+              y:
+                cameraState.renderCenterY +
+                lerp(halfHeight, -halfHeight, normalizedY),
+            };
+          };
 
-        viewportInputController.state.inputState.aimWorld = screenToWorld(
-          pointerState.clientX,
-          pointerState.clientY,
-        );
-      };
+          syncAimWorldToPointer = () => {
+            const pointerState = viewportInputController.state.pointerState;
+            if (!pointerState?.hasPointer) {
+              return;
+            }
 
-      resizeViewport();
-      window.addEventListener("resize", resizeViewport);
+            viewportInputController.state.inputState.aimWorld = screenToWorld(
+              pointerState.clientX,
+              pointerState.clientY,
+            );
+          };
 
-      animationLoopController = createViewportAnimationLoopController({
-        hostElement,
-        onActiveChange: (active) => {
-          previousFrameTimeSec = null;
-          lastInputSentAtMs = 0;
-          if (active) {
-            resizeViewport();
-            syncAimWorldToPointer?.();
-          } else {
-            viewportInputController.clearPendingGameplayRequests();
-          }
-        },
-        onRenderError: (error) => {
-          handleViewportRenderError(error);
-        },
-        renderFrame: (timeMs = performance.now()) => {
-          const performanceState = options.getPerformanceState();
-          if (performanceState.resetToken !== lastProfilingResetToken) {
-            resetViewportProfilingState(performanceState.profilingEnabled);
-            resizeViewport();
-            lastProfilingResetToken = performanceState.resetToken;
-          }
+          resizeViewport();
+          window.addEventListener("resize", resizeViewport);
 
-          const profilingEnabled = performanceState.profilingEnabled;
-          const frameProfilerStartMs = profilingEnabled ? performance.now() : 0;
-          const nowSec = timeMs * 0.001;
-          if (previousFrameTimeSec === null) {
-            previousFrameTimeSec = nowSec;
-          }
+          animationLoopController = createViewportAnimationLoopController({
+            hostElement,
+            onActiveChange: (active) => {
+              previousFrameTimeSec = null;
+              lastInputSentAtMs = 0;
+              if (active) {
+                resizeViewport();
+                syncAimWorldToPointer?.();
+              } else {
+                viewportInputController.clearPendingGameplayRequests();
+              }
+            },
+            onRenderError: (error) => {
+              handleViewportRenderError(error);
+            },
+            renderFrame: (timeMs = performance.now()) => {
+              const performanceState = options.getPerformanceState();
+              if (performanceState.resetToken !== lastProfilingResetToken) {
+                resetViewportProfilingState(performanceState.profilingEnabled);
+                resizeViewport();
+                lastProfilingResetToken = performanceState.resetToken;
+              }
 
-          const frameDeltaSec = clamp(
-            nowSec - previousFrameTimeSec,
-            0,
-            MAX_FRAME_DELTA_SEC,
-          );
-          previousFrameTimeSec = nowSec;
-          const sampledRuntimeStats = runtimeStatsTracker.sample(frameDeltaSec);
-          runtimeStats.fps = sampledRuntimeStats.fps;
-          runtimeStats.frameTimeMs = sampledRuntimeStats.frameTimeMs;
-          const runtime = options.getRuntimeState();
-          const snapshot = runtime.snapshot;
-          const previousSnapshot = runtime.previousSnapshot ?? snapshot;
+              const profilingEnabled = performanceState.profilingEnabled;
+              const frameProfilerStartMs = profilingEnabled
+                ? performance.now()
+                : 0;
+              const nowSec = timeMs * 0.001;
+              if (previousFrameTimeSec === null) {
+                previousFrameTimeSec = nowSec;
+              }
 
-          const interpolationWindowMs = 1000 / SNAPSHOT_HZ;
-          const interpolationProfilerStartMs = profilingEnabled
-            ? performance.now()
-            : 0;
-          const interpolationAlpha =
-            snapshot === null || previousSnapshot === null
-              ? 1
-              : clamp(
-                  (timeMs - snapshot.receivedAtMs) / interpolationWindowMs,
-                  0,
+              const frameDeltaSec = clamp(
+                nowSec - previousFrameTimeSec,
+                0,
+                MAX_FRAME_DELTA_SEC,
+              );
+              previousFrameTimeSec = nowSec;
+              const sampledRuntimeStats =
+                runtimeStatsTracker.sample(frameDeltaSec);
+              runtimeStats.fps = sampledRuntimeStats.fps;
+              runtimeStats.frameTimeMs = sampledRuntimeStats.frameTimeMs;
+              const runtime = options.getRuntimeState();
+              const snapshot = runtime.snapshot;
+              const previousSnapshot = runtime.previousSnapshot ?? snapshot;
+
+              const interpolationWindowMs = 1000 / SNAPSHOT_HZ;
+              const interpolationProfilerStartMs = profilingEnabled
+                ? performance.now()
+                : 0;
+              const interpolationAlpha =
+                snapshot === null || previousSnapshot === null
+                  ? 1
+                  : clamp(
+                      (timeMs - snapshot.receivedAtMs) / interpolationWindowMs,
+                      0,
+                      1,
+                    );
+              const extrapolating =
+                snapshot !== null &&
+                timeMs - snapshot.receivedAtMs > interpolationWindowMs * 1.35;
+
+              const world =
+                snapshot === null
+                  ? null
+                  : syncAuthoritativeInterpolatedWorld(
+                      authoritativeInterpolationCache,
+                      previousSnapshot?.world ?? snapshot.world,
+                      snapshot.world,
+                      interpolationAlpha,
+                    );
+              const interpolationProfilerEndMs = profilingEnabled
+                ? performance.now()
+                : 0;
+              const renderProfilerStartMs = profilingEnabled
+                ? performance.now()
+                : 0;
+
+              const playerId = runtime.playerId;
+              const playerPlanet =
+                playerId === null || world === null
+                  ? null
+                  : (world.planets.find(
+                      (planet) => planet.playerId === playerId,
+                    ) ?? null);
+              const frame = getCameraFrame(world, playerPlanet);
+              const cameraMoveAlpha =
+                1 - Math.exp(-CAMERA_FOLLOW_LERP * frameDeltaSec);
+              const cameraZoomAlpha =
+                1 - Math.exp(-CAMERA_ZOOM_LERP * frameDeltaSec);
+              cameraState.centerX = lerp(
+                cameraState.centerX,
+                frame.centerX,
+                cameraMoveAlpha,
+              );
+              cameraState.centerY = lerp(
+                cameraState.centerY,
+                frame.centerY,
+                cameraMoveAlpha,
+              );
+              cameraState.visibleWorldHeight = lerp(
+                cameraState.visibleWorldHeight,
+                frame.visibleWorldHeight,
+                cameraZoomAlpha,
+              );
+              applyCameraFrame();
+              syncAimWorldToPointer?.();
+
+              for (const layer of backgroundLayers) {
+                layer.group.position.x = wrapCentered(
+                  cameraState.renderCenterX * layer.parallax +
+                    nowSec * layer.driftX,
+                  layer.tileSize,
+                );
+                layer.group.position.y = wrapCentered(
+                  cameraState.renderCenterY * layer.parallax +
+                    nowSec * layer.driftY,
+                  layer.tileSize,
+                );
+              }
+
+              const boundaryRadius = world?.arenaRadius ?? ARENA_RADIUS;
+              boundaryMesh.scale.set(boundaryRadius, boundaryRadius, 1);
+
+              if (
+                runtime.phase === "combat" &&
+                runtime.connectionState === "connected" &&
+                snapshot?.self !== null &&
+                world !== null &&
+                playerId !== null
+              ) {
+                if (playerPlanet !== null) {
+                  const aimDelta = sub(
+                    viewportInputController.state.inputState.aimWorld,
+                    playerPlanet.pos,
+                  );
+                  const aimDir =
+                    len(aimDelta) > 0
+                      ? normalizeVec2(aimDelta)
+                      : ({ x: 1, y: 0 } as Vec2);
+
+                  if (timeMs - lastInputSentAtMs >= INPUT_SEND_INTERVAL_MS) {
+                    lastInputSentAtMs = timeMs;
+                    options.dispatchMessage({
+                      clientTick: nextClientTick,
+                      mouseDir: aimDir,
+                      type: "input",
+                    });
+                    options.dispatchMessage({
+                      dir: aimDir,
+                      type: "shieldAim",
+                    });
+                    nextClientTick += 1;
+                  }
+
+                  const fireRequested =
+                    viewportInputController.consumeShotRequest();
+                  if (fireRequested) {
+                    options.dispatchMessage({
+                      aimDir,
+                      clientTick: nextClientTick,
+                      kind: viewportInputController.state.inputState
+                        .selectedRocketKind,
+                      type: "fireRocket",
+                    });
+                    nextClientTick += 1;
+                  }
+
+                  const pendingAbilityRequests =
+                    viewportInputController.state.pendingAbilityRequests;
+                  if (pendingAbilityRequests.foresight) {
+                    options.dispatchMessage({ slot: "e", type: "ability" });
+                  }
+                  if (pendingAbilityRequests.shield) {
+                    options.dispatchMessage({ slot: "q", type: "ability" });
+                  }
+                  if (pendingAbilityRequests.boost) {
+                    options.dispatchMessage({ slot: "w", type: "ability" });
+                  }
+                  if (pendingAbilityRequests.gravityPulse) {
+                    options.dispatchMessage({ slot: "g", type: "ability" });
+                  }
+                  if (pendingAbilityRequests.cloak) {
+                    options.dispatchMessage({ slot: "c", type: "ability" });
+                  }
+                }
+              }
+
+              viewportInputController.clearStepScopedRequests();
+
+              const tuning = getRuntimeTuningDocument();
+              const planetVisualTuning = tuning.visuals.planets;
+              const rocketVisualTuning = tuning.visuals.rockets;
+              const scaledRocketVisualTuning =
+                getScaledRocketVisuals(rocketVisualTuning);
+              const renderTick = snapshot?.tick ?? 0;
+
+              const activeSunIds = new Set<number>();
+              for (const [index, sun] of (world?.suns ?? []).entries()) {
+                activeSunIds.add(sun.id);
+                const sunProfile = getSunVisualProfile(
+                  tuning.visuals.suns,
+                  index,
+                );
+                let visual = sunVisuals.get(sun.id);
+                if (visual === undefined) {
+                  const coreMaterial = createSunCoreMaterial(
+                    sunProfile.color,
+                    sunProfile.glowColor,
+                    sun.id,
+                    sunProfile.coreBrightness,
+                  );
+                  const glowMaterial = createSunGlowMaterial(
+                    sunProfile.glowColor,
+                    sun.id,
+                    sunProfile.glowBrightness,
+                  );
+                  const warpMaterial = createWarpMaterial(
+                    sunProfile.glowColor,
+                    sun.id,
+                  );
+                  const coreMesh = new Mesh(sunGeometry, coreMaterial);
+                  const glowMesh = new Mesh(sunGeometry, glowMaterial);
+                  const warpMesh = new Mesh(warpGeometry, warpMaterial);
+                  coreMesh.renderOrder = -8;
+                  glowMesh.renderOrder = -10;
+                  warpMesh.renderOrder = -12;
+                  glowMesh.position.z = -2;
+                  warpMesh.position.z = -4;
+                  scene.add(warpMesh, glowMesh, coreMesh);
+                  visual = {
+                    coreMesh,
+                    glowMesh,
+                    rotationSpeed: 0.12 + (sun.id % 3) * 0.04,
+                    warpMesh,
+                  };
+                  sunVisuals.set(sun.id, visual);
+                }
+
+                visual.coreMesh.visible = true;
+                visual.glowMesh.visible = true;
+                visual.warpMesh.visible = true;
+                visual.coreMesh.position.set(sun.pos.x, sun.pos.y, 0);
+                visual.glowMesh.position.set(sun.pos.x, sun.pos.y, -2);
+                visual.warpMesh.position.set(sun.pos.x, sun.pos.y, -4);
+                const renderedRadius = sun.radius;
+                visual.coreMesh.scale.set(
+                  renderedRadius,
+                  renderedRadius,
+                  renderedRadius,
+                );
+                visual.glowMesh.scale.set(
+                  renderedRadius * sunProfile.glowScale,
+                  renderedRadius * sunProfile.glowScale,
+                  renderedRadius * sunProfile.glowScale,
+                );
+                visual.warpMesh.scale.set(
+                  renderedRadius * sunProfile.warpScale,
+                  renderedRadius * sunProfile.warpScale,
                   1,
                 );
-          const extrapolating =
-            snapshot !== null &&
-            timeMs - snapshot.receivedAtMs > interpolationWindowMs * 1.35;
-
-          const world =
-            snapshot === null
-              ? null
-              : (() => {
-                  const previousWorld =
-                    previousSnapshot?.world ?? snapshot.world;
-                  const previousSunsById = new Map(
-                    previousWorld.suns.map((sun) => [sun.id, sun]),
+                visual.coreMesh.rotation.x = 0.38;
+                visual.coreMesh.rotation.y = nowSec * visual.rotationSpeed;
+                visual.glowMesh.rotation.z = nowSec * 0.08;
+              }
+              for (const [sunId, visual] of sunVisuals) {
+                if (!activeSunIds.has(sunId)) {
+                  scene.remove(
+                    visual.coreMesh,
+                    visual.glowMesh,
+                    visual.warpMesh,
                   );
-                  const previousPlanetsById = new Map(
-                    previousWorld.planets.map((planet) => [planet.id, planet]),
+                  (
+                    visual.coreMesh.material as { dispose: () => void }
+                  ).dispose();
+                  (
+                    visual.glowMesh.material as { dispose: () => void }
+                  ).dispose();
+                  (
+                    visual.warpMesh.material as { dispose: () => void }
+                  ).dispose();
+                  sunVisuals.delete(sunId);
+                }
+              }
+
+              const activeNeutronStarIds = new Set<number>();
+              const neutronStarVisualTuning = tuning.visuals.neutronStars;
+              for (const [index, neutronStar] of (
+                world?.neutronStars ?? []
+              ).entries()) {
+                activeNeutronStarIds.add(neutronStar.id);
+                const massAlpha = getNeutronStarMassAlpha(
+                  neutronStar.mass,
+                  tuning.gameplay.neutronStars,
+                );
+                let visual = neutronStarVisuals.get(neutronStar.id);
+                if (visual === undefined) {
+                  const group = new Group();
+                  const coreMesh = new Mesh(
+                    sunGeometry,
+                    createNeutronStarCoreMaterial(neutronStar.id),
                   );
-                  const previousRocketsById = new Map(
-                    previousWorld.rockets.map((rocket) => [rocket.id, rocket]),
+                  const haloMesh = new Mesh(
+                    glowGeometry,
+                    createNeutronStarHaloMaterial(neutronStar.id),
                   );
-                  const previousCachesById = new Map(
-                    previousWorld.caches.map((cache) => [cache.id, cache]),
+                  const lensMesh = new Mesh(
+                    glowGeometry,
+                    createNeutronStarLensMaterial(neutronStar.id),
                   );
-                  const previousDebrisById = new Map(
-                    previousWorld.debris.map((debris) => [debris.id, debris]),
+                  const jetMeshA = new Mesh(
+                    ribbonGeometry,
+                    createNeutronStarJetMaterial(neutronStar.id),
                   );
+                  const jetMeshB = new Mesh(
+                    ribbonGeometry,
+                    createNeutronStarJetMaterial(neutronStar.id + 0.37),
+                  );
+                  coreMesh.renderOrder = -6;
+                  haloMesh.renderOrder = -7;
+                  lensMesh.renderOrder = -8;
+                  jetMeshA.renderOrder = -7;
+                  jetMeshB.renderOrder = -7;
+                  haloMesh.position.z = -1.6;
+                  lensMesh.position.z = -2.4;
+                  jetMeshA.position.z = -1.2;
+                  jetMeshB.position.z = -1.2;
+                  group.add(lensMesh, haloMesh, jetMeshA, jetMeshB, coreMesh);
+                  scene.add(group);
+                  visual = {
+                    coreMesh,
+                    group,
+                    haloMesh,
+                    jetMeshA,
+                    jetMeshB,
+                    lensMesh,
+                    phase: index * 0.91 + neutronStar.id * 0.0008,
+                    spinSpeed: 0.22 + index * 0.04,
+                  };
+                  neutronStarVisuals.set(neutronStar.id, visual);
+                }
 
-                  return {
-                    ...snapshot.world,
-                    suns: snapshot.world.suns.map((sun) =>
-                      interpolateDynamicEntity(
-                        sun,
-                        previousSunsById,
-                        interpolationAlpha,
-                      ),
-                    ),
-                    neutronStars: snapshot.world.neutronStars.map((neutronStar) => ({
-                      ...neutronStar,
-                      pos: { ...neutronStar.pos },
-                      vel: { ...neutronStar.vel },
-                    })),
-                    planets: snapshot.world.planets.map((planet) =>
-                      interpolateDynamicEntity(
-                        planet,
-                        previousPlanetsById,
-                        interpolationAlpha,
-                      ),
-                    ),
-                    rockets: snapshot.world.rockets.map((rocket) =>
-                      interpolateDynamicEntity(
-                        rocket,
-                        previousRocketsById,
-                        interpolationAlpha,
-                      ),
-                    ),
-                    caches: snapshot.world.caches.map((cache) =>
-                      interpolateDynamicEntity(
-                        cache,
-                        previousCachesById,
-                        interpolationAlpha,
-                      ),
-                    ),
-                    debris: snapshot.world.debris.map((debris) =>
-                      interpolateDynamicEntity(
-                        debris,
-                        previousDebrisById,
-                        interpolationAlpha,
-                      ),
-                    ),
-                    blackHole:
-                      snapshot.world.blackHole === undefined
-                        ? undefined
-                        : previousWorld.blackHole === undefined
-                          ? snapshot.world.blackHole
-                          : {
-                              ...snapshot.world.blackHole,
-                              pos: interpolateVec2(
-                                previousWorld.blackHole.pos,
-                                snapshot.world.blackHole.pos,
-                                interpolationAlpha,
-                              ),
-                            },
-                  } satisfies World;
-                })();
-          const interpolationProfilerEndMs = profilingEnabled
-            ? performance.now()
-            : 0;
-          const renderProfilerStartMs = profilingEnabled
-            ? performance.now()
-            : 0;
-
-          const playerId = runtime.playerId;
-          const playerPlanet =
-            playerId === null || world === null
-              ? null
-              : (world.planets.find((planet) => planet.playerId === playerId) ??
-                null);
-          const frame = getCameraFrame(world, playerPlanet);
-          const cameraMoveAlpha =
-            1 - Math.exp(-CAMERA_FOLLOW_LERP * frameDeltaSec);
-          const cameraZoomAlpha =
-            1 - Math.exp(-CAMERA_ZOOM_LERP * frameDeltaSec);
-          cameraState.centerX = lerp(
-            cameraState.centerX,
-            frame.centerX,
-            cameraMoveAlpha,
-          );
-          cameraState.centerY = lerp(
-            cameraState.centerY,
-            frame.centerY,
-            cameraMoveAlpha,
-          );
-          cameraState.visibleWorldHeight = lerp(
-            cameraState.visibleWorldHeight,
-            frame.visibleWorldHeight,
-            cameraZoomAlpha,
-          );
-          applyCameraFrame();
-          syncAimWorldToPointer?.();
-
-          for (const layer of backgroundLayers) {
-            layer.group.position.x = wrapCentered(
-              cameraState.renderCenterX * layer.parallax +
-                nowSec * layer.driftX,
-              layer.tileSize,
-            );
-            layer.group.position.y = wrapCentered(
-              cameraState.renderCenterY * layer.parallax +
-                nowSec * layer.driftY,
-              layer.tileSize,
-            );
-          }
-
-          const boundaryRadius = world?.arenaRadius ?? ARENA_RADIUS;
-          boundaryMesh.scale.set(boundaryRadius, boundaryRadius, 1);
-
-          if (
-            runtime.phase === "combat" &&
-            runtime.connectionState === "connected" &&
-            snapshot?.self !== null &&
-            world !== null &&
-            playerId !== null
-          ) {
-            if (playerPlanet !== null) {
-              const aimDelta = sub(
-                viewportInputController.state.inputState.aimWorld,
-                playerPlanet.pos,
-              );
-              const aimDir =
-                len(aimDelta) > 0
-                  ? normalizeVec2(aimDelta)
-                  : ({ x: 1, y: 0 } as Vec2);
-
-              if (timeMs - lastInputSentAtMs >= INPUT_SEND_INTERVAL_MS) {
-                lastInputSentAtMs = timeMs;
-                options.dispatchMessage({
-                  clientTick: nextClientTick,
-                  mouseDir: aimDir,
-                  type: "input",
+                const pulse = 1 + Math.sin(nowSec * 6.4 + visual.phase) * 0.04;
+                const haloPulse =
+                  1 + Math.sin(nowSec * 4.8 + visual.phase * 1.7) * 0.08;
+                const {
+                  coreRadius,
+                  haloRadius,
+                  lensRadius,
+                  jetLength,
+                  jetWidth,
+                } = getNeutronStarVisualShape({
+                  haloPulse,
+                  massAlpha,
+                  pulse,
+                  radius: neutronStar.radius,
+                  tuning: neutronStarVisualTuning,
                 });
-                options.dispatchMessage({
-                  dir: aimDir,
-                  type: "shieldAim",
+                const haloMaterial = visual.haloMesh.material as ReturnType<
+                  typeof createNeutronStarHaloMaterial
+                >;
+                const lensMaterial = visual.lensMesh.material as ReturnType<
+                  typeof createNeutronStarLensMaterial
+                >;
+                const jetMaterialA = visual.jetMeshA.material as ReturnType<
+                  typeof createNeutronStarJetMaterial
+                >;
+                const jetMaterialB = visual.jetMeshB.material as ReturnType<
+                  typeof createNeutronStarJetMaterial
+                >;
+
+                visual.group.visible = true;
+                visual.group.position.set(
+                  neutronStar.pos.x,
+                  neutronStar.pos.y,
+                  -1,
+                );
+                visual.group.rotation.z = nowSec * 0.06 + visual.phase * 0.18;
+                visual.coreMesh.scale.set(coreRadius, coreRadius, coreRadius);
+                visual.haloMesh.scale.set(haloRadius, haloRadius, 1);
+                visual.lensMesh.scale.set(lensRadius, lensRadius, 1);
+                visual.jetMeshA.scale.set(jetWidth, jetLength, 1);
+                visual.jetMeshB.scale.set(
+                  jetWidth * NEUTRON_STAR_JET_SECONDARY_WIDTH_FACTOR,
+                  jetLength * NEUTRON_STAR_JET_SECONDARY_LENGTH_FACTOR,
+                  1,
+                );
+                visual.jetMeshA.rotation.z =
+                  visual.phase + Math.sin(nowSec * 0.4 + visual.phase) * 0.08;
+                visual.jetMeshB.rotation.z =
+                  visual.phase +
+                  Math.PI / 2 -
+                  Math.sin(nowSec * 0.36 + visual.phase) * 0.06;
+                visual.haloMesh.rotation.z = nowSec * 0.18 + visual.phase * 0.4;
+                visual.lensMesh.rotation.z =
+                  -nowSec * 0.12 - visual.phase * 0.3;
+                visual.coreMesh.rotation.x = 0.44;
+                visual.coreMesh.rotation.y = nowSec * visual.spinSpeed;
+                haloMaterial.opacity = neutronStarVisualTuning.haloOpacity;
+                lensMaterial.opacity = neutronStarVisualTuning.lensOpacity;
+                jetMaterialA.opacity = neutronStarVisualTuning.jetOpacity;
+                jetMaterialB.opacity =
+                  neutronStarVisualTuning.jetOpacity *
+                  NEUTRON_STAR_JET_SECONDARY_OPACITY_FACTOR;
+              }
+              for (const [neutronStarId, visual] of neutronStarVisuals) {
+                if (!activeNeutronStarIds.has(neutronStarId)) {
+                  scene.remove(visual.group);
+                  (
+                    visual.coreMesh.material as { dispose: () => void }
+                  ).dispose();
+                  (
+                    visual.haloMesh.material as { dispose: () => void }
+                  ).dispose();
+                  (
+                    visual.lensMesh.material as { dispose: () => void }
+                  ).dispose();
+                  (
+                    visual.jetMeshA.material as { dispose: () => void }
+                  ).dispose();
+                  (
+                    visual.jetMeshB.material as { dispose: () => void }
+                  ).dispose();
+                  neutronStarVisuals.delete(neutronStarId);
+                }
+              }
+
+              const activePlanetIds = new Set<number>();
+              for (const planet of world?.planets ?? []) {
+                activePlanetIds.add(planet.id);
+                let visual = planetVisuals.get(planet.id);
+                let trail = planetTrails.get(planet.id);
+                const archetypeVisual =
+                  planetVisualTuning.archetypes[planet.archetype];
+                if (visual === undefined) {
+                  const forestProfile = getPlanetForestProfile(
+                    planet.archetype,
+                    planet.id,
+                  );
+                  const material = createPlanetMaterial(
+                    archetypeVisual,
+                    planet.id * 0.173,
+                    forestProfile,
+                  );
+                  const glowMaterial = createPlanetGlowMaterial(
+                    archetypeVisual.color,
+                    planet.id * 0.173,
+                    archetypeVisual.auraScale,
+                    archetypeVisual.auraGap,
+                  );
+                  const mesh = new Mesh(planetGeometry, material);
+                  const glowMesh = new Mesh(
+                    glowGeometry,
+                    glowMaterial.material,
+                  );
+                  mesh.renderOrder = -2;
+                  glowMesh.position.z = 0.16;
+                  glowMesh.renderOrder = -1;
+                  scene.add(mesh, glowMesh);
+                  visual = {
+                    glowMesh,
+                    glowOpacityUniform: glowMaterial.opacityUniform,
+                    material,
+                    mesh,
+                    spinAxis: createPlanetSpinAxis(planet.id),
+                    spinPhase: ((planet.id * 0.173) % 1) * Math.PI * 2,
+                  };
+                  planetVisuals.set(planet.id, visual);
+                }
+                if (trail === undefined) {
+                  trail = createPlanetTrailVisual({
+                    maxTrailSamples: MAX_TRAIL_SAMPLES,
+                    trailColor: archetypeVisual.trailColor,
+                    trailPointSize: TRAIL_POINT_SIZE,
+                  });
+                  planetTrails.set(planet.id, trail);
+                  scene.add(trail.points);
+                }
+
+                visual.mesh.position.set(planet.pos.x, planet.pos.y, 0);
+                visual.glowMesh.position.set(planet.pos.x, planet.pos.y, 0.16);
+                const planetOpacity = getCloakPlanetOpacity(
+                  planet.hideTrailUntilTick,
+                  renderTick,
+                );
+                visual.material.opacityUniform.value = planetOpacity;
+                visual.glowOpacityUniform.value = planetOpacity;
+                visual.mesh.scale.set(
+                  planet.radius * archetypeVisual.bodyScale,
+                  planet.radius * archetypeVisual.bodyScale,
+                  planet.radius * archetypeVisual.bodyScale,
+                );
+                visual.glowMesh.scale.set(
+                  planet.radius *
+                    archetypeVisual.bodyScale *
+                    archetypeVisual.auraScale,
+                  planet.radius *
+                    archetypeVisual.bodyScale *
+                    archetypeVisual.auraScale,
+                  1,
+                );
+                visual.mesh.setRotationFromAxisAngle(
+                  visual.spinAxis,
+                  nowSec * 0.28 + visual.spinPhase,
+                );
+
+                pushPlanetTrailSample(trail, planet.pos, MAX_TRAIL_SAMPLES);
+                updatePlanetTrailVisual(trail, MAX_TRAIL_SAMPLES);
+              }
+              for (const [planetId, visual] of planetVisuals) {
+                if (!activePlanetIds.has(planetId)) {
+                  scene.remove(visual.mesh, visual.glowMesh);
+                  visual.material.dispose();
+                  (
+                    visual.glowMesh.material as { dispose: () => void }
+                  ).dispose();
+                  planetVisuals.delete(planetId);
+                }
+              }
+              for (const [planetId, trail] of planetTrails) {
+                if (!activePlanetIds.has(planetId)) {
+                  scene.remove(trail.points);
+                  trail.geometry.dispose();
+                  (trail.points.material as { dispose: () => void }).dispose();
+                  planetTrails.delete(planetId);
+                }
+              }
+
+              const activeRocketIds = new Set<number>();
+              for (const rocket of world?.rockets ?? []) {
+                activeRocketIds.add(rocket.id);
+                let visual = rocketVisuals.get(rocket.id);
+                const rocketAppearance =
+                  scaledRocketVisualTuning[rocket.rocketKind];
+                if (visual === undefined) {
+                  const body = new Mesh(
+                    rocketGeometry,
+                    createRocketMaterial(
+                      rocketAppearance.core,
+                      rocketAppearance.trail,
+                    ),
+                  );
+                  const trail = new Mesh(
+                    ribbonGeometry,
+                    createRocketTrailMaterial(
+                      rocketAppearance.core,
+                      rocketAppearance.trail,
+                    ),
+                  );
+                  const flame = new Mesh(
+                    ribbonGeometry,
+                    createRocketFlameMaterial(
+                      rocketAppearance.core,
+                      rocketAppearance.trail,
+                    ),
+                  );
+                  const group = new Group();
+                  group.add(trail, flame, body);
+                  body.renderOrder = 3;
+                  trail.renderOrder = 2;
+                  flame.renderOrder = 4;
+                  scene.add(group);
+                  visual = { body, flame, group, trail };
+                  rocketVisuals.set(rocket.id, visual);
+                }
+
+                const angle = Math.atan2(rocket.vel.y, rocket.vel.x);
+                visual.group.position.set(rocket.pos.x, rocket.pos.y, 3);
+                visual.group.rotation.z = angle;
+                visual.body.scale.set(
+                  rocketAppearance.bodyScale.x,
+                  rocketAppearance.bodyScale.y,
+                  rocketAppearance.bodyScale.y,
+                );
+                visual.trail.position.set(
+                  -rocketAppearance.bodyScale.x * 0.6,
+                  0,
+                  -0.1,
+                );
+                visual.trail.scale.set(
+                  rocketAppearance.trailScale.x,
+                  rocketAppearance.trailScale.y,
+                  1,
+                );
+                visual.flame.position.set(
+                  -rocketAppearance.bodyScale.x * 0.45,
+                  0,
+                  0.05,
+                );
+                visual.flame.scale.set(
+                  rocketAppearance.flameScale.x,
+                  rocketAppearance.flameScale.y,
+                  1,
+                );
+              }
+              for (const [rocketId, visual] of rocketVisuals) {
+                if (!activeRocketIds.has(rocketId)) {
+                  scene.remove(visual.group);
+                  (visual.body.material as { dispose: () => void }).dispose();
+                  (visual.trail.material as { dispose: () => void }).dispose();
+                  (visual.flame.material as { dispose: () => void }).dispose();
+                  rocketVisuals.delete(rocketId);
+                }
+              }
+
+              const activeCacheIds = new Set<number>();
+              for (const cache of world?.caches ?? []) {
+                activeCacheIds.add(cache.id);
+                let visual = cacheVisuals.get(cache.id);
+                if (visual === undefined) {
+                  visual = createSharedCacheVisual(
+                    cache as never,
+                    cacheSpriteAssets.badgeMaterials,
+                  );
+                  cacheVisuals.set(cache.id, visual);
+                  scene.add(visual.group);
+                }
+
+                const key = getSharedCacheIconKey(cache.contents);
+                updateSharedCacheVisualBadge(
+                  visual,
+                  cacheSpriteAssets.badgeMaterials,
+                  key,
+                );
+                visual.group.position.set(
+                  cache.pos.x,
+                  cache.pos.y + Math.sin(nowSec * 1.8 + visual.bobPhase) * 6,
+                  3.5,
+                );
+                visual.group.rotation.z =
+                  Math.sin(nowSec * visual.wobbleRate + visual.bobPhase) * 0.08;
+                const pulse =
+                  1 +
+                  Math.sin(nowSec * visual.pulseRate + visual.bobPhase) * 0.04;
+                const badgeSize =
+                  getCacheArenaBadgeSize(
+                    tuning.visuals.caches.badgeBaseSize,
+                    tuning.visuals.caches.badgeScale,
+                  ) * pulse;
+                visual.badgeSprite.scale.set(badgeSize, badgeSize, 1);
+              }
+              for (const [cacheId, visual] of cacheVisuals) {
+                if (!activeCacheIds.has(cacheId)) {
+                  scene.remove(visual.group);
+                  cacheVisuals.delete(cacheId);
+                }
+              }
+
+              blackHoleGroup.visible = world?.blackHole !== undefined;
+              if (world?.blackHole !== undefined) {
+                blackHoleGroup.position.set(
+                  world.blackHole.pos.x,
+                  world.blackHole.pos.y,
+                  5,
+                );
+                blackHoleRing.rotation.z = nowSec * 0.16;
+                blackHoleRing.scale.set(
+                  world.blackHole.killRadius * 2.1,
+                  world.blackHole.killRadius * 2.1,
+                  1,
+                );
+                blackHoleCore.scale.set(
+                  world.blackHole.killRadius * 0.78,
+                  world.blackHole.killRadius * 0.78,
+                  1,
+                );
+              }
+
+              if (nowSec >= lastHudUpdateSec) {
+                lastHudUpdateSec = nowSec + HUD_UPDATE_INTERVAL_SEC;
+                emitConnectionHud(timeMs, extrapolating);
+              }
+
+              const renderProfilerEndMs = profilingEnabled
+                ? performance.now()
+                : 0;
+              const submitProfilerStartMs = profilingEnabled
+                ? performance.now()
+                : 0;
+              nextRenderer.render(scene, nextCamera);
+              if (profilingEnabled) {
+                const submitProfilerEndMs = performance.now();
+                performanceProfiler.record({
+                  frameCpuMs: submitProfilerEndMs - frameProfilerStartMs,
+                  frameDeltaSec,
+                  interpolationMs:
+                    interpolationProfilerEndMs - interpolationProfilerStartMs,
+                  renderCpuMs: renderProfilerEndMs - renderProfilerStartMs,
+                  simulationMs: 0,
+                  stepCount: 0,
+                  submitMs: submitProfilerEndMs - submitProfilerStartMs,
                 });
-                nextClientTick += 1;
               }
-
-              const fireRequested =
-                viewportInputController.consumeShotRequest();
-              if (fireRequested) {
-                options.dispatchMessage({
-                  aimDir,
-                  clientTick: nextClientTick,
-                  kind: viewportInputController.state.inputState
-                    .selectedRocketKind,
-                  type: "fireRocket",
-                });
-                nextClientTick += 1;
-              }
-
-              const pendingAbilityRequests =
-                viewportInputController.state.pendingAbilityRequests;
-              if (pendingAbilityRequests.foresight) {
-                options.dispatchMessage({ slot: "e", type: "ability" });
-              }
-              if (pendingAbilityRequests.shield) {
-                options.dispatchMessage({ slot: "q", type: "ability" });
-              }
-              if (pendingAbilityRequests.boost) {
-                options.dispatchMessage({ slot: "w", type: "ability" });
-              }
-              if (pendingAbilityRequests.gravityPulse) {
-                options.dispatchMessage({ slot: "g", type: "ability" });
-              }
-              if (pendingAbilityRequests.cloak) {
-                options.dispatchMessage({ slot: "c", type: "ability" });
-              }
-            }
-          }
-
-          viewportInputController.clearStepScopedRequests();
-
-          const tuning = getRuntimeTuningDocument();
-          const planetVisualTuning = tuning.visuals.planets;
-          const rocketVisualTuning = tuning.visuals.rockets;
-          const scaledRocketVisualTuning =
-            getScaledRocketVisuals(rocketVisualTuning);
-          const renderTick = snapshot?.tick ?? 0;
-
-          const activeSunIds = new Set<number>();
-          for (const [index, sun] of (world?.suns ?? []).entries()) {
-            activeSunIds.add(sun.id);
-            const sunProfile = getSunVisualProfile(tuning.visuals.suns, index);
-            let visual = sunVisuals.get(sun.id);
-            if (visual === undefined) {
-              const coreMaterial = createSunCoreMaterial(
-                sunProfile.color,
-                sunProfile.glowColor,
-                sun.id,
-                sunProfile.coreBrightness,
-              );
-              const glowMaterial = createSunGlowMaterial(
-                sunProfile.glowColor,
-                sun.id,
-                sunProfile.glowBrightness,
-              );
-              const warpMaterial = createWarpMaterial(
-                sunProfile.glowColor,
-                sun.id,
-              );
-              const coreMesh = new Mesh(sunGeometry, coreMaterial);
-              const glowMesh = new Mesh(sunGeometry, glowMaterial);
-              const warpMesh = new Mesh(warpGeometry, warpMaterial);
-              coreMesh.renderOrder = -8;
-              glowMesh.renderOrder = -10;
-              warpMesh.renderOrder = -12;
-              glowMesh.position.z = -2;
-              warpMesh.position.z = -4;
-              scene.add(warpMesh, glowMesh, coreMesh);
-              visual = {
-                coreMesh,
-                glowMesh,
-                rotationSpeed: 0.12 + (sun.id % 3) * 0.04,
-                warpMesh,
-              };
-              sunVisuals.set(sun.id, visual);
-            }
-
-            visual.coreMesh.visible = true;
-            visual.glowMesh.visible = true;
-            visual.warpMesh.visible = true;
-            visual.coreMesh.position.set(sun.pos.x, sun.pos.y, 0);
-            visual.glowMesh.position.set(sun.pos.x, sun.pos.y, -2);
-            visual.warpMesh.position.set(sun.pos.x, sun.pos.y, -4);
-            const renderedRadius = sun.radius;
-            visual.coreMesh.scale.set(
-              renderedRadius,
-              renderedRadius,
-              renderedRadius,
-            );
-            visual.glowMesh.scale.set(
-              renderedRadius * sunProfile.glowScale,
-              renderedRadius * sunProfile.glowScale,
-              renderedRadius * sunProfile.glowScale,
-            );
-            visual.warpMesh.scale.set(
-              renderedRadius * sunProfile.warpScale,
-              renderedRadius * sunProfile.warpScale,
-              1,
-            );
-            visual.coreMesh.rotation.x = 0.38;
-            visual.coreMesh.rotation.y = nowSec * visual.rotationSpeed;
-            visual.glowMesh.rotation.z = nowSec * 0.08;
-          }
-          for (const [sunId, visual] of sunVisuals) {
-            if (!activeSunIds.has(sunId)) {
-              scene.remove(visual.coreMesh, visual.glowMesh, visual.warpMesh);
-              (visual.coreMesh.material as { dispose: () => void }).dispose();
-              (visual.glowMesh.material as { dispose: () => void }).dispose();
-              (visual.warpMesh.material as { dispose: () => void }).dispose();
-              sunVisuals.delete(sunId);
-            }
-          }
-
-          const activeNeutronStarIds = new Set<number>();
-          const neutronStarVisualTuning = tuning.visuals.neutronStars;
-          for (const [index, neutronStar] of (world?.neutronStars ?? []).entries()) {
-            activeNeutronStarIds.add(neutronStar.id);
-            const massAlpha = getNeutronStarMassAlpha(
-              neutronStar.mass,
-              tuning.gameplay.neutronStars,
-            );
-            let visual = neutronStarVisuals.get(neutronStar.id);
-            if (visual === undefined) {
-              const group = new Group();
-              const coreMesh = new Mesh(
-                sunGeometry,
-                createNeutronStarCoreMaterial(neutronStar.id),
-              );
-              const haloMesh = new Mesh(
-                glowGeometry,
-                createNeutronStarHaloMaterial(neutronStar.id),
-              );
-              const lensMesh = new Mesh(
-                glowGeometry,
-                createNeutronStarLensMaterial(neutronStar.id),
-              );
-              const jetMeshA = new Mesh(
-                ribbonGeometry,
-                createNeutronStarJetMaterial(neutronStar.id),
-              );
-              const jetMeshB = new Mesh(
-                ribbonGeometry,
-                createNeutronStarJetMaterial(neutronStar.id + 0.37),
-              );
-              coreMesh.renderOrder = -6;
-              haloMesh.renderOrder = -7;
-              lensMesh.renderOrder = -8;
-              jetMeshA.renderOrder = -7;
-              jetMeshB.renderOrder = -7;
-              haloMesh.position.z = -1.6;
-              lensMesh.position.z = -2.4;
-              jetMeshA.position.z = -1.2;
-              jetMeshB.position.z = -1.2;
-              group.add(lensMesh, haloMesh, jetMeshA, jetMeshB, coreMesh);
-              scene.add(group);
-              visual = {
-                coreMesh,
-                group,
-                haloMesh,
-                jetMeshA,
-                jetMeshB,
-                lensMesh,
-                phase: index * 0.91 + neutronStar.id * 0.0008,
-                spinSpeed: 0.22 + index * 0.04,
-              };
-              neutronStarVisuals.set(neutronStar.id, visual);
-            }
-
-            const pulse = 1 + Math.sin(nowSec * 6.4 + visual.phase) * 0.04;
-            const haloPulse =
-              1 + Math.sin(nowSec * 4.8 + visual.phase * 1.7) * 0.08;
-            const { coreRadius, haloRadius, lensRadius, jetLength, jetWidth } =
-              getNeutronStarVisualShape({
-                haloPulse,
-                massAlpha,
-                pulse,
-                radius: neutronStar.radius,
-                tuning: neutronStarVisualTuning,
-              });
-            const haloMaterial = visual.haloMesh
-              .material as ReturnType<typeof createNeutronStarHaloMaterial>;
-            const lensMaterial = visual.lensMesh
-              .material as ReturnType<typeof createNeutronStarLensMaterial>;
-            const jetMaterialA = visual.jetMeshA
-              .material as ReturnType<typeof createNeutronStarJetMaterial>;
-            const jetMaterialB = visual.jetMeshB
-              .material as ReturnType<typeof createNeutronStarJetMaterial>;
-
-            visual.group.visible = true;
-            visual.group.position.set(neutronStar.pos.x, neutronStar.pos.y, -1);
-            visual.group.rotation.z = nowSec * 0.06 + visual.phase * 0.18;
-            visual.coreMesh.scale.set(coreRadius, coreRadius, coreRadius);
-            visual.haloMesh.scale.set(haloRadius, haloRadius, 1);
-            visual.lensMesh.scale.set(lensRadius, lensRadius, 1);
-            visual.jetMeshA.scale.set(jetWidth, jetLength, 1);
-            visual.jetMeshB.scale.set(
-              jetWidth * NEUTRON_STAR_JET_SECONDARY_WIDTH_FACTOR,
-              jetLength * NEUTRON_STAR_JET_SECONDARY_LENGTH_FACTOR,
-              1,
-            );
-            visual.jetMeshA.rotation.z =
-              visual.phase + Math.sin(nowSec * 0.4 + visual.phase) * 0.08;
-            visual.jetMeshB.rotation.z =
-              visual.phase +
-              Math.PI / 2 -
-              Math.sin(nowSec * 0.36 + visual.phase) * 0.06;
-            visual.haloMesh.rotation.z = nowSec * 0.18 + visual.phase * 0.4;
-            visual.lensMesh.rotation.z = -nowSec * 0.12 - visual.phase * 0.3;
-            visual.coreMesh.rotation.x = 0.44;
-            visual.coreMesh.rotation.y = nowSec * visual.spinSpeed;
-            haloMaterial.opacity = neutronStarVisualTuning.haloOpacity;
-            lensMaterial.opacity = neutronStarVisualTuning.lensOpacity;
-            jetMaterialA.opacity = neutronStarVisualTuning.jetOpacity;
-            jetMaterialB.opacity =
-              neutronStarVisualTuning.jetOpacity *
-              NEUTRON_STAR_JET_SECONDARY_OPACITY_FACTOR;
-          }
-          for (const [neutronStarId, visual] of neutronStarVisuals) {
-            if (!activeNeutronStarIds.has(neutronStarId)) {
-              scene.remove(visual.group);
-              (visual.coreMesh.material as { dispose: () => void }).dispose();
-              (visual.haloMesh.material as { dispose: () => void }).dispose();
-              (visual.lensMesh.material as { dispose: () => void }).dispose();
-              (visual.jetMeshA.material as { dispose: () => void }).dispose();
-              (visual.jetMeshB.material as { dispose: () => void }).dispose();
-              neutronStarVisuals.delete(neutronStarId);
-            }
-          }
-
-          const activePlanetIds = new Set<number>();
-          for (const planet of world?.planets ?? []) {
-            activePlanetIds.add(planet.id);
-            let visual = planetVisuals.get(planet.id);
-            let trail = planetTrails.get(planet.id);
-            const archetypeVisual =
-              planetVisualTuning.archetypes[planet.archetype];
-            if (visual === undefined) {
-              const forestProfile = getPlanetForestProfile(
-                planet.archetype,
-                planet.id,
-              );
-              const material = createPlanetMaterial(
-                archetypeVisual,
-                planet.id * 0.173,
-                forestProfile,
-              );
-              const glowMaterial = createPlanetGlowMaterial(
-                archetypeVisual.color,
-                planet.id * 0.173,
-                archetypeVisual.auraScale,
-                archetypeVisual.auraGap,
-              );
-              const mesh = new Mesh(planetGeometry, material);
-              const glowMesh = new Mesh(glowGeometry, glowMaterial.material);
-              mesh.renderOrder = -2;
-              glowMesh.position.z = 0.16;
-              glowMesh.renderOrder = -1;
-              scene.add(mesh, glowMesh);
-              visual = {
-                glowMesh,
-                glowOpacityUniform: glowMaterial.opacityUniform,
-                material,
-                mesh,
-                spinAxis: createPlanetSpinAxis(planet.id),
-                spinPhase: ((planet.id * 0.173) % 1) * Math.PI * 2,
-              };
-              planetVisuals.set(planet.id, visual);
-            }
-            if (trail === undefined) {
-              trail = createPlanetTrailVisual(archetypeVisual.trailColor);
-              planetTrails.set(planet.id, trail);
-              scene.add(trail.points);
-            }
-
-            visual.mesh.position.set(planet.pos.x, planet.pos.y, 0);
-            visual.glowMesh.position.set(planet.pos.x, planet.pos.y, 0.16);
-            const planetOpacity = getCloakPlanetOpacity(
-              planet.hideTrailUntilTick,
-              renderTick,
-            );
-            visual.material.opacityUniform.value = planetOpacity;
-            visual.glowOpacityUniform.value = planetOpacity;
-            visual.mesh.scale.set(
-              planet.radius * archetypeVisual.bodyScale,
-              planet.radius * archetypeVisual.bodyScale,
-              planet.radius * archetypeVisual.bodyScale,
-            );
-            visual.glowMesh.scale.set(
-              planet.radius *
-                archetypeVisual.bodyScale *
-                archetypeVisual.auraScale,
-              planet.radius *
-                archetypeVisual.bodyScale *
-                archetypeVisual.auraScale,
-              1,
-            );
-            visual.mesh.setRotationFromAxisAngle(
-              visual.spinAxis,
-              nowSec * 0.28 + visual.spinPhase,
-            );
-
-            pushTrailSample(trail, planet.pos);
-            updateTrailVisual(trail);
-          }
-          for (const [planetId, visual] of planetVisuals) {
-            if (!activePlanetIds.has(planetId)) {
-              scene.remove(visual.mesh, visual.glowMesh);
-              visual.material.dispose();
-              (visual.glowMesh.material as { dispose: () => void }).dispose();
-              planetVisuals.delete(planetId);
-            }
-          }
-          for (const [planetId, trail] of planetTrails) {
-            if (!activePlanetIds.has(planetId)) {
-              scene.remove(trail.points);
-              trail.geometry.dispose();
-              (trail.points.material as { dispose: () => void }).dispose();
-              planetTrails.delete(planetId);
-            }
-          }
-
-          const activeRocketIds = new Set<number>();
-          for (const rocket of world?.rockets ?? []) {
-            activeRocketIds.add(rocket.id);
-            let visual = rocketVisuals.get(rocket.id);
-            const rocketAppearance =
-              scaledRocketVisualTuning[rocket.rocketKind];
-            if (visual === undefined) {
-              const body = new Mesh(
-                rocketGeometry,
-                createRocketMaterial(
-                  rocketAppearance.core,
-                  rocketAppearance.trail,
-                ),
-              );
-              const trail = new Mesh(
-                ribbonGeometry,
-                createRocketTrailMaterial(
-                  rocketAppearance.core,
-                  rocketAppearance.trail,
-                ),
-              );
-              const flame = new Mesh(
-                ribbonGeometry,
-                createRocketFlameMaterial(
-                  rocketAppearance.core,
-                  rocketAppearance.trail,
-                ),
-              );
-              const group = new Group();
-              group.add(trail, flame, body);
-              body.renderOrder = 3;
-              trail.renderOrder = 2;
-              flame.renderOrder = 4;
-              scene.add(group);
-              visual = { body, flame, group, trail };
-              rocketVisuals.set(rocket.id, visual);
-            }
-
-            const angle = Math.atan2(rocket.vel.y, rocket.vel.x);
-            visual.group.position.set(rocket.pos.x, rocket.pos.y, 3);
-            visual.group.rotation.z = angle;
-            visual.body.scale.set(
-              rocketAppearance.bodyScale.x,
-              rocketAppearance.bodyScale.y,
-              rocketAppearance.bodyScale.y,
-            );
-            visual.trail.position.set(
-              -rocketAppearance.bodyScale.x * 0.6,
-              0,
-              -0.1,
-            );
-            visual.trail.scale.set(
-              rocketAppearance.trailScale.x,
-              rocketAppearance.trailScale.y,
-              1,
-            );
-            visual.flame.position.set(
-              -rocketAppearance.bodyScale.x * 0.45,
-              0,
-              0.05,
-            );
-            visual.flame.scale.set(
-              rocketAppearance.flameScale.x,
-              rocketAppearance.flameScale.y,
-              1,
-            );
-          }
-          for (const [rocketId, visual] of rocketVisuals) {
-            if (!activeRocketIds.has(rocketId)) {
-              scene.remove(visual.group);
-              (visual.body.material as { dispose: () => void }).dispose();
-              (visual.trail.material as { dispose: () => void }).dispose();
-              (visual.flame.material as { dispose: () => void }).dispose();
-              rocketVisuals.delete(rocketId);
-            }
-          }
-
-          const activeCacheIds = new Set<number>();
-          for (const cache of world?.caches ?? []) {
-            activeCacheIds.add(cache.id);
-            let visual = cacheVisuals.get(cache.id);
-            if (visual === undefined) {
-              visual = createSharedCacheVisual(
-                cache as never,
-                cacheSpriteAssets.badgeMaterials,
-              );
-              cacheVisuals.set(cache.id, visual);
-              scene.add(visual.group);
-            }
-
-            const key = getSharedCacheIconKey(cache.contents);
-            updateSharedCacheVisualBadge(
-              visual,
-              cacheSpriteAssets.badgeMaterials,
-              key,
-            );
-            visual.group.position.set(
-              cache.pos.x,
-              cache.pos.y + Math.sin(nowSec * 1.8 + visual.bobPhase) * 6,
-              3.5,
-            );
-            visual.group.rotation.z =
-              Math.sin(nowSec * visual.wobbleRate + visual.bobPhase) * 0.08;
-            const pulse =
-              1 + Math.sin(nowSec * visual.pulseRate + visual.bobPhase) * 0.04;
-            const badgeSize =
-              getCacheArenaBadgeSize(
-                tuning.visuals.caches.badgeBaseSize,
-                tuning.visuals.caches.badgeScale,
-              ) * pulse;
-            visual.badgeSprite.scale.set(badgeSize, badgeSize, 1);
-          }
-          for (const [cacheId, visual] of cacheVisuals) {
-            if (!activeCacheIds.has(cacheId)) {
-              scene.remove(visual.group);
-              cacheVisuals.delete(cacheId);
-            }
-          }
-
-          blackHoleGroup.visible = world?.blackHole !== undefined;
-          if (world?.blackHole !== undefined) {
-            blackHoleGroup.position.set(
-              world.blackHole.pos.x,
-              world.blackHole.pos.y,
-              5,
-            );
-            blackHoleRing.rotation.z = nowSec * 0.16;
-            blackHoleRing.scale.set(
-              world.blackHole.killRadius * 2.1,
-              world.blackHole.killRadius * 2.1,
-              1,
-            );
-            blackHoleCore.scale.set(
-              world.blackHole.killRadius * 0.78,
-              world.blackHole.killRadius * 0.78,
-              1,
-            );
-          }
-
-          if (nowSec >= lastHudUpdateSec) {
-            lastHudUpdateSec = nowSec + HUD_UPDATE_INTERVAL_SEC;
-            emitConnectionHud(timeMs, extrapolating);
-          }
-
-          const renderProfilerEndMs = profilingEnabled ? performance.now() : 0;
-          const submitProfilerStartMs = profilingEnabled
-            ? performance.now()
-            : 0;
-          nextRenderer.render(scene, nextCamera);
-          if (profilingEnabled) {
-            const submitProfilerEndMs = performance.now();
-            performanceProfiler.record({
-              frameCpuMs: submitProfilerEndMs - frameProfilerStartMs,
-              frameDeltaSec,
-              interpolationMs:
-                interpolationProfilerEndMs - interpolationProfilerStartMs,
-              renderCpuMs: renderProfilerEndMs - renderProfilerStartMs,
-              simulationMs: 0,
-              stepCount: 0,
-              submitMs: submitProfilerEndMs - submitProfilerStartMs,
-            });
-          }
+            },
+            renderer: nextRenderer,
+          });
         },
-        renderer: nextRenderer,
       });
     } catch (error) {
       disposeViewportSession();
-      reportViewportRendererFailure({
-        error,
-        failureLogLabel: "authoritative viewport",
-        hostElement,
-        isDisposed: () => disposed,
-      });
+      managedViewportSession.reportFailure(error);
     }
   };
 

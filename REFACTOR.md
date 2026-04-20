@@ -1,119 +1,49 @@
 # Refactor Backlog
 
-This document captures the current high-value refactor and performance tasks for
-the codebase, ordered by likely payoff on the current tree.
+This backlog has been cleared on the current tree. The previous high-value
+frontend refactor pass is now landed and validated.
 
 ## Current Baseline
 
 - `npm run typecheck` is green.
-- Shared renderer/bootstrap policy is already centralized.
-- Shared visibility-aware animation-loop control is already centralized.
-- The remaining work is now mostly about hot-path allocations, duplicated
-  viewport shell lifecycle code, and very large files.
+- `npm run test:frontend` is green.
+- Authoritative viewport interpolation now reuses cached render-world state
+  instead of rebuilding broad per-frame `Map` and entity allocations.
+- Sandbox interpolation and local simulation state now avoid the previous
+  cloning-heavy hot path.
+- Viewport session lifecycle is centralized behind
+  `createManagedViewportSession()` across the viewport entry points.
+- Local foresight-body occlusion no longer uses repeated linear `.find()`
+  lookups in the render path.
+- The largest frontend files now have dedicated helper modules for:
+  - sandbox interpolation
+  - authoritative trail visuals
+  - local viewport foresight helpers
+  - shared edit inspector field controls
 
-## Priority Order
+## Completed In This Pass
 
-1. Remove per-frame interpolation allocations in the authoritative viewport.
+1. Removed per-frame authoritative interpolation allocations in
+   `src/frontend/src/game/createAuthoritativeViewport.ts` by moving
+   interpolation/state-reuse logic into
+   `src/frontend/src/game/viewport/authoritativeInterpolation.ts`.
 
-   File:
+2. Reduced sandbox simulation cloning in
+   `src/frontend/src/game/combatSandbox.ts` and the renderer-facing sandbox
+   interpolation path, with the interpolation helpers now split into
+   `src/frontend/src/game/combatSandboxInterpolation.ts`.
 
-   - `src/frontend/src/game/createAuthoritativeViewport.ts`
+3. Finished the shared viewport shell extraction for the duplicated renderer
+   session lifecycle (`startViewport`, invalidation, failure reporting, teardown)
+   through `src/frontend/src/game/viewport/managedViewportSession.ts`.
 
-   Problem:
+4. Split the previously largest frontend files by domain using focused helper
+   modules rather than leaving those concerns embedded in the parent files.
 
-   - The render loop still rebuilds multiple `Map` instances and interpolated
-     entity arrays every frame.
+5. Replaced the remaining local viewport hot-path linear entity lookups in the
+   foresight occlusion flow with cached lookup maps.
 
-   Why this matters:
+## Next Use
 
-   - This is still the strongest remaining frontend performance target.
-   - It should reduce garbage pressure and frame-time spikes without changing
-     gameplay behavior.
-
-2. Reduce sandbox simulation cloning.
-
-   File:
-
-   - `src/frontend/src/game/combatSandbox.ts`
-
-   Problem:
-
-   - The local simulation still clones controller state, bots, planets,
-     rockets, caches, and related transient data on each step.
-   - The interpolated sandbox-state helper also performs broad cloning for the
-     renderer-facing state.
-
-   Why this matters:
-
-   - This is still allocation-heavy.
-   - It matters if `/sandbox` remains the renderer stress and profiling route.
-
-3. Finish viewport shell extraction.
-
-   Scope:
-
-   - Shared viewport constructor lifecycle across the various
-     `create*Viewport.ts` files.
-
-   Current reality:
-
-   - Shared renderer/bootstrap and shared animation-loop control have already
-     landed.
-   - The remaining `rendererSessionToken` / `startViewport` /
-     error-reporting / teardown flow is still duplicated across viewport entry
-     points.
-
-   Why this matters:
-
-   - A shared `createManagedViewport`-style helper would remove more boilerplate
-     and reduce lifecycle drift between viewports.
-
-4. Split the largest files by domain.
-
-   Files:
-
-   - `src/frontend/src/EditPage.tsx`
-   - `src/frontend/src/game/combatSandbox.ts`
-   - `src/frontend/src/game/viewport/localViewportScene.ts`
-   - `src/frontend/src/game/createAuthoritativeViewport.ts`
-
-   Why this matters:
-
-   - This is mostly a maintainability and duplication-control task rather than a
-     direct frame-rate optimization.
-   - Large files increase the chance of logic drift and make safe iteration
-     slower.
-
-5. Replace the remaining linear entity lookups in local viewport hot paths.
-
-   File:
-
-   - `src/frontend/src/game/viewport/localViewportScene.ts`
-
-   Current reality:
-
-   - This is now narrower than it used to be.
-   - The remaining repeated `.find()` lookups appear to be concentrated in the
-     foresight-body occlusion path rather than spread broadly across the scene
-     update code.
-
-   Why this matters:
-
-   - Each lookup is small on its own, but the cost still compounds in per-frame
-     rendering code.
-   - This is a cleanup/perf pass, but it is lower priority than the
-     authoritative interpolation and sandbox cloning work.
-
-## Recommended Next Move
-
-If continuing immediately, start with the authoritative interpolation path in
-`src/frontend/src/game/createAuthoritativeViewport.ts`.
-
-Reason:
-
-- It still has the best chance of improving frame time and reducing garbage
-  generation.
-- It is more likely to produce a measurable performance win than structural
-  cleanup alone.
-- The typecheck baseline is already green, so there is no longer a blocked
-  prerequisite ahead of it.
+If more refactor work is needed, add new items here based on fresh profiling or
+maintainability pain rather than continuing the already-completed list above.

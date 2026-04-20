@@ -14,12 +14,7 @@ import {
   type SunVisualProfile,
 } from "@3body/shared";
 import type { Sun, Vec2 } from "@3body/shared";
-import {
-  attribute,
-  color,
-  renderOutput,
-  uniform,
-} from "three/tsl";
+import { attribute, color, renderOutput, uniform } from "three/tsl";
 import { bloom } from "three/addons/tsl/display/BloomNode.js";
 import { rgbShift } from "three/addons/tsl/display/RGBShiftNode.js";
 import {
@@ -112,10 +107,9 @@ import {
 import { createShieldVisual } from "./shieldVisuals";
 import {
   disposeViewportRendererSession,
-  initializeViewportRendererSession,
-  reportViewportRendererFailure,
   type ViewportRendererBootstrap,
 } from "./viewport/rendererBootstrap";
+import { createManagedViewportSession } from "./viewport/managedViewportSession";
 import {
   createViewportRendererSizeState,
   syncViewportRendererSize,
@@ -291,9 +285,8 @@ const usesPlayerCameraStageView = (itemId: EditorPreviewViewportItemId) =>
   itemId === "rocketHeavy" ||
   itemId === "rocketSeeker";
 
-const usesGameplayPlanetPreview = (
-  itemId: EditorPreviewViewportItemId,
-) => itemId === "cannon" || isAbilityPreviewItem(itemId);
+const usesGameplayPlanetPreview = (itemId: EditorPreviewViewportItemId) =>
+  itemId === "cannon" || isAbilityPreviewItem(itemId);
 
 export const getEditorPreviewPlayerCameraHalfHeight = ({
   itemId,
@@ -387,8 +380,8 @@ const getPreviewPlanetRadius = (
       : itemId === "planets"
         ? PLANETS_STAGE_RADIUS
         : isAbilityPreviewItem(itemId)
-            ? getEditorPreviewGameplayPlanetRadius(tuning)
-            : PLANET_STAGE_RADIUS;
+          ? getEditorPreviewGameplayPlanetRadius(tuning)
+          : PLANET_STAGE_RADIUS;
   return targetRadius;
 };
 
@@ -997,7 +990,9 @@ const createPreviewRocket = ({
 }) => {
   const tuning = getRuntimeTuningDocument();
   const rocketKind = getRocketKindFromItemId(itemId) ?? "light";
-  const profile = getScaledRocketVisualTuning(tuning.visuals.rockets[rocketKind]);
+  const profile = getScaledRocketVisualTuning(
+    tuning.visuals.rockets[rocketKind],
+  );
   const silhouette = ROCKET_MESH_SILHOUETTES[rocketKind];
   const bodyMaterial = createRocketMaterial(profile.core, profile.trail);
   const trailMaterial = createRocketTrailMaterial(profile.core, profile.trail);
@@ -1177,11 +1172,7 @@ const createPreviewRocket = ({
       );
 
       trailMesh.position.set(-length * silhouette.trailOffset, 0, 0.18);
-      trailMesh.scale.set(
-        renderTrailScale.x,
-        renderTrailScale.y,
-        1,
-      );
+      trailMesh.scale.set(renderTrailScale.x, renderTrailScale.y, 1);
       flameMesh.position.set(-length * silhouette.flameOffset, 0, 0.24);
       flameMesh.scale.set(
         renderFlameScale.x * flicker,
@@ -1336,14 +1327,10 @@ const updatePreviewForesightVisual = (
     lineArray[offset + 2] = 0;
   }
 
-  foresightVisual.lineGeometry.setDrawRange(
-    0,
-    pointCount,
-  );
+  foresightVisual.lineGeometry.setDrawRange(0, pointCount);
   foresightVisual.pointGeometry.setDrawRange(0, 0);
   foresightVisual.linePositionAttribute.needsUpdate = true;
-  foresightVisual.line.visible =
-    tuning.lineOpacity > 0.01 && pointCount > 1;
+  foresightVisual.line.visible = tuning.lineOpacity > 0.01 && pointCount > 1;
   foresightVisual.points.visible = false;
 };
 
@@ -1369,7 +1356,11 @@ export function createEditorItemPreviewViewport(
   const disposables: Array<{ dispose: () => void }> = [];
   let cleanupComplete = false;
   const rendererSizeState = createViewportRendererSizeState();
-  let rendererSessionToken = 0;
+  const managedViewportSession = createManagedViewportSession({
+    failureLogLabel: "editor preview viewport",
+    hostElement,
+    isDisposed: () => disposed,
+  });
 
   const resizeViewport = () => {
     if (renderer === null || camera === null) {
@@ -1419,7 +1410,7 @@ export function createEditorItemPreviewViewport(
   };
 
   const disposeViewportSession = () => {
-    rendererSessionToken += 1;
+    managedViewportSession.invalidate();
     window.removeEventListener("resize", resizeViewport);
     disposeViewportDisposables(disposables, "editor preview resource");
     disposeViewportRendererSession({
@@ -1439,1204 +1430,1256 @@ export function createEditorItemPreviewViewport(
 
   const handleViewportRenderError = (error: unknown) => {
     disposeViewportSession();
-    reportViewportRendererFailure({
-      error,
-      failureLogLabel: "editor preview viewport",
-      hostElement,
-      isDisposed: () => disposed,
-    });
+    managedViewportSession.reportFailure(error);
   };
 
   const startViewport = async () => {
-    const sessionToken = ++rendererSessionToken;
     try {
-      const rendererSession = await initializeViewportRendererSession({
-        antialias: presentation === "stage",
-        failureLogLabel: "editor preview viewport",
-        hostElement,
-        isDisposed: () => disposed,
-      });
-      if (rendererSession === null || sessionToken !== rendererSessionToken) {
-        if (rendererSession !== null) {
-          disposeViewportRendererSession({
-            bootstrap: rendererSession.bootstrap,
-            hostElement,
-            renderer: rendererSession.renderer,
+      await managedViewportSession.start({
+        initializeOptions: {
+          antialias: presentation === "stage",
+        },
+        onReady: ({ bootstrap, renderer: nextRenderer }) => {
+          rendererBootstrap = bootstrap;
+          renderer = nextRenderer;
+
+          tuning = getRuntimeTuningDocument();
+          const scene = new Scene();
+          scene.background = createSceneBackgroundColor(
+            tuning.visuals.background,
+          );
+          const nextCamera = new OrthographicCamera(-1, 1, 1, -1, -2000, 2000);
+          camera = nextCamera;
+
+          const backdropGeometry = new PlaneGeometry(1, 1);
+          const backdropMaterial = createBackdropMaterial(
+            tuning.visuals.background,
+          );
+          backdropMesh = new Mesh(backdropGeometry, backdropMaterial);
+          backdropMesh.frustumCulled = false;
+          backdropMesh.renderOrder = -40;
+          scene.add(backdropMesh);
+          registerDisposables(disposables, backdropGeometry, backdropMaterial);
+
+          const backgroundLayers = createBackgroundLayerConfigs(
+            tuning.visuals.background,
+          ).map((layerConfig) => {
+            const layer = createBackgroundLayer(layerConfig);
+            scene.add(layer.group);
+            registerDisposables(disposables, layer.geometry, layer.material);
+            return layer;
           });
-        }
-        return;
-      }
 
-      const { bootstrap, renderer: nextRenderer } = rendererSession;
-      rendererBootstrap = bootstrap;
-      renderer = nextRenderer;
-
-      tuning = getRuntimeTuningDocument();
-      const scene = new Scene();
-      scene.background = createSceneBackgroundColor(tuning.visuals.background);
-      const nextCamera = new OrthographicCamera(-1, 1, 1, -1, -2000, 2000);
-      camera = nextCamera;
-
-      const backdropGeometry = new PlaneGeometry(1, 1);
-      const backdropMaterial = createBackdropMaterial(
-        tuning.visuals.background,
-      );
-      backdropMesh = new Mesh(backdropGeometry, backdropMaterial);
-      backdropMesh.frustumCulled = false;
-      backdropMesh.renderOrder = -40;
-      scene.add(backdropMesh);
-      registerDisposables(disposables, backdropGeometry, backdropMaterial);
-
-      const backgroundLayers = createBackgroundLayerConfigs(
-        tuning.visuals.background,
-      ).map((layerConfig) => {
-        const layer = createBackgroundLayer(layerConfig);
-        scene.add(layer.group);
-        registerDisposables(disposables, layer.geometry, layer.material);
-        return layer;
-      });
-
-      const sphereGeometry = new SphereGeometry(1, 96, 96);
-      const circleGeometry = new CircleGeometry(1, 72);
-      const ringGeometry = new CircleGeometry(1, 64);
-      const warpGeometry = new RingGeometry(0.55, 1, 96);
-      const rocketBodyGeometry = new CylinderGeometry(0.56, 0.92, 1, 18, 1);
-      const rocketNoseGeometry = new ConeGeometry(1, 1, 18);
-      const rocketEngineGeometry = new CylinderGeometry(0.78, 0.9, 1, 18, 1);
-      const rocketFinGeometry = new BoxGeometry(1, 1, 0.18);
-      const rocketCanardGeometry = new BoxGeometry(1, 1, 0.14);
-      const rocketSensorGeometry = new SphereGeometry(1, 20, 14);
-      const planeGeometry = new PlaneGeometry(1, 1);
-      const cannonStemGeometry = new CylinderGeometry(1, 1, 1, 16).rotateZ(
-        -Math.PI / 2,
-      );
-      const cannonBreechGeometry = new BoxGeometry(1, 1, 1);
-      const cannonBarrelGeometry = new CylinderGeometry(1, 1, 1, 20).rotateZ(
-        -Math.PI / 2,
-      );
-      const cannonBarrelBandGeometry = new CylinderGeometry(
-        1,
-        1,
-        1,
-        20,
-      ).rotateZ(-Math.PI / 2);
-      const cannonMuzzleGeometry = new CylinderGeometry(1, 1, 1, 22).rotateZ(
-        -Math.PI / 2,
-      );
-      const cannonFlashGeometry = new SphereGeometry(1, 18, 12);
-      rocketBodyGeometry.rotateZ(-Math.PI / 2);
-      rocketNoseGeometry.rotateZ(-Math.PI / 2);
-      rocketEngineGeometry.rotateZ(-Math.PI / 2);
-      registerDisposables(
-        disposables,
-        sphereGeometry,
-        circleGeometry,
-        ringGeometry,
-        warpGeometry,
-        rocketBodyGeometry,
-        rocketNoseGeometry,
-        rocketEngineGeometry,
-        rocketFinGeometry,
-        rocketCanardGeometry,
-        rocketSensorGeometry,
-        planeGeometry,
-        cannonStemGeometry,
-        cannonBreechGeometry,
-        cannonBarrelGeometry,
-        cannonBarrelBandGeometry,
-        cannonMuzzleGeometry,
-        cannonFlashGeometry,
-      );
-
-      const stageEffectsEnabled = presentation === "stage";
-      const scenePass = createCompatibleScenePass(
-        nextRenderer,
-        scene,
-        nextCamera,
-        presentation === "card" ? CARD_SSAA_LEVEL : STAGE_SSAA_LEVEL,
-      );
-      const bloomNode = bloom(
-        scenePass,
-        presentation === "card" ? CARD_BLOOM_STRENGTH : STAGE_BLOOM_STRENGTH,
-        BLOOM_RADIUS,
-        BLOOM_THRESHOLD,
-      );
-      const outputNode = renderOutput(
-        rgbShift(
-          stageEffectsEnabled ? scenePass.add(bloomNode) : scenePass,
-          0,
-          0,
-        ),
-        nextRenderer.toneMapping,
-        nextRenderer.outputColorSpace,
-      );
-      postProcessing = new RenderPipeline(nextRenderer, outputNode);
-      postProcessing.outputColorTransform = false;
-      registerDisposables(disposables, scenePass, bloomNode);
-
-      const updates: Array<(nowSec: number) => void> = [];
-      const planetRadius = getPreviewPlanetRadius(
-        options.itemId,
-        presentation,
-        tuning,
-      );
-      const sunRadius = getPreviewSunRadius(options.itemId, presentation);
-      const focusScale = getPresentationScale(presentation);
-      const terraVisuals = tuning.visuals.planets.archetypes.terra;
-      const stageWorldUnitsPerPixel =
-        presentation === "stage"
-          ? getEditorPreviewStageWorldUnitsPerPixel({
-              itemId: options.itemId,
-              tuning,
-              viewportHeight: hostElement.clientHeight,
-            })
-          : null;
-      const terraPlanetRadius = usesGameplayPlanetPreview(options.itemId)
-        ? getEditorPreviewGameplayPlanetRadius(tuning)
-        : planetRadius * terraVisuals.bodyScale;
-      const overviewSunProfile = getSunVisualProfile(tuning.visuals.suns, 0);
-
-      const playerCameraHalfHeight =
-        presentation === "stage"
-          ? getEditorPreviewPlayerCameraHalfHeight({
-              itemId: options.itemId,
-              tuning,
-            })
-          : null;
-
-      if (playerCameraHalfHeight !== null) {
-        requiredCameraHalfHeight = Math.max(
-          requiredCameraHalfHeight,
-          playerCameraHalfHeight,
-        );
-      }
-
-      if (options.itemId === "overview") {
-        const planet = createPreviewPlanet({
-          hostScene: scene,
-          planetGeometry: sphereGeometry,
-          position: { x: -18 * focusScale, y: -6 * focusScale },
-          radius: terraPlanetRadius * 0.96,
-          ringGeometry,
-          seed: 1,
-          visuals: terraVisuals,
-        });
-        const sun = createPreviewSun({
-          color: overviewSunProfile.color,
-          coreBrightness: overviewSunProfile.coreBrightness,
-          glowColor: overviewSunProfile.glowColor,
-          glowScale: overviewSunProfile.glowScale,
-          glowStrength: overviewSunProfile.glowBrightness,
-          hostScene: scene,
-          radius: sunRadius * 0.86,
-          seed: DEFAULT_ORBIT_PRESET.suns[0]!.id,
-          sunGeometry: sphereGeometry,
-          warpGeometry,
-          warpScale: overviewSunProfile.warpScale,
-        });
-        const rocket = createPreviewRocket({
-          hostScene: scene,
-          hostElement,
-          itemId: "rocketLight",
-          planeGeometry,
-          presentation,
-          rocketBodyGeometry,
-          rocketCanardGeometry,
-          rocketEngineGeometry,
-          rocketFinGeometry,
-          rocketNoseGeometry,
-          rocketSensorGeometry,
-        });
-        registerDisposables(disposables, planet, sun, rocket);
-        updates.push(
-          (nowSec) => planet.update(nowSec),
-          (nowSec) =>
-            sun.update(nowSec, { x: 17 * focusScale, y: 11 * focusScale }),
-          (nowSec) =>
-            rocket.update(nowSec, { x: 14 * focusScale, y: -15 * focusScale }),
-        );
-      }
-
-      if (options.itemId === "background") {
-        const previewCount = Math.min(
-          tuning.gameplay.neutronStars.count,
-          presentation === "stage" ? 4 : 2,
-        );
-        const previewRadiusScale = presentation === "stage" ? 0.12 : 0.085;
-        const orbitRadius = (presentation === "stage" ? 28 : 16) * focusScale;
-        const neutronStars = Array.from({ length: previewCount }, (_, index) => {
-          const alpha =
-            previewCount <= 1 ? 0.5 : index / Math.max(1, previewCount - 1);
-          const mass = lerp(
-            tuning.gameplay.neutronStars.minMassKg,
-            tuning.gameplay.neutronStars.maxMassKg,
-            alpha,
+          const sphereGeometry = new SphereGeometry(1, 96, 96);
+          const circleGeometry = new CircleGeometry(1, 72);
+          const ringGeometry = new CircleGeometry(1, 64);
+          const warpGeometry = new RingGeometry(0.55, 1, 96);
+          const rocketBodyGeometry = new CylinderGeometry(0.56, 0.92, 1, 18, 1);
+          const rocketNoseGeometry = new ConeGeometry(1, 1, 18);
+          const rocketEngineGeometry = new CylinderGeometry(
+            0.78,
+            0.9,
+            1,
+            18,
+            1,
           );
-          const massAlpha = getNeutronStarMassAlpha(
-            mass,
-            tuning.gameplay.neutronStars,
+          const rocketFinGeometry = new BoxGeometry(1, 1, 0.18);
+          const rocketCanardGeometry = new BoxGeometry(1, 1, 0.14);
+          const rocketSensorGeometry = new SphereGeometry(1, 20, 14);
+          const planeGeometry = new PlaneGeometry(1, 1);
+          const cannonStemGeometry = new CylinderGeometry(1, 1, 1, 16).rotateZ(
+            -Math.PI / 2,
           );
-          const radius =
-            lerp(
-              tuning.gameplay.neutronStars.minSize,
-              tuning.gameplay.neutronStars.maxSize,
-              massAlpha,
-            ) *
-            previewRadiusScale *
-            focusScale;
-          const angle =
-            (-0.95 + alpha * 1.9) * Math.PI * 0.42 + (index % 2 === 0 ? 0 : 0.18);
-          const distance = orbitRadius * (0.82 + alpha * 0.24);
-
-          return {
-            position: {
-              x: Math.cos(angle) * distance,
-              y: Math.sin(angle) * distance * 0.68,
-            },
-            visual: createPreviewNeutronStar({
-              hostScene: scene,
-              jetGeometry: planeGeometry,
-              lensGeometry: circleGeometry,
-              massAlpha,
-              radius,
-              seed: 50_000 + index * 97,
-              sphereGeometry,
-              tuning: tuning.visuals.neutronStars,
-            }),
-          };
-        });
-        registerDisposables(
-          disposables,
-          ...neutronStars.map((entry) => entry.visual),
-        );
-        updates.push((nowSec) => {
-          for (const neutronStar of neutronStars) {
-            neutronStar.visual.update(nowSec, neutronStar.position);
-          }
-        });
-      }
-
-      if (options.itemId === "neutronStars") {
-        const previewCount = Math.max(1, tuning.gameplay.neutronStars.count);
-        const previewScale = presentation === "stage" ? 1 : 0.14;
-        const previewArenaRadius = Math.max(
-          presentation === "stage" ? 360 : 140,
-          tuning.gameplay.neutronStars.maxSize *
-            (presentation === "stage" ? 4.5 : 1.45) +
-            previewCount * (presentation === "stage" ? 28 : 8),
-        );
-        let nextPreviewId = 1;
-        const previewStars = createNeutronStars({
-          arenaRadius: previewArenaRadius,
-          createId: () => nextPreviewId++,
-          rng: mulberry32(0x3b0d1e5),
-          spec: {
-            ...tuning.gameplay.neutronStars,
-            count: previewCount,
-          },
-        });
-        const previewCenter =
-          previewStars.length === 0
-            ? { x: 0, y: 0 }
-            : previewStars.reduce(
-                (center, star) => ({
-                  x: center.x + star.pos.x / previewStars.length,
-                  y: center.y + star.pos.y / previewStars.length,
-                }),
-                { x: 0, y: 0 },
-              );
-        const neutronStars = previewStars.map((star, index) => {
-          const massAlpha = getNeutronStarMassAlpha(
-            star.mass,
-            tuning.gameplay.neutronStars,
-          );
-          const radius = star.radius * previewScale;
-          const effectiveRadius = radius * (4.4 + massAlpha * 2.5);
-          const position = {
-            x: (star.pos.x - previewCenter.x) * previewScale,
-            y: (star.pos.y - previewCenter.y) * previewScale,
-          };
-
-          requiredCameraHalfWidth = Math.max(
-            requiredCameraHalfWidth,
-            Math.abs(position.x) + effectiveRadius,
-          );
-          requiredCameraHalfHeight = Math.max(
-            requiredCameraHalfHeight,
-            Math.abs(position.y) + effectiveRadius,
-          );
-
-          return {
-            phase: index * 0.37,
-            position,
-            visual: createPreviewNeutronStar({
-              hostScene: scene,
-              jetGeometry: planeGeometry,
-              lensGeometry: circleGeometry,
-              massAlpha,
-              radius,
-              seed: 80_000 + star.id * 137,
-              sphereGeometry,
-              tuning: tuning.visuals.neutronStars,
-            }),
-          };
-        });
-        const cameraPadding = presentation === "stage" ? 44 : 12;
-        requiredCameraHalfWidth += cameraPadding;
-        requiredCameraHalfHeight += cameraPadding;
-        registerDisposables(
-          disposables,
-          ...neutronStars.map((entry) => entry.visual),
-        );
-        updates.push((nowSec) => {
-          for (const neutronStar of neutronStars) {
-            neutronStar.visual.update(
-              nowSec + neutronStar.phase,
-              neutronStar.position,
-            );
-          }
-        });
-      }
-
-      if (options.itemId === "planets") {
-        const stageLayout =
-          presentation === "stage"
-            ? createPlanetStagePreviewLayout(tuning)
-            : null;
-        if (stageLayout !== null) {
-          requiredCameraHalfHeight = stageLayout.requiredHalfHeight;
-          requiredCameraHalfWidth = stageLayout.requiredHalfWidth;
-          stageLabelOverlay = createPlanetStagePreviewLabelOverlay({
-            hostElement,
-            entries: stageLayout.entries,
-          });
-          registerDisposables(disposables, stageLabelOverlay);
-        }
-        const planetEntries = ARCHETYPE_IDS.map((archetype, index) => {
-          const visuals = tuning.visuals.planets.archetypes[archetype];
-          const stageEntry = stageLayout?.entries[index] ?? null;
-          const position =
-            stageEntry?.position ??
-            getPlanetGridPosition(
-              index,
-              ARCHETYPE_IDS.length,
-              PLANETS_CARD_HORIZONTAL_SPACING * focusScale,
-              PLANETS_CARD_VERTICAL_SPACING * focusScale,
-            );
-          const radius =
-            stageEntry?.radius ??
-            clamp(
-              planetRadius * visuals.bodyScale * PLANETS_CARD_RADIUS_SCALE,
-              PLANETS_CARD_MIN_RADIUS,
-              PLANETS_CARD_MAX_RADIUS,
-            );
-          const planet = createPreviewPlanet({
-            hostScene: scene,
-            planetGeometry: sphereGeometry,
-            position,
-            radius,
+          const cannonBreechGeometry = new BoxGeometry(1, 1, 1);
+          const cannonBarrelGeometry = new CylinderGeometry(
+            1,
+            1,
+            1,
+            20,
+          ).rotateZ(-Math.PI / 2);
+          const cannonBarrelBandGeometry = new CylinderGeometry(
+            1,
+            1,
+            1,
+            20,
+          ).rotateZ(-Math.PI / 2);
+          const cannonMuzzleGeometry = new CylinderGeometry(
+            1,
+            1,
+            1,
+            22,
+          ).rotateZ(-Math.PI / 2);
+          const cannonFlashGeometry = new SphereGeometry(1, 18, 12);
+          rocketBodyGeometry.rotateZ(-Math.PI / 2);
+          rocketNoseGeometry.rotateZ(-Math.PI / 2);
+          rocketEngineGeometry.rotateZ(-Math.PI / 2);
+          registerDisposables(
+            disposables,
+            sphereGeometry,
+            circleGeometry,
             ringGeometry,
-            seed: index + 1,
-            visuals,
-          });
-          registerDisposables(disposables, planet);
-          return { planet, phase: index * 0.5 };
-        });
-        updates.push((nowSec) => {
-          for (const entry of planetEntries) {
-            entry.planet.update(nowSec + entry.phase);
-          }
-        });
-      }
+            warpGeometry,
+            rocketBodyGeometry,
+            rocketNoseGeometry,
+            rocketEngineGeometry,
+            rocketFinGeometry,
+            rocketCanardGeometry,
+            rocketSensorGeometry,
+            planeGeometry,
+            cannonStemGeometry,
+            cannonBreechGeometry,
+            cannonBarrelGeometry,
+            cannonBarrelBandGeometry,
+            cannonMuzzleGeometry,
+            cannonFlashGeometry,
+          );
 
-      if (options.itemId === "suns") {
-        const stageLayout =
-          presentation === "stage"
-            ? createSunStagePreviewLayout(tuning, sunRadius)
-            : null;
-        if (stageLayout !== null) {
-          requiredCameraHalfHeight = stageLayout.requiredHalfHeight;
-          requiredCameraHalfWidth = stageLayout.requiredHalfWidth;
-          stageLabelOverlay = createSunStagePreviewLabelOverlay({
-            hostElement,
-            entries: stageLayout.entries,
-          });
-          registerDisposables(disposables, stageLabelOverlay);
-        }
-        const sunEntries = tuning.visuals.suns.profiles.map(
-          (profile, index) => {
-            const stageEntry = stageLayout?.entries[index] ?? null;
-            const position =
-              stageEntry?.position ??
-              getPlanetGridPosition(
-                index,
-                tuning.visuals.suns.profiles.length,
-                SUNS_CARD_HORIZONTAL_SPACING * focusScale,
-                SUNS_CARD_VERTICAL_SPACING * focusScale,
-              );
-            const defaultSun =
-              DEFAULT_ORBIT_PRESET.suns[
-                index % DEFAULT_ORBIT_PRESET.suns.length
-              ]!;
-            const radius =
-              stageEntry?.radius ??
-              clamp(
-                sunRadius *
-                  (tuning.gameplay.orbits.suns[index]!.radius /
-                    Math.max(defaultSun.radius, 1)) *
-                  SUNS_CARD_RADIUS_SCALE,
-                SUNS_CARD_MIN_RADIUS,
-                SUNS_CARD_MAX_RADIUS,
-              );
-            const sunSeed =
-              DEFAULT_ORBIT_PRESET.suns[
-                index % DEFAULT_ORBIT_PRESET.suns.length
-              ]!;
-            const sun = createPreviewSun({
-              color: profile.color,
-              coreBrightness: profile.coreBrightness,
-              glowColor: profile.glowColor,
-              glowScale: profile.glowScale,
-              glowStrength: profile.glowBrightness,
+          const stageEffectsEnabled = presentation === "stage";
+          const scenePass = createCompatibleScenePass(
+            nextRenderer,
+            scene,
+            nextCamera,
+            presentation === "card" ? CARD_SSAA_LEVEL : STAGE_SSAA_LEVEL,
+          );
+          const bloomNode = bloom(
+            scenePass,
+            presentation === "card"
+              ? CARD_BLOOM_STRENGTH
+              : STAGE_BLOOM_STRENGTH,
+            BLOOM_RADIUS,
+            BLOOM_THRESHOLD,
+          );
+          const outputNode = renderOutput(
+            rgbShift(
+              stageEffectsEnabled ? scenePass.add(bloomNode) : scenePass,
+              0,
+              0,
+            ),
+            nextRenderer.toneMapping,
+            nextRenderer.outputColorSpace,
+          );
+          postProcessing = new RenderPipeline(nextRenderer, outputNode);
+          postProcessing.outputColorTransform = false;
+          registerDisposables(disposables, scenePass, bloomNode);
+
+          const updates: Array<(nowSec: number) => void> = [];
+          const planetRadius = getPreviewPlanetRadius(
+            options.itemId,
+            presentation,
+            tuning,
+          );
+          const sunRadius = getPreviewSunRadius(options.itemId, presentation);
+          const focusScale = getPresentationScale(presentation);
+          const terraVisuals = tuning.visuals.planets.archetypes.terra;
+          const stageWorldUnitsPerPixel =
+            presentation === "stage"
+              ? getEditorPreviewStageWorldUnitsPerPixel({
+                  itemId: options.itemId,
+                  tuning,
+                  viewportHeight: hostElement.clientHeight,
+                })
+              : null;
+          const terraPlanetRadius = usesGameplayPlanetPreview(options.itemId)
+            ? getEditorPreviewGameplayPlanetRadius(tuning)
+            : planetRadius * terraVisuals.bodyScale;
+          const overviewSunProfile = getSunVisualProfile(
+            tuning.visuals.suns,
+            0,
+          );
+
+          const playerCameraHalfHeight =
+            presentation === "stage"
+              ? getEditorPreviewPlayerCameraHalfHeight({
+                  itemId: options.itemId,
+                  tuning,
+                })
+              : null;
+
+          if (playerCameraHalfHeight !== null) {
+            requiredCameraHalfHeight = Math.max(
+              requiredCameraHalfHeight,
+              playerCameraHalfHeight,
+            );
+          }
+
+          if (options.itemId === "overview") {
+            const planet = createPreviewPlanet({
               hostScene: scene,
-              radius,
-              seed: sunSeed.id,
+              planetGeometry: sphereGeometry,
+              position: { x: -18 * focusScale, y: -6 * focusScale },
+              radius: terraPlanetRadius * 0.96,
+              ringGeometry,
+              seed: 1,
+              visuals: terraVisuals,
+            });
+            const sun = createPreviewSun({
+              color: overviewSunProfile.color,
+              coreBrightness: overviewSunProfile.coreBrightness,
+              glowColor: overviewSunProfile.glowColor,
+              glowScale: overviewSunProfile.glowScale,
+              glowStrength: overviewSunProfile.glowBrightness,
+              hostScene: scene,
+              radius: sunRadius * 0.86,
+              seed: DEFAULT_ORBIT_PRESET.suns[0]!.id,
               sunGeometry: sphereGeometry,
               warpGeometry,
-              warpScale: profile.warpScale,
+              warpScale: overviewSunProfile.warpScale,
             });
-            registerDisposables(disposables, sun);
-            return {
-              phase: index * 0.43,
-              position,
-              sun,
-            };
-          },
-        );
-        updates.push((nowSec) => {
-          for (const entry of sunEntries) {
-            entry.sun.update(nowSec + entry.phase, entry.position);
-          }
-        });
-      }
-
-      if (options.itemId === "cache") {
-        const stageLayout =
-          presentation === "stage"
-            ? createCacheStagePreviewLayout(tuning)
-            : null;
-        if (stageLayout !== null) {
-          requiredCameraHalfHeight = Math.max(
-            requiredCameraHalfHeight,
-            stageLayout.requiredHalfHeight,
-          );
-          requiredCameraHalfWidth = Math.max(
-            requiredCameraHalfWidth,
-            stageLayout.requiredHalfWidth,
-          );
-        }
-        const cacheEntries = stageLayout?.entries.map((entry, index) => {
-          const cache = createPreviewCache({
-            hostElement,
-            hostScene: scene,
-            iconKey: entry.iconKey,
-            presentation,
-          });
-          registerDisposables(disposables, cache);
-          return {
-            cache,
-            phase: index * 0.37,
-            position: entry.position,
-          };
-        }) ?? [
-          {
-            cache: createPreviewCache({
-              hostElement,
+            const rocket = createPreviewRocket({
               hostScene: scene,
+              hostElement,
+              itemId: "rocketLight",
+              planeGeometry,
               presentation,
-            }),
-            phase: 0,
-            position: { x: 0, y: 0 } satisfies Vec2,
-          },
-        ];
-        if (stageLayout === null) {
-          registerDisposables(disposables, cacheEntries[0]!.cache);
-        }
-        updates.push((nowSec) => {
-          for (const entry of cacheEntries) {
-            entry.cache.update(nowSec + entry.phase, entry.position);
+              rocketBodyGeometry,
+              rocketCanardGeometry,
+              rocketEngineGeometry,
+              rocketFinGeometry,
+              rocketNoseGeometry,
+              rocketSensorGeometry,
+            });
+            registerDisposables(disposables, planet, sun, rocket);
+            updates.push(
+              (nowSec) => planet.update(nowSec),
+              (nowSec) =>
+                sun.update(nowSec, { x: 17 * focusScale, y: 11 * focusScale }),
+              (nowSec) =>
+                rocket.update(nowSec, {
+                  x: 14 * focusScale,
+                  y: -15 * focusScale,
+                }),
+            );
           }
-        });
-      }
 
-      const rocketKind = getRocketKindFromItemId(options.itemId);
-      if (rocketKind !== null) {
-        const rocket = createPreviewRocket({
-          hostScene: scene,
-          hostElement,
-          itemId: options.itemId,
-          planeGeometry,
-          presentation,
-          rocketBodyGeometry,
-          rocketCanardGeometry,
-          rocketEngineGeometry,
-          rocketFinGeometry,
-          rocketNoseGeometry,
-          rocketSensorGeometry,
-        });
-        registerDisposables(disposables, rocket);
-        updates.push((nowSec) => rocket.update(nowSec, { x: 0, y: 0 }));
-      }
+          if (options.itemId === "background") {
+            const previewCount = Math.min(
+              tuning.gameplay.neutronStars.count,
+              presentation === "stage" ? 4 : 2,
+            );
+            const previewRadiusScale = presentation === "stage" ? 0.12 : 0.085;
+            const orbitRadius =
+              (presentation === "stage" ? 28 : 16) * focusScale;
+            const neutronStars = Array.from(
+              { length: previewCount },
+              (_, index) => {
+                const alpha =
+                  previewCount <= 1
+                    ? 0.5
+                    : index / Math.max(1, previewCount - 1);
+                const mass = lerp(
+                  tuning.gameplay.neutronStars.minMassKg,
+                  tuning.gameplay.neutronStars.maxMassKg,
+                  alpha,
+                );
+                const massAlpha = getNeutronStarMassAlpha(
+                  mass,
+                  tuning.gameplay.neutronStars,
+                );
+                const radius =
+                  lerp(
+                    tuning.gameplay.neutronStars.minSize,
+                    tuning.gameplay.neutronStars.maxSize,
+                    massAlpha,
+                  ) *
+                  previewRadiusScale *
+                  focusScale;
+                const angle =
+                  (-0.95 + alpha * 1.9) * Math.PI * 0.42 +
+                  (index % 2 === 0 ? 0 : 0.18);
+                const distance = orbitRadius * (0.82 + alpha * 0.24);
 
-      if (options.itemId === "hud") {
-        const leftMaterial = createHudPanelMaterial(
-          tuning.visuals.rockets.light.hudAccent,
-          0.22,
-        );
-        const centerMaterial = createHudPanelMaterial(
-          tuning.visuals.abilities.foresightColor,
-          0.18,
-        );
-        const rightMaterial = createHudPanelMaterial(
-          tuning.visuals.abilities.shieldColor,
-          0.2,
-        );
-        const panelGeometry = new PlaneGeometry(1, 1);
-        const leftPanel = new Mesh(panelGeometry, leftMaterial);
-        const centerPanel = new Mesh(panelGeometry, centerMaterial);
-        const rightPanel = new Mesh(panelGeometry, rightMaterial);
-        leftPanel.renderOrder = 4;
-        centerPanel.renderOrder = 5;
-        rightPanel.renderOrder = 6;
-        scene.add(leftPanel, centerPanel, rightPanel);
-        registerDisposables(
-          disposables,
-          panelGeometry,
-          leftMaterial,
-          centerMaterial,
-          rightMaterial,
-        );
-        updates.push((nowSec) => {
-          const pulse = 1 + Math.sin(nowSec * 2.8) * 0.04;
-          leftPanel.position.set(-22 * focusScale, -4 * focusScale, 0.8);
-          leftPanel.scale.set(26 * focusScale, 12 * focusScale, 1);
-          leftPanel.rotation.z = -0.04;
-          leftMaterial.opacity = 0.2 + Math.sin(nowSec * 1.8) * 0.02;
+                return {
+                  position: {
+                    x: Math.cos(angle) * distance,
+                    y: Math.sin(angle) * distance * 0.68,
+                  },
+                  visual: createPreviewNeutronStar({
+                    hostScene: scene,
+                    jetGeometry: planeGeometry,
+                    lensGeometry: circleGeometry,
+                    massAlpha,
+                    radius,
+                    seed: 50_000 + index * 97,
+                    sphereGeometry,
+                    tuning: tuning.visuals.neutronStars,
+                  }),
+                };
+              },
+            );
+            registerDisposables(
+              disposables,
+              ...neutronStars.map((entry) => entry.visual),
+            );
+            updates.push((nowSec) => {
+              for (const neutronStar of neutronStars) {
+                neutronStar.visual.update(nowSec, neutronStar.position);
+              }
+            });
+          }
 
-          centerPanel.position.set(0, 13 * focusScale, 0.7);
-          centerPanel.scale.set(24 * focusScale, 8 * focusScale * pulse, 1);
-          centerMaterial.opacity = 0.16 + Math.sin(nowSec * 2.2) * 0.02;
+          if (options.itemId === "neutronStars") {
+            const previewCount = Math.max(
+              1,
+              tuning.gameplay.neutronStars.count,
+            );
+            const previewScale = presentation === "stage" ? 1 : 0.14;
+            const previewArenaRadius = Math.max(
+              presentation === "stage" ? 360 : 140,
+              tuning.gameplay.neutronStars.maxSize *
+                (presentation === "stage" ? 4.5 : 1.45) +
+                previewCount * (presentation === "stage" ? 28 : 8),
+            );
+            let nextPreviewId = 1;
+            const previewStars = createNeutronStars({
+              arenaRadius: previewArenaRadius,
+              createId: () => nextPreviewId++,
+              rng: mulberry32(0x3b0d1e5),
+              spec: {
+                ...tuning.gameplay.neutronStars,
+                count: previewCount,
+              },
+            });
+            const previewCenter =
+              previewStars.length === 0
+                ? { x: 0, y: 0 }
+                : previewStars.reduce(
+                    (center, star) => ({
+                      x: center.x + star.pos.x / previewStars.length,
+                      y: center.y + star.pos.y / previewStars.length,
+                    }),
+                    { x: 0, y: 0 },
+                  );
+            const neutronStars = previewStars.map((star, index) => {
+              const massAlpha = getNeutronStarMassAlpha(
+                star.mass,
+                tuning.gameplay.neutronStars,
+              );
+              const radius = star.radius * previewScale;
+              const effectiveRadius = radius * (4.4 + massAlpha * 2.5);
+              const position = {
+                x: (star.pos.x - previewCenter.x) * previewScale,
+                y: (star.pos.y - previewCenter.y) * previewScale,
+              };
 
-          rightPanel.position.set(21 * focusScale, -8 * focusScale, 0.9);
-          rightPanel.scale.set(18 * focusScale, 10 * focusScale, 1);
-          rightPanel.rotation.z = 0.06;
-          rightMaterial.opacity = 0.18 + Math.cos(nowSec * 2.1) * 0.025;
-        });
-      }
+              requiredCameraHalfWidth = Math.max(
+                requiredCameraHalfWidth,
+                Math.abs(position.x) + effectiveRadius,
+              );
+              requiredCameraHalfHeight = Math.max(
+                requiredCameraHalfHeight,
+                Math.abs(position.y) + effectiveRadius,
+              );
 
-      if (options.itemId === "blackHole") {
-        const blackHoleRadiusTarget =
-          presentation === "card"
-            ? BLACK_HOLE_CARD_RADIUS
-            : BLACK_HOLE_STAGE_RADIUS;
-        const blackHoleScale =
-          blackHoleRadiusTarget /
-          Math.max(tuning.visuals.blackHole.lensRadius, 1);
-        const blackHoleGroup = new Group();
-        blackHoleGroup.position.set(0, 0, 4);
-        const lens = new Mesh(circleGeometry, createBlackHoleLensMaterial());
-        const ring = new Mesh(
-          new RingGeometry(0.42, 1, 96),
-          createBlackHoleRingMaterial(),
-        );
-        const core = new Mesh(circleGeometry, createBlackHoleCoreMaterial());
-        lens.scale.set(
-          tuning.visuals.blackHole.lensRadius * blackHoleScale,
-          tuning.visuals.blackHole.lensRadius * blackHoleScale,
-          1,
-        );
-        ring.scale.set(
-          tuning.visuals.blackHole.ringRadius * blackHoleScale,
-          tuning.visuals.blackHole.ringRadius * blackHoleScale,
-          1,
-        );
-        core.scale.set(
-          tuning.visuals.blackHole.coreRadius * blackHoleScale,
-          tuning.visuals.blackHole.coreRadius * blackHoleScale,
-          1,
-        );
-        lens.position.z = -2;
-        lens.renderOrder = 4;
-        ring.renderOrder = 5;
-        core.renderOrder = 6;
-        blackHoleGroup.add(lens, ring, core);
-        scene.add(blackHoleGroup);
-        registerDisposables(
-          disposables,
-          lens.geometry,
-          lens.material as { dispose: () => void },
-          ring.geometry,
-          ring.material as { dispose: () => void },
-          core.geometry,
-          core.material as { dispose: () => void },
-        );
-        updates.push((nowSec) => {
-          ring.rotation.z = nowSec * 0.16;
-          lens.rotation.z = nowSec * -0.08;
-        });
-      }
+              return {
+                phase: index * 0.37,
+                position,
+                visual: createPreviewNeutronStar({
+                  hostScene: scene,
+                  jetGeometry: planeGeometry,
+                  lensGeometry: circleGeometry,
+                  massAlpha,
+                  radius,
+                  seed: 80_000 + star.id * 137,
+                  sphereGeometry,
+                  tuning: tuning.visuals.neutronStars,
+                }),
+              };
+            });
+            const cameraPadding = presentation === "stage" ? 44 : 12;
+            requiredCameraHalfWidth += cameraPadding;
+            requiredCameraHalfHeight += cameraPadding;
+            registerDisposables(
+              disposables,
+              ...neutronStars.map((entry) => entry.visual),
+            );
+            updates.push((nowSec) => {
+              for (const neutronStar of neutronStars) {
+                neutronStar.visual.update(
+                  nowSec + neutronStar.phase,
+                  neutronStar.position,
+                );
+              }
+            });
+          }
 
-      if (options.itemId === "cannon") {
-        const planet = createPreviewPlanet({
-          hostScene: scene,
-          planetGeometry: sphereGeometry,
-          position: { x: -24 * focusScale, y: -8 * focusScale },
-          radius: terraPlanetRadius,
-          ringGeometry,
-          seed: 1,
-          visuals: terraVisuals,
-        });
-        registerDisposables(disposables, planet);
-
-        const metalMaterial = new MeshBasicNodeMaterial();
-        metalMaterial.colorNode = color("#7a8aa2").mul(0.78);
-        const accentMaterial = new MeshBasicNodeMaterial();
-        accentMaterial.colorNode = color(
-          tuning.visuals.rockets.light.hudAccent,
-        ).mul(0.95);
-        const flashMaterial = new MeshBasicMaterial({
-          color: tuning.visuals.rockets.light.hudAccent,
-          depthWrite: false,
-          transparent: true,
-          opacity: 0,
-          blending: AdditiveBlending,
-        });
-        const stemMesh = new Mesh(cannonStemGeometry, metalMaterial);
-        const breechMesh = new Mesh(cannonBreechGeometry, metalMaterial);
-        const barrelMesh = new Mesh(cannonBarrelGeometry, metalMaterial);
-        const bandMesh = new Mesh(cannonBarrelBandGeometry, accentMaterial);
-        const muzzleMesh = new Mesh(cannonMuzzleGeometry, accentMaterial);
-        const flashMesh = new Mesh(cannonFlashGeometry, flashMaterial);
-        const cannonGroup = new Group();
-        cannonGroup.position.set(-24 * focusScale, -8 * focusScale, 6);
-        cannonGroup.rotation.z = 0.22;
-        cannonGroup.add(
-          stemMesh,
-          breechMesh,
-          barrelMesh,
-          bandMesh,
-          muzzleMesh,
-          flashMesh,
-        );
-        scene.add(cannonGroup);
-        registerDisposables(
-          disposables,
-          metalMaterial,
-          accentMaterial,
-          flashMaterial,
-        );
-        const stemStart = terraPlanetRadius;
-        updates.push((nowSec) => {
-          const layout = getCannonWorldLayout(
-            tuning.visuals.cannon,
-            presentation === "card"
-              ? 0.38 * focusScale
-              : (stageWorldUnitsPerPixel ?? 1),
-          );
-          const breechStart = stemStart + layout.stemLenWorld;
-          const barrelStart = breechStart + layout.breechLenWorld;
-          const barrelEnd = barrelStart + layout.barrelLenWorld;
-          planet.update(nowSec);
-          stemMesh.position.set(stemStart + layout.stemLenWorld * 0.5, 0, 0);
-          stemMesh.scale.set(
-            layout.stemLenWorld,
-            layout.stemRadiusWorld,
-            layout.stemRadiusWorld,
-          );
-          breechMesh.position.set(
-            breechStart + layout.breechLenWorld * 0.5,
-            0,
-            0,
-          );
-          breechMesh.scale.set(
-            layout.breechLenWorld,
-            layout.breechWidthWorld,
-            layout.breechDepthWorld,
-          );
-          barrelMesh.position.set(
-            barrelStart + layout.barrelLenWorld * 0.5,
-            0,
-            0,
-          );
-          barrelMesh.scale.set(
-            layout.barrelLenWorld,
-            layout.barrelRadiusWorld,
-            layout.barrelRadiusWorld,
-          );
-          bandMesh.position.set(
-            barrelStart + layout.barrelLenWorld * CANNON_BAND_POSITION,
-            0,
-            0,
-          );
-          bandMesh.scale.set(
-            layout.bandLenWorld,
-            layout.bandRadiusWorld,
-            layout.bandRadiusWorld,
-          );
-          muzzleMesh.position.set(
-            barrelEnd - layout.muzzleLenWorld * 0.5,
-            0,
-            0,
-          );
-          muzzleMesh.scale.set(
-            layout.muzzleLenWorld,
-            layout.muzzleRadiusWorld,
-            layout.muzzleRadiusWorld,
-          );
-          const pulse = (Math.sin(nowSec * 6.4) + 1) * 0.5;
-          flashMaterial.opacity = 0.2 + pulse * 0.42;
-          flashMesh.position.set(
-            barrelEnd + layout.muzzleRadiusWorld * 0.4,
-            0,
-            0,
-          );
-          const flashRadius = layout.flashRadiusWorld * (0.74 + pulse * 0.36);
-          flashMesh.scale.set(flashRadius, flashRadius, flashRadius);
-        });
-      }
-
-      if (options.itemId === "foresight") {
-        const planet = createPreviewPlanet({
-          hostScene: scene,
-          planetGeometry: sphereGeometry,
-          position: { x: 0, y: 0 },
-          radius: terraPlanetRadius,
-          ringGeometry,
-          seed: 1,
-          visuals: terraVisuals,
-        });
-        registerDisposables(disposables, planet);
-        const foresightVisual = createForesightVisual();
-        scene.add(foresightVisual.line, foresightVisual.points);
-        registerDisposables(
-          disposables,
-          foresightVisual.lineGeometry,
-          foresightVisual.line.material as { dispose: () => void },
-          foresightVisual.pointGeometry,
-          foresightVisual.points.material as { dispose: () => void },
-        );
-        const { path: basePath, scale: pathScale } = createPreviewForesightPath(
-          presentation === "card"
-            ? { targetSpan: FORESIGHT_CARD_SPAN }
-            : undefined,
-        );
-        const visiblePath = clipForesightPathAtDistance(
-          basePath,
-          terraPlanetRadius +
-            tuning.visuals.abilities.foresight.leadGap * pathScale,
-        );
-        updatePreviewForesightVisual(foresightVisual, visiblePath);
-        updates.push((nowSec) => {
-          planet.update(nowSec);
-        });
-      }
-
-      if (options.itemId === "shield") {
-        const planet = createPreviewPlanet({
-          hostScene: scene,
-          planetGeometry: sphereGeometry,
-          position: { x: 0, y: 0 },
-          radius: terraPlanetRadius,
-          ringGeometry,
-          seed: 1,
-          visuals: terraVisuals,
-        });
-        registerDisposables(disposables, planet);
-        const {
-          shieldArcMaterial,
-          shieldArcMesh,
-          shieldArcOpacityUniform,
-          shieldPanelMaterial,
-          shieldPanelMesh,
-          shieldPanelOpacityUniform,
-          shieldCrestMaterial,
-          shieldCrestMesh,
-          shieldCrestOpacityUniform,
-          shieldGlowMaterial,
-          shieldGlowMesh,
-          shieldGlowOpacityUniform,
-          shieldGroup,
-        } = createShieldVisual({
-          arcDeg: tuning.gameplay.abilities.shield.arcDeg,
-          shieldColor: tuning.visuals.abilities.shieldColor,
-        });
-        scene.add(shieldGroup);
-        registerDisposables(
-          disposables,
-          shieldGlowMesh.geometry,
-          shieldArcMesh.geometry,
-          shieldPanelMesh.geometry,
-          shieldCrestMesh.geometry,
-          shieldGlowMaterial,
-          shieldArcMaterial,
-          shieldPanelMaterial,
-          shieldCrestMaterial,
-        );
-        updates.push((nowSec) => {
-          planet.update(nowSec);
-          const pulse = 1 + Math.sin(nowSec * 8.2) * 0.035;
-          shieldGroup.scale.set(
-            terraPlanetRadius * pulse,
-            terraPlanetRadius * pulse,
-            1,
-          );
-          shieldGroup.rotation.z = Math.sin(nowSec * 0.7) * 0.22;
-          shieldGlowOpacityUniform.value = 0.14 + Math.sin(nowSec * 9.4) * 0.03;
-          shieldArcOpacityUniform.value = 0.4 + Math.sin(nowSec * 7.6) * 0.05;
-          shieldPanelOpacityUniform.value = 0.5 + Math.sin(nowSec * 9.8) * 0.06;
-          shieldCrestOpacityUniform.value =
-            0.46 + Math.sin(nowSec * 10.6) * 0.06;
-        });
-      }
-
-      if (options.itemId === "boost") {
-        const planet = createPreviewPlanet({
-          hostScene: scene,
-          planetGeometry: sphereGeometry,
-          position: { x: 0, y: 0 },
-          radius: terraPlanetRadius,
-          ringGeometry,
-          seed: 1,
-          visuals: terraVisuals,
-        });
-        registerDisposables(disposables, planet);
-        const wake = createBoostWakeMaterial();
-        const wakeGeometry = new PlaneGeometry(1, 1);
-        wakeGeometry.translate(0.5, 0, 0);
-        const wakeMesh = new Mesh(wakeGeometry, wake.material);
-        wakeMesh.frustumCulled = false;
-        wakeMesh.renderOrder = 12;
-        wakeMesh.position.z = 2.2;
-        scene.add(wakeMesh);
-        const burstGeometry = new BufferGeometry();
-        const burstPositions = new Float32Array(18 * 3);
-        const burstOpacity = new Float32Array(18);
-        for (let index = 0; index < 18; index += 1) {
-          const angle = -0.35 + ((index % 6) - 2.5) * 0.11;
-          const row = Math.floor(index / 6);
-          const distance = 0.25 + row * 0.18 + (index % 2) * 0.04;
-          const offset = index * 3;
-          burstPositions[offset] = -distance;
-          burstPositions[offset + 1] = Math.sin(angle) * 0.22;
-          burstPositions[offset + 2] = 0;
-          burstOpacity[index] = 0.35 + row * 0.18;
-        }
-        burstGeometry.setAttribute(
-          "position",
-          new Float32BufferAttribute(burstPositions, 3),
-        );
-        burstGeometry.setAttribute(
-          "previewOpacity",
-          new Float32BufferAttribute(burstOpacity, 1),
-        );
-        const burstMaterial = createBoostBurstMaterial(
-          tuning.visuals.abilities.boostColor,
-        );
-        const burstPoints = new Points(burstGeometry, burstMaterial.material);
-        burstPoints.frustumCulled = false;
-        burstPoints.renderOrder = 13;
-        burstPoints.position.z = 2.3;
-        scene.add(burstPoints);
-        registerDisposables(
-          disposables,
-          wakeGeometry,
-          wake.material,
-          ...(wake.texture === null ? [] : [wake.texture]),
-          burstGeometry,
-          burstMaterial.material,
-        );
-        updates.push((nowSec) => {
-          planet.update(nowSec);
-          const cycleTimeSec = nowSec % BOOST_PREVIEW_CYCLE_SEC;
-          const burstActive = cycleTimeSec < BOOST_PREVIEW_ACTIVE_SEC;
-          const burstProgress = burstActive
-            ? clamp(cycleTimeSec / BOOST_PREVIEW_ACTIVE_SEC, 0, 1)
-            : 1;
-          const burstAlpha = burstActive ? 1 - burstProgress : 0;
-          const wakeLength = terraPlanetRadius * lerp(2.3, 4.9, burstProgress);
-          const wakeWidth = terraPlanetRadius * lerp(1.5, 0.82, burstProgress);
-          const wakeOffset =
-            terraPlanetRadius * lerp(0.46, 0.72, burstProgress);
-          const particleScale =
-            terraPlanetRadius * lerp(0.9, 1.45, burstProgress);
-          wakeMesh.visible = burstActive;
-          burstPoints.visible = burstActive;
-          burstMaterial.opacityUniform.value = burstAlpha;
-          wake.material.opacity = burstAlpha * lerp(1, 0.44, burstProgress);
-          wakeMesh.position.set(-wakeOffset, 0, 2.2);
-          wakeMesh.scale.set(wakeLength, wakeWidth, 1);
-          wakeMesh.rotation.z = Math.PI;
-          burstPoints.position.set(-terraPlanetRadius * 0.38, 0, 2.3);
-          burstPoints.scale.set(particleScale, particleScale, 1);
-        });
-      }
-
-      if (options.itemId === "gravityPulse") {
-        const planet = createPreviewPlanet({
-          hostScene: scene,
-          planetGeometry: sphereGeometry,
-          position: { x: 0, y: 0 },
-          radius: terraPlanetRadius,
-          ringGeometry,
-          seed: 1,
-          visuals: terraVisuals,
-        });
-        registerDisposables(disposables, planet);
-        const wildcardColor = tuning.visuals.abilities.wildcardColor;
-        const gravityPulseRadius =
-          tuning.gameplay.abilities.gravityPulse.radius;
-        const pulseCoreGeometry = new CircleGeometry(1, 64);
-        const pulseCoreMaterial = new MeshBasicMaterial({
-          blending: AdditiveBlending,
-          color: tintColor(wildcardColor, 0.08, 0.18, 0.04),
-          depthWrite: false,
-          opacity: 0.2,
-          transparent: true,
-        });
-        const pulseCoreMesh = new Mesh(pulseCoreGeometry, pulseCoreMaterial);
-        pulseCoreMesh.position.z = 1.95;
-        scene.add(pulseCoreMesh);
-        const pulseRingGeometry = new RingGeometry(0.9, 1, 96);
-        const pulseRingMaterial = new MeshBasicMaterial({
-          blending: AdditiveBlending,
-          color: wildcardColor,
-          depthWrite: false,
-          opacity: 0,
-          transparent: true,
-        });
-        const pulseRingMesh = new Mesh(pulseRingGeometry, pulseRingMaterial);
-        pulseRingMesh.position.z = 2.08;
-        scene.add(pulseRingMesh);
-        const pulseEchoMaterial = new MeshBasicMaterial({
-          blending: AdditiveBlending,
-          color: tintColor(wildcardColor, -0.04, 0.08, 0.08),
-          depthWrite: false,
-          opacity: 0,
-          transparent: true,
-        });
-        const pulseEchoMesh = new Mesh(pulseRingGeometry, pulseEchoMaterial);
-        pulseEchoMesh.position.z = 2.04;
-        scene.add(pulseEchoMesh);
-        const helperRingGeometry =
-          presentation === "stage" ? new RingGeometry(0.992, 1, 160) : null;
-        const helperRingMaterial =
-          helperRingGeometry === null
-            ? null
-            : new MeshBasicMaterial({
-                color: tintColor(wildcardColor, -0.03, 0.02, 0.18),
-                depthWrite: false,
-                opacity: 0.18,
-                transparent: true,
+          if (options.itemId === "planets") {
+            const stageLayout =
+              presentation === "stage"
+                ? createPlanetStagePreviewLayout(tuning)
+                : null;
+            if (stageLayout !== null) {
+              requiredCameraHalfHeight = stageLayout.requiredHalfHeight;
+              requiredCameraHalfWidth = stageLayout.requiredHalfWidth;
+              stageLabelOverlay = createPlanetStagePreviewLabelOverlay({
+                hostElement,
+                entries: stageLayout.entries,
               });
-        const helperRingMesh =
-          helperRingGeometry === null || helperRingMaterial === null
-            ? null
-            : new Mesh(helperRingGeometry, helperRingMaterial);
-        if (helperRingMesh !== null) {
-          helperRingMesh.position.z = 1.72;
-          scene.add(helperRingMesh);
-          requiredCameraHalfHeight = Math.max(
-            requiredCameraHalfHeight,
-            gravityPulseRadius * 1.12,
-          );
-          requiredCameraHalfWidth = Math.max(
-            requiredCameraHalfWidth,
-            gravityPulseRadius * 1.12,
-          );
-        }
-        registerDisposables(
-          disposables,
-          pulseCoreGeometry,
-          pulseCoreMaterial,
-          pulseRingGeometry,
-          pulseRingMaterial,
-          pulseEchoMaterial,
-          ...(helperRingGeometry === null || helperRingMaterial === null
-            ? []
-            : [helperRingGeometry, helperRingMaterial]),
-        );
-        updates.push((nowSec) => {
-          planet.update(nowSec);
-          const cycleSec = nowSec % GRAVITY_PULSE_PREVIEW_CYCLE_SEC;
-          const primaryProgress = clamp(
-            cycleSec / GRAVITY_PULSE_PREVIEW_CYCLE_SEC,
-            0,
-            1,
-          );
-          const echoProgress = clamp(
-            ((cycleSec + GRAVITY_PULSE_PREVIEW_CYCLE_SEC * 0.38) %
-              GRAVITY_PULSE_PREVIEW_CYCLE_SEC) /
-              GRAVITY_PULSE_PREVIEW_CYCLE_SEC,
-            0,
-            1,
-          );
-          const corePulse = 0.5 + Math.sin(nowSec * 7.4) * 0.5;
-          const primaryScale =
-            presentation === "stage"
-              ? lerp(
-                  terraPlanetRadius * 1.1,
+              registerDisposables(disposables, stageLabelOverlay);
+            }
+            const planetEntries = ARCHETYPE_IDS.map((archetype, index) => {
+              const visuals = tuning.visuals.planets.archetypes[archetype];
+              const stageEntry = stageLayout?.entries[index] ?? null;
+              const position =
+                stageEntry?.position ??
+                getPlanetGridPosition(
+                  index,
+                  ARCHETYPE_IDS.length,
+                  PLANETS_CARD_HORIZONTAL_SPACING * focusScale,
+                  PLANETS_CARD_VERTICAL_SPACING * focusScale,
+                );
+              const radius =
+                stageEntry?.radius ??
+                clamp(
+                  planetRadius * visuals.bodyScale * PLANETS_CARD_RADIUS_SCALE,
+                  PLANETS_CARD_MIN_RADIUS,
+                  PLANETS_CARD_MAX_RADIUS,
+                );
+              const planet = createPreviewPlanet({
+                hostScene: scene,
+                planetGeometry: sphereGeometry,
+                position,
+                radius,
+                ringGeometry,
+                seed: index + 1,
+                visuals,
+              });
+              registerDisposables(disposables, planet);
+              return { planet, phase: index * 0.5 };
+            });
+            updates.push((nowSec) => {
+              for (const entry of planetEntries) {
+                entry.planet.update(nowSec + entry.phase);
+              }
+            });
+          }
+
+          if (options.itemId === "suns") {
+            const stageLayout =
+              presentation === "stage"
+                ? createSunStagePreviewLayout(tuning, sunRadius)
+                : null;
+            if (stageLayout !== null) {
+              requiredCameraHalfHeight = stageLayout.requiredHalfHeight;
+              requiredCameraHalfWidth = stageLayout.requiredHalfWidth;
+              stageLabelOverlay = createSunStagePreviewLabelOverlay({
+                hostElement,
+                entries: stageLayout.entries,
+              });
+              registerDisposables(disposables, stageLabelOverlay);
+            }
+            const sunEntries = tuning.visuals.suns.profiles.map(
+              (profile, index) => {
+                const stageEntry = stageLayout?.entries[index] ?? null;
+                const position =
+                  stageEntry?.position ??
+                  getPlanetGridPosition(
+                    index,
+                    tuning.visuals.suns.profiles.length,
+                    SUNS_CARD_HORIZONTAL_SPACING * focusScale,
+                    SUNS_CARD_VERTICAL_SPACING * focusScale,
+                  );
+                const defaultSun =
+                  DEFAULT_ORBIT_PRESET.suns[
+                    index % DEFAULT_ORBIT_PRESET.suns.length
+                  ]!;
+                const radius =
+                  stageEntry?.radius ??
+                  clamp(
+                    sunRadius *
+                      (tuning.gameplay.orbits.suns[index]!.radius /
+                        Math.max(defaultSun.radius, 1)) *
+                      SUNS_CARD_RADIUS_SCALE,
+                    SUNS_CARD_MIN_RADIUS,
+                    SUNS_CARD_MAX_RADIUS,
+                  );
+                const sunSeed =
+                  DEFAULT_ORBIT_PRESET.suns[
+                    index % DEFAULT_ORBIT_PRESET.suns.length
+                  ]!;
+                const sun = createPreviewSun({
+                  color: profile.color,
+                  coreBrightness: profile.coreBrightness,
+                  glowColor: profile.glowColor,
+                  glowScale: profile.glowScale,
+                  glowStrength: profile.glowBrightness,
+                  hostScene: scene,
+                  radius,
+                  seed: sunSeed.id,
+                  sunGeometry: sphereGeometry,
+                  warpGeometry,
+                  warpScale: profile.warpScale,
+                });
+                registerDisposables(disposables, sun);
+                return {
+                  phase: index * 0.43,
+                  position,
+                  sun,
+                };
+              },
+            );
+            updates.push((nowSec) => {
+              for (const entry of sunEntries) {
+                entry.sun.update(nowSec + entry.phase, entry.position);
+              }
+            });
+          }
+
+          if (options.itemId === "cache") {
+            const stageLayout =
+              presentation === "stage"
+                ? createCacheStagePreviewLayout(tuning)
+                : null;
+            if (stageLayout !== null) {
+              requiredCameraHalfHeight = Math.max(
+                requiredCameraHalfHeight,
+                stageLayout.requiredHalfHeight,
+              );
+              requiredCameraHalfWidth = Math.max(
+                requiredCameraHalfWidth,
+                stageLayout.requiredHalfWidth,
+              );
+            }
+            const cacheEntries = stageLayout?.entries.map((entry, index) => {
+              const cache = createPreviewCache({
+                hostElement,
+                hostScene: scene,
+                iconKey: entry.iconKey,
+                presentation,
+              });
+              registerDisposables(disposables, cache);
+              return {
+                cache,
+                phase: index * 0.37,
+                position: entry.position,
+              };
+            }) ?? [
+              {
+                cache: createPreviewCache({
+                  hostElement,
+                  hostScene: scene,
+                  presentation,
+                }),
+                phase: 0,
+                position: { x: 0, y: 0 } satisfies Vec2,
+              },
+            ];
+            if (stageLayout === null) {
+              registerDisposables(disposables, cacheEntries[0]!.cache);
+            }
+            updates.push((nowSec) => {
+              for (const entry of cacheEntries) {
+                entry.cache.update(nowSec + entry.phase, entry.position);
+              }
+            });
+          }
+
+          const rocketKind = getRocketKindFromItemId(options.itemId);
+          if (rocketKind !== null) {
+            const rocket = createPreviewRocket({
+              hostScene: scene,
+              hostElement,
+              itemId: options.itemId,
+              planeGeometry,
+              presentation,
+              rocketBodyGeometry,
+              rocketCanardGeometry,
+              rocketEngineGeometry,
+              rocketFinGeometry,
+              rocketNoseGeometry,
+              rocketSensorGeometry,
+            });
+            registerDisposables(disposables, rocket);
+            updates.push((nowSec) => rocket.update(nowSec, { x: 0, y: 0 }));
+          }
+
+          if (options.itemId === "hud") {
+            const leftMaterial = createHudPanelMaterial(
+              tuning.visuals.rockets.light.hudAccent,
+              0.22,
+            );
+            const centerMaterial = createHudPanelMaterial(
+              tuning.visuals.abilities.foresightColor,
+              0.18,
+            );
+            const rightMaterial = createHudPanelMaterial(
+              tuning.visuals.abilities.shieldColor,
+              0.2,
+            );
+            const panelGeometry = new PlaneGeometry(1, 1);
+            const leftPanel = new Mesh(panelGeometry, leftMaterial);
+            const centerPanel = new Mesh(panelGeometry, centerMaterial);
+            const rightPanel = new Mesh(panelGeometry, rightMaterial);
+            leftPanel.renderOrder = 4;
+            centerPanel.renderOrder = 5;
+            rightPanel.renderOrder = 6;
+            scene.add(leftPanel, centerPanel, rightPanel);
+            registerDisposables(
+              disposables,
+              panelGeometry,
+              leftMaterial,
+              centerMaterial,
+              rightMaterial,
+            );
+            updates.push((nowSec) => {
+              const pulse = 1 + Math.sin(nowSec * 2.8) * 0.04;
+              leftPanel.position.set(-22 * focusScale, -4 * focusScale, 0.8);
+              leftPanel.scale.set(26 * focusScale, 12 * focusScale, 1);
+              leftPanel.rotation.z = -0.04;
+              leftMaterial.opacity = 0.2 + Math.sin(nowSec * 1.8) * 0.02;
+
+              centerPanel.position.set(0, 13 * focusScale, 0.7);
+              centerPanel.scale.set(24 * focusScale, 8 * focusScale * pulse, 1);
+              centerMaterial.opacity = 0.16 + Math.sin(nowSec * 2.2) * 0.02;
+
+              rightPanel.position.set(21 * focusScale, -8 * focusScale, 0.9);
+              rightPanel.scale.set(18 * focusScale, 10 * focusScale, 1);
+              rightPanel.rotation.z = 0.06;
+              rightMaterial.opacity = 0.18 + Math.cos(nowSec * 2.1) * 0.025;
+            });
+          }
+
+          if (options.itemId === "blackHole") {
+            const blackHoleRadiusTarget =
+              presentation === "card"
+                ? BLACK_HOLE_CARD_RADIUS
+                : BLACK_HOLE_STAGE_RADIUS;
+            const blackHoleScale =
+              blackHoleRadiusTarget /
+              Math.max(tuning.visuals.blackHole.lensRadius, 1);
+            const blackHoleGroup = new Group();
+            blackHoleGroup.position.set(0, 0, 4);
+            const lens = new Mesh(
+              circleGeometry,
+              createBlackHoleLensMaterial(),
+            );
+            const ring = new Mesh(
+              new RingGeometry(0.42, 1, 96),
+              createBlackHoleRingMaterial(),
+            );
+            const core = new Mesh(
+              circleGeometry,
+              createBlackHoleCoreMaterial(),
+            );
+            lens.scale.set(
+              tuning.visuals.blackHole.lensRadius * blackHoleScale,
+              tuning.visuals.blackHole.lensRadius * blackHoleScale,
+              1,
+            );
+            ring.scale.set(
+              tuning.visuals.blackHole.ringRadius * blackHoleScale,
+              tuning.visuals.blackHole.ringRadius * blackHoleScale,
+              1,
+            );
+            core.scale.set(
+              tuning.visuals.blackHole.coreRadius * blackHoleScale,
+              tuning.visuals.blackHole.coreRadius * blackHoleScale,
+              1,
+            );
+            lens.position.z = -2;
+            lens.renderOrder = 4;
+            ring.renderOrder = 5;
+            core.renderOrder = 6;
+            blackHoleGroup.add(lens, ring, core);
+            scene.add(blackHoleGroup);
+            registerDisposables(
+              disposables,
+              lens.geometry,
+              lens.material as { dispose: () => void },
+              ring.geometry,
+              ring.material as { dispose: () => void },
+              core.geometry,
+              core.material as { dispose: () => void },
+            );
+            updates.push((nowSec) => {
+              ring.rotation.z = nowSec * 0.16;
+              lens.rotation.z = nowSec * -0.08;
+            });
+          }
+
+          if (options.itemId === "cannon") {
+            const planet = createPreviewPlanet({
+              hostScene: scene,
+              planetGeometry: sphereGeometry,
+              position: { x: -24 * focusScale, y: -8 * focusScale },
+              radius: terraPlanetRadius,
+              ringGeometry,
+              seed: 1,
+              visuals: terraVisuals,
+            });
+            registerDisposables(disposables, planet);
+
+            const metalMaterial = new MeshBasicNodeMaterial();
+            metalMaterial.colorNode = color("#7a8aa2").mul(0.78);
+            const accentMaterial = new MeshBasicNodeMaterial();
+            accentMaterial.colorNode = color(
+              tuning.visuals.rockets.light.hudAccent,
+            ).mul(0.95);
+            const flashMaterial = new MeshBasicMaterial({
+              color: tuning.visuals.rockets.light.hudAccent,
+              depthWrite: false,
+              transparent: true,
+              opacity: 0,
+              blending: AdditiveBlending,
+            });
+            const stemMesh = new Mesh(cannonStemGeometry, metalMaterial);
+            const breechMesh = new Mesh(cannonBreechGeometry, metalMaterial);
+            const barrelMesh = new Mesh(cannonBarrelGeometry, metalMaterial);
+            const bandMesh = new Mesh(cannonBarrelBandGeometry, accentMaterial);
+            const muzzleMesh = new Mesh(cannonMuzzleGeometry, accentMaterial);
+            const flashMesh = new Mesh(cannonFlashGeometry, flashMaterial);
+            const cannonGroup = new Group();
+            cannonGroup.position.set(-24 * focusScale, -8 * focusScale, 6);
+            cannonGroup.rotation.z = 0.22;
+            cannonGroup.add(
+              stemMesh,
+              breechMesh,
+              barrelMesh,
+              bandMesh,
+              muzzleMesh,
+              flashMesh,
+            );
+            scene.add(cannonGroup);
+            registerDisposables(
+              disposables,
+              metalMaterial,
+              accentMaterial,
+              flashMaterial,
+            );
+            const stemStart = terraPlanetRadius;
+            updates.push((nowSec) => {
+              const layout = getCannonWorldLayout(
+                tuning.visuals.cannon,
+                presentation === "card"
+                  ? 0.38 * focusScale
+                  : (stageWorldUnitsPerPixel ?? 1),
+              );
+              const breechStart = stemStart + layout.stemLenWorld;
+              const barrelStart = breechStart + layout.breechLenWorld;
+              const barrelEnd = barrelStart + layout.barrelLenWorld;
+              planet.update(nowSec);
+              stemMesh.position.set(
+                stemStart + layout.stemLenWorld * 0.5,
+                0,
+                0,
+              );
+              stemMesh.scale.set(
+                layout.stemLenWorld,
+                layout.stemRadiusWorld,
+                layout.stemRadiusWorld,
+              );
+              breechMesh.position.set(
+                breechStart + layout.breechLenWorld * 0.5,
+                0,
+                0,
+              );
+              breechMesh.scale.set(
+                layout.breechLenWorld,
+                layout.breechWidthWorld,
+                layout.breechDepthWorld,
+              );
+              barrelMesh.position.set(
+                barrelStart + layout.barrelLenWorld * 0.5,
+                0,
+                0,
+              );
+              barrelMesh.scale.set(
+                layout.barrelLenWorld,
+                layout.barrelRadiusWorld,
+                layout.barrelRadiusWorld,
+              );
+              bandMesh.position.set(
+                barrelStart + layout.barrelLenWorld * CANNON_BAND_POSITION,
+                0,
+                0,
+              );
+              bandMesh.scale.set(
+                layout.bandLenWorld,
+                layout.bandRadiusWorld,
+                layout.bandRadiusWorld,
+              );
+              muzzleMesh.position.set(
+                barrelEnd - layout.muzzleLenWorld * 0.5,
+                0,
+                0,
+              );
+              muzzleMesh.scale.set(
+                layout.muzzleLenWorld,
+                layout.muzzleRadiusWorld,
+                layout.muzzleRadiusWorld,
+              );
+              const pulse = (Math.sin(nowSec * 6.4) + 1) * 0.5;
+              flashMaterial.opacity = 0.2 + pulse * 0.42;
+              flashMesh.position.set(
+                barrelEnd + layout.muzzleRadiusWorld * 0.4,
+                0,
+                0,
+              );
+              const flashRadius =
+                layout.flashRadiusWorld * (0.74 + pulse * 0.36);
+              flashMesh.scale.set(flashRadius, flashRadius, flashRadius);
+            });
+          }
+
+          if (options.itemId === "foresight") {
+            const planet = createPreviewPlanet({
+              hostScene: scene,
+              planetGeometry: sphereGeometry,
+              position: { x: 0, y: 0 },
+              radius: terraPlanetRadius,
+              ringGeometry,
+              seed: 1,
+              visuals: terraVisuals,
+            });
+            registerDisposables(disposables, planet);
+            const foresightVisual = createForesightVisual();
+            scene.add(foresightVisual.line, foresightVisual.points);
+            registerDisposables(
+              disposables,
+              foresightVisual.lineGeometry,
+              foresightVisual.line.material as { dispose: () => void },
+              foresightVisual.pointGeometry,
+              foresightVisual.points.material as { dispose: () => void },
+            );
+            const { path: basePath, scale: pathScale } =
+              createPreviewForesightPath(
+                presentation === "card"
+                  ? { targetSpan: FORESIGHT_CARD_SPAN }
+                  : undefined,
+              );
+            const visiblePath = clipForesightPathAtDistance(
+              basePath,
+              terraPlanetRadius +
+                tuning.visuals.abilities.foresight.leadGap * pathScale,
+            );
+            updatePreviewForesightVisual(foresightVisual, visiblePath);
+            updates.push((nowSec) => {
+              planet.update(nowSec);
+            });
+          }
+
+          if (options.itemId === "shield") {
+            const planet = createPreviewPlanet({
+              hostScene: scene,
+              planetGeometry: sphereGeometry,
+              position: { x: 0, y: 0 },
+              radius: terraPlanetRadius,
+              ringGeometry,
+              seed: 1,
+              visuals: terraVisuals,
+            });
+            registerDisposables(disposables, planet);
+            const {
+              shieldArcMaterial,
+              shieldArcMesh,
+              shieldArcOpacityUniform,
+              shieldPanelMaterial,
+              shieldPanelMesh,
+              shieldPanelOpacityUniform,
+              shieldCrestMaterial,
+              shieldCrestMesh,
+              shieldCrestOpacityUniform,
+              shieldGlowMaterial,
+              shieldGlowMesh,
+              shieldGlowOpacityUniform,
+              shieldGroup,
+            } = createShieldVisual({
+              arcDeg: tuning.gameplay.abilities.shield.arcDeg,
+              shieldColor: tuning.visuals.abilities.shieldColor,
+            });
+            scene.add(shieldGroup);
+            registerDisposables(
+              disposables,
+              shieldGlowMesh.geometry,
+              shieldArcMesh.geometry,
+              shieldPanelMesh.geometry,
+              shieldCrestMesh.geometry,
+              shieldGlowMaterial,
+              shieldArcMaterial,
+              shieldPanelMaterial,
+              shieldCrestMaterial,
+            );
+            updates.push((nowSec) => {
+              planet.update(nowSec);
+              const pulse = 1 + Math.sin(nowSec * 8.2) * 0.035;
+              shieldGroup.scale.set(
+                terraPlanetRadius * pulse,
+                terraPlanetRadius * pulse,
+                1,
+              );
+              shieldGroup.rotation.z = Math.sin(nowSec * 0.7) * 0.22;
+              shieldGlowOpacityUniform.value =
+                0.14 + Math.sin(nowSec * 9.4) * 0.03;
+              shieldArcOpacityUniform.value =
+                0.4 + Math.sin(nowSec * 7.6) * 0.05;
+              shieldPanelOpacityUniform.value =
+                0.5 + Math.sin(nowSec * 9.8) * 0.06;
+              shieldCrestOpacityUniform.value =
+                0.46 + Math.sin(nowSec * 10.6) * 0.06;
+            });
+          }
+
+          if (options.itemId === "boost") {
+            const planet = createPreviewPlanet({
+              hostScene: scene,
+              planetGeometry: sphereGeometry,
+              position: { x: 0, y: 0 },
+              radius: terraPlanetRadius,
+              ringGeometry,
+              seed: 1,
+              visuals: terraVisuals,
+            });
+            registerDisposables(disposables, planet);
+            const wake = createBoostWakeMaterial();
+            const wakeGeometry = new PlaneGeometry(1, 1);
+            wakeGeometry.translate(0.5, 0, 0);
+            const wakeMesh = new Mesh(wakeGeometry, wake.material);
+            wakeMesh.frustumCulled = false;
+            wakeMesh.renderOrder = 12;
+            wakeMesh.position.z = 2.2;
+            scene.add(wakeMesh);
+            const burstGeometry = new BufferGeometry();
+            const burstPositions = new Float32Array(18 * 3);
+            const burstOpacity = new Float32Array(18);
+            for (let index = 0; index < 18; index += 1) {
+              const angle = -0.35 + ((index % 6) - 2.5) * 0.11;
+              const row = Math.floor(index / 6);
+              const distance = 0.25 + row * 0.18 + (index % 2) * 0.04;
+              const offset = index * 3;
+              burstPositions[offset] = -distance;
+              burstPositions[offset + 1] = Math.sin(angle) * 0.22;
+              burstPositions[offset + 2] = 0;
+              burstOpacity[index] = 0.35 + row * 0.18;
+            }
+            burstGeometry.setAttribute(
+              "position",
+              new Float32BufferAttribute(burstPositions, 3),
+            );
+            burstGeometry.setAttribute(
+              "previewOpacity",
+              new Float32BufferAttribute(burstOpacity, 1),
+            );
+            const burstMaterial = createBoostBurstMaterial(
+              tuning.visuals.abilities.boostColor,
+            );
+            const burstPoints = new Points(
+              burstGeometry,
+              burstMaterial.material,
+            );
+            burstPoints.frustumCulled = false;
+            burstPoints.renderOrder = 13;
+            burstPoints.position.z = 2.3;
+            scene.add(burstPoints);
+            registerDisposables(
+              disposables,
+              wakeGeometry,
+              wake.material,
+              ...(wake.texture === null ? [] : [wake.texture]),
+              burstGeometry,
+              burstMaterial.material,
+            );
+            updates.push((nowSec) => {
+              planet.update(nowSec);
+              const cycleTimeSec = nowSec % BOOST_PREVIEW_CYCLE_SEC;
+              const burstActive = cycleTimeSec < BOOST_PREVIEW_ACTIVE_SEC;
+              const burstProgress = burstActive
+                ? clamp(cycleTimeSec / BOOST_PREVIEW_ACTIVE_SEC, 0, 1)
+                : 1;
+              const burstAlpha = burstActive ? 1 - burstProgress : 0;
+              const wakeLength =
+                terraPlanetRadius * lerp(2.3, 4.9, burstProgress);
+              const wakeWidth =
+                terraPlanetRadius * lerp(1.5, 0.82, burstProgress);
+              const wakeOffset =
+                terraPlanetRadius * lerp(0.46, 0.72, burstProgress);
+              const particleScale =
+                terraPlanetRadius * lerp(0.9, 1.45, burstProgress);
+              wakeMesh.visible = burstActive;
+              burstPoints.visible = burstActive;
+              burstMaterial.opacityUniform.value = burstAlpha;
+              wake.material.opacity = burstAlpha * lerp(1, 0.44, burstProgress);
+              wakeMesh.position.set(-wakeOffset, 0, 2.2);
+              wakeMesh.scale.set(wakeLength, wakeWidth, 1);
+              wakeMesh.rotation.z = Math.PI;
+              burstPoints.position.set(-terraPlanetRadius * 0.38, 0, 2.3);
+              burstPoints.scale.set(particleScale, particleScale, 1);
+            });
+          }
+
+          if (options.itemId === "gravityPulse") {
+            const planet = createPreviewPlanet({
+              hostScene: scene,
+              planetGeometry: sphereGeometry,
+              position: { x: 0, y: 0 },
+              radius: terraPlanetRadius,
+              ringGeometry,
+              seed: 1,
+              visuals: terraVisuals,
+            });
+            registerDisposables(disposables, planet);
+            const wildcardColor = tuning.visuals.abilities.wildcardColor;
+            const gravityPulseRadius =
+              tuning.gameplay.abilities.gravityPulse.radius;
+            const pulseCoreGeometry = new CircleGeometry(1, 64);
+            const pulseCoreMaterial = new MeshBasicMaterial({
+              blending: AdditiveBlending,
+              color: tintColor(wildcardColor, 0.08, 0.18, 0.04),
+              depthWrite: false,
+              opacity: 0.2,
+              transparent: true,
+            });
+            const pulseCoreMesh = new Mesh(
+              pulseCoreGeometry,
+              pulseCoreMaterial,
+            );
+            pulseCoreMesh.position.z = 1.95;
+            scene.add(pulseCoreMesh);
+            const pulseRingGeometry = new RingGeometry(0.9, 1, 96);
+            const pulseRingMaterial = new MeshBasicMaterial({
+              blending: AdditiveBlending,
+              color: wildcardColor,
+              depthWrite: false,
+              opacity: 0,
+              transparent: true,
+            });
+            const pulseRingMesh = new Mesh(
+              pulseRingGeometry,
+              pulseRingMaterial,
+            );
+            pulseRingMesh.position.z = 2.08;
+            scene.add(pulseRingMesh);
+            const pulseEchoMaterial = new MeshBasicMaterial({
+              blending: AdditiveBlending,
+              color: tintColor(wildcardColor, -0.04, 0.08, 0.08),
+              depthWrite: false,
+              opacity: 0,
+              transparent: true,
+            });
+            const pulseEchoMesh = new Mesh(
+              pulseRingGeometry,
+              pulseEchoMaterial,
+            );
+            pulseEchoMesh.position.z = 2.04;
+            scene.add(pulseEchoMesh);
+            const helperRingGeometry =
+              presentation === "stage" ? new RingGeometry(0.992, 1, 160) : null;
+            const helperRingMaterial =
+              helperRingGeometry === null
+                ? null
+                : new MeshBasicMaterial({
+                    color: tintColor(wildcardColor, -0.03, 0.02, 0.18),
+                    depthWrite: false,
+                    opacity: 0.18,
+                    transparent: true,
+                  });
+            const helperRingMesh =
+              helperRingGeometry === null || helperRingMaterial === null
+                ? null
+                : new Mesh(helperRingGeometry, helperRingMaterial);
+            if (helperRingMesh !== null) {
+              helperRingMesh.position.z = 1.72;
+              scene.add(helperRingMesh);
+              requiredCameraHalfHeight = Math.max(
+                requiredCameraHalfHeight,
+                gravityPulseRadius * 1.12,
+              );
+              requiredCameraHalfWidth = Math.max(
+                requiredCameraHalfWidth,
+                gravityPulseRadius * 1.12,
+              );
+            }
+            registerDisposables(
+              disposables,
+              pulseCoreGeometry,
+              pulseCoreMaterial,
+              pulseRingGeometry,
+              pulseRingMaterial,
+              pulseEchoMaterial,
+              ...(helperRingGeometry === null || helperRingMaterial === null
+                ? []
+                : [helperRingGeometry, helperRingMaterial]),
+            );
+            updates.push((nowSec) => {
+              planet.update(nowSec);
+              const cycleSec = nowSec % GRAVITY_PULSE_PREVIEW_CYCLE_SEC;
+              const primaryProgress = clamp(
+                cycleSec / GRAVITY_PULSE_PREVIEW_CYCLE_SEC,
+                0,
+                1,
+              );
+              const echoProgress = clamp(
+                ((cycleSec + GRAVITY_PULSE_PREVIEW_CYCLE_SEC * 0.38) %
+                  GRAVITY_PULSE_PREVIEW_CYCLE_SEC) /
+                  GRAVITY_PULSE_PREVIEW_CYCLE_SEC,
+                0,
+                1,
+              );
+              const corePulse = 0.5 + Math.sin(nowSec * 7.4) * 0.5;
+              const primaryScale =
+                presentation === "stage"
+                  ? lerp(
+                      terraPlanetRadius * 1.1,
+                      gravityPulseRadius,
+                      primaryProgress,
+                    )
+                  : terraPlanetRadius * lerp(1.1, 4.9, primaryProgress);
+              const echoScale =
+                presentation === "stage"
+                  ? lerp(
+                      terraPlanetRadius * 1.3,
+                      gravityPulseRadius * 0.84,
+                      echoProgress,
+                    )
+                  : terraPlanetRadius * lerp(1.3, 4.2, echoProgress);
+              pulseCoreMesh.scale.set(
+                terraPlanetRadius * lerp(1.04, 1.34, corePulse),
+                terraPlanetRadius * lerp(1.04, 1.34, corePulse),
+                1,
+              );
+              pulseCoreMaterial.opacity = 0.12 + corePulse * 0.12;
+              pulseRingMesh.scale.set(primaryScale, primaryScale, 1);
+              pulseRingMaterial.opacity = (1 - primaryProgress) ** 1.6 * 0.72;
+              pulseEchoMesh.scale.set(echoScale, echoScale, 1);
+              pulseEchoMaterial.opacity = (1 - echoProgress) ** 1.8 * 0.4;
+              if (helperRingMesh !== null) {
+                helperRingMesh.scale.set(
                   gravityPulseRadius,
-                  primaryProgress,
-                )
-              : terraPlanetRadius * lerp(1.1, 4.9, primaryProgress);
-          const echoScale =
-            presentation === "stage"
-              ? lerp(
-                  terraPlanetRadius * 1.3,
-                  gravityPulseRadius * 0.84,
-                  echoProgress,
-                )
-              : terraPlanetRadius * lerp(1.3, 4.2, echoProgress);
-          pulseCoreMesh.scale.set(
-            terraPlanetRadius * lerp(1.04, 1.34, corePulse),
-            terraPlanetRadius * lerp(1.04, 1.34, corePulse),
-            1,
-          );
-          pulseCoreMaterial.opacity = 0.12 + corePulse * 0.12;
-          pulseRingMesh.scale.set(primaryScale, primaryScale, 1);
-          pulseRingMaterial.opacity = (1 - primaryProgress) ** 1.6 * 0.72;
-          pulseEchoMesh.scale.set(echoScale, echoScale, 1);
-          pulseEchoMaterial.opacity = (1 - echoProgress) ** 1.8 * 0.4;
-          if (helperRingMesh !== null) {
-            helperRingMesh.scale.set(gravityPulseRadius, gravityPulseRadius, 1);
+                  gravityPulseRadius,
+                  1,
+                );
+              }
+            });
           }
-        });
-      }
 
-      if (options.itemId === "cloak") {
-        const planet = createPreviewPlanet({
-          hostScene: scene,
-          planetGeometry: sphereGeometry,
-          position: { x: 0, y: 0 },
-          radius: terraPlanetRadius,
-          ringGeometry,
-          seed: 1,
-          visuals: terraVisuals,
-        });
-        registerDisposables(disposables, planet);
-        const wildcardColor = tuning.visuals.abilities.wildcardColor;
-        const cloakVeilGeometry = new CircleGeometry(1, 64);
-        const cloakVeilMaterial = new MeshBasicMaterial({
-          blending: AdditiveBlending,
-          color: tintColor(wildcardColor, -0.18, 0.04, 0.1),
-          depthWrite: false,
-          opacity: 0.18,
-          transparent: true,
-        });
-        const cloakVeilMesh = new Mesh(cloakVeilGeometry, cloakVeilMaterial);
-        cloakVeilMesh.position.z = 1.92;
-        scene.add(cloakVeilMesh);
-        const cloakRingGeometry = new RingGeometry(0.84, 1, 80);
-        const cloakRingMaterial = new MeshBasicMaterial({
-          blending: AdditiveBlending,
-          color: tintColor(wildcardColor, 0.02, 0.14, 0.06),
-          depthWrite: false,
-          opacity: 0.28,
-          transparent: true,
-        });
-        const cloakRingMesh = new Mesh(cloakRingGeometry, cloakRingMaterial);
-        cloakRingMesh.position.z = 2.04;
-        scene.add(cloakRingMesh);
-        const cloakSheenMaterial = new MeshBasicMaterial({
-          blending: AdditiveBlending,
-          color: tintColor(wildcardColor, 0.12, 0.22, -0.02),
-          depthWrite: false,
-          opacity: 0.18,
-          transparent: true,
-        });
-        const cloakSheenMesh = new Mesh(cloakVeilGeometry, cloakSheenMaterial);
-        cloakSheenMesh.position.z = 2.14;
-        scene.add(cloakSheenMesh);
-        registerDisposables(
-          disposables,
-          cloakVeilGeometry,
-          cloakVeilMaterial,
-          cloakRingGeometry,
-          cloakRingMaterial,
-          cloakSheenMaterial,
-        );
-        updates.push((nowSec) => {
-          planet.update(nowSec);
-          planet.setOpacity(CLOAK_PLANET_TARGET_OPACITY);
-          const shimmer = 0.5 + Math.sin(nowSec * 2.6) * 0.5;
-          const driftX = Math.sin(nowSec * 1.3) * terraPlanetRadius * 0.08;
-          const driftY = Math.cos(nowSec * 1.7) * terraPlanetRadius * 0.05;
-          cloakVeilMesh.scale.set(
-            terraPlanetRadius * lerp(1.18, 1.28, shimmer),
-            terraPlanetRadius * lerp(1.18, 1.28, shimmer),
-            1,
-          );
-          cloakVeilMaterial.opacity = 0.12 + shimmer * 0.1;
-          cloakRingMesh.scale.set(
-            terraPlanetRadius * lerp(1.2, 1.34, shimmer),
-            terraPlanetRadius * lerp(1.2, 1.34, shimmer),
-            1,
-          );
-          cloakRingMesh.rotation.z = nowSec * 0.42;
-          cloakRingMaterial.opacity = 0.2 + Math.sin(nowSec * 4.8) * 0.06;
-          cloakSheenMesh.position.set(driftX, driftY, 2.14);
-          cloakSheenMesh.scale.set(
-            terraPlanetRadius * 1.02,
-            terraPlanetRadius * lerp(1.18, 1.36, shimmer),
-            1,
-          );
-          cloakSheenMesh.rotation.z = nowSec * -0.54;
-          cloakSheenMaterial.opacity = 0.08 + shimmer * 0.1;
-        });
-      }
-
-      resizeViewport();
-      window.addEventListener("resize", resizeViewport);
-
-      animationLoopController = createViewportAnimationLoopController({
-        hostElement,
-        onActiveChange: (active) => {
-          if (active) {
-            resizeViewport();
-          }
-        },
-        onRenderError: (error) => {
-          handleViewportRenderError(error);
-        },
-        renderFrame: () => {
-          const nowSec = performance.now() * 0.001;
-          for (const layer of backgroundLayers) {
-            layer.group.position.x = wrapCentered(
-              Math.sin(nowSec * 0.04) * 180 * layer.parallax +
-                nowSec * layer.driftX,
-              layer.tileSize,
+          if (options.itemId === "cloak") {
+            const planet = createPreviewPlanet({
+              hostScene: scene,
+              planetGeometry: sphereGeometry,
+              position: { x: 0, y: 0 },
+              radius: terraPlanetRadius,
+              ringGeometry,
+              seed: 1,
+              visuals: terraVisuals,
+            });
+            registerDisposables(disposables, planet);
+            const wildcardColor = tuning.visuals.abilities.wildcardColor;
+            const cloakVeilGeometry = new CircleGeometry(1, 64);
+            const cloakVeilMaterial = new MeshBasicMaterial({
+              blending: AdditiveBlending,
+              color: tintColor(wildcardColor, -0.18, 0.04, 0.1),
+              depthWrite: false,
+              opacity: 0.18,
+              transparent: true,
+            });
+            const cloakVeilMesh = new Mesh(
+              cloakVeilGeometry,
+              cloakVeilMaterial,
             );
-            layer.group.position.y = wrapCentered(
-              Math.cos(nowSec * 0.03) * 140 * layer.parallax +
-                nowSec * layer.driftY,
-              layer.tileSize,
+            cloakVeilMesh.position.z = 1.92;
+            scene.add(cloakVeilMesh);
+            const cloakRingGeometry = new RingGeometry(0.84, 1, 80);
+            const cloakRingMaterial = new MeshBasicMaterial({
+              blending: AdditiveBlending,
+              color: tintColor(wildcardColor, 0.02, 0.14, 0.06),
+              depthWrite: false,
+              opacity: 0.28,
+              transparent: true,
+            });
+            const cloakRingMesh = new Mesh(
+              cloakRingGeometry,
+              cloakRingMaterial,
             );
+            cloakRingMesh.position.z = 2.04;
+            scene.add(cloakRingMesh);
+            const cloakSheenMaterial = new MeshBasicMaterial({
+              blending: AdditiveBlending,
+              color: tintColor(wildcardColor, 0.12, 0.22, -0.02),
+              depthWrite: false,
+              opacity: 0.18,
+              transparent: true,
+            });
+            const cloakSheenMesh = new Mesh(
+              cloakVeilGeometry,
+              cloakSheenMaterial,
+            );
+            cloakSheenMesh.position.z = 2.14;
+            scene.add(cloakSheenMesh);
+            registerDisposables(
+              disposables,
+              cloakVeilGeometry,
+              cloakVeilMaterial,
+              cloakRingGeometry,
+              cloakRingMaterial,
+              cloakSheenMaterial,
+            );
+            updates.push((nowSec) => {
+              planet.update(nowSec);
+              planet.setOpacity(CLOAK_PLANET_TARGET_OPACITY);
+              const shimmer = 0.5 + Math.sin(nowSec * 2.6) * 0.5;
+              const driftX = Math.sin(nowSec * 1.3) * terraPlanetRadius * 0.08;
+              const driftY = Math.cos(nowSec * 1.7) * terraPlanetRadius * 0.05;
+              cloakVeilMesh.scale.set(
+                terraPlanetRadius * lerp(1.18, 1.28, shimmer),
+                terraPlanetRadius * lerp(1.18, 1.28, shimmer),
+                1,
+              );
+              cloakVeilMaterial.opacity = 0.12 + shimmer * 0.1;
+              cloakRingMesh.scale.set(
+                terraPlanetRadius * lerp(1.2, 1.34, shimmer),
+                terraPlanetRadius * lerp(1.2, 1.34, shimmer),
+                1,
+              );
+              cloakRingMesh.rotation.z = nowSec * 0.42;
+              cloakRingMaterial.opacity = 0.2 + Math.sin(nowSec * 4.8) * 0.06;
+              cloakSheenMesh.position.set(driftX, driftY, 2.14);
+              cloakSheenMesh.scale.set(
+                terraPlanetRadius * 1.02,
+                terraPlanetRadius * lerp(1.18, 1.36, shimmer),
+                1,
+              );
+              cloakSheenMesh.rotation.z = nowSec * -0.54;
+              cloakSheenMaterial.opacity = 0.08 + shimmer * 0.1;
+            });
           }
-          for (const update of updates) {
-            update(nowSec);
-          }
-          postProcessing?.render();
+
+          resizeViewport();
+          window.addEventListener("resize", resizeViewport);
+
+          animationLoopController = createViewportAnimationLoopController({
+            hostElement,
+            onActiveChange: (active) => {
+              if (active) {
+                resizeViewport();
+              }
+            },
+            onRenderError: (error) => {
+              handleViewportRenderError(error);
+            },
+            renderFrame: () => {
+              const nowSec = performance.now() * 0.001;
+              for (const layer of backgroundLayers) {
+                layer.group.position.x = wrapCentered(
+                  Math.sin(nowSec * 0.04) * 180 * layer.parallax +
+                    nowSec * layer.driftX,
+                  layer.tileSize,
+                );
+                layer.group.position.y = wrapCentered(
+                  Math.cos(nowSec * 0.03) * 140 * layer.parallax +
+                    nowSec * layer.driftY,
+                  layer.tileSize,
+                );
+              }
+              for (const update of updates) {
+                update(nowSec);
+              }
+              postProcessing?.render();
+            },
+            renderer: nextRenderer,
+          });
         },
-        renderer: nextRenderer,
       });
     } catch (error) {
       disposeViewportSession();
-      reportViewportRendererFailure({
-        error,
-        failureLogLabel: "editor preview viewport",
-        hostElement,
-        isDisposed: () => disposed,
-      });
+      managedViewportSession.reportFailure(error);
     }
   };
 
