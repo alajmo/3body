@@ -1,4 +1,3 @@
-import { G } from "./constants";
 import type { Sun } from "./entities";
 import { BAKED_ORBIT_PATTERN_IDS } from "./orbitPatternTrackData.generated";
 import type { Vec2 } from "./vec2";
@@ -72,6 +71,9 @@ const DEFAULT_CANONICAL_MASS = 120_000;
 const DEFAULT_CANONICAL_RADIUS = 32;
 const EQUILATERAL_CIRCLE_NORMALIZED_SPEED = 1 / 3 ** 0.25;
 const LAGRANGE_ELLIPSE_NORMALIZED_MU = 1 / Math.sqrt(3);
+// Keep the orbit catalog independent from runtime tuning bootstrap so shared
+// modules can safely load before constants.ts has finished initializing.
+const ORBIT_PATTERN_GRAVITY = 500;
 const TAU = Math.PI * 2;
 
 const rotateNormalizedVec2 = (value: Vec2, angle: number): Vec2 => ({
@@ -118,7 +120,9 @@ export const scaleOrbitPatternVelocity = (
   mass: number,
   worldScale: number,
 ): Vec2 => {
-  const velocityScale = Math.sqrt((G * mass) / worldScale);
+  const velocityScale = Math.sqrt(
+    (ORBIT_PATTERN_GRAVITY * mass) / worldScale,
+  );
 
   return {
     x: normalizedVelocity.x * velocityScale,
@@ -206,7 +210,9 @@ const createParametricTrackNormalizedSuns = (
   worldScale: number,
 ): OrbitPatternCatalogEntry["normalizedSuns"] => {
   const angularSpeed = TAU / Math.max(parametricTrack.periodSec, 0.0001);
-  const velocityScale = Math.sqrt((G * canonicalMass) / worldScale);
+  const velocityScale = Math.sqrt(
+    (ORBIT_PATTERN_GRAVITY * canonicalMass) / worldScale,
+  );
   const normalizeSample = (
     spec: OrbitPatternParametricSunSpec,
   ): OrbitPatternNormalizedSunSeed => {
