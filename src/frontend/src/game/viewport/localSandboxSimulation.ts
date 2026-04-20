@@ -1,4 +1,4 @@
-import type { Vec2, } from "@3body/shared";
+import type { Vec2 } from "@3body/shared";
 import {
   FIXED_STEP_SEC,
   GRAVITY_PULSE_RADIUS,
@@ -24,6 +24,7 @@ import {
   stepSandbox,
   syncInterpolatedSandboxState,
 } from "../combatSandbox";
+import { sampleRuntimeFixedPatternSunSeeds } from "../runtimeOrbitPreset";
 import {
   FORESIGHT_STEP_SEC,
   FORESIGHT_TARGET_DISTANCE,
@@ -33,6 +34,13 @@ import {
   trimForesightPathToDistance,
 } from "./foresightShared";
 import type { GameViewportInputRuntimeState } from "./localInput";
+import {
+  CAMERA_SHAKE_DURATION_SEC,
+  getRocketImpactCameraShake,
+  getRocketImpactHudFlicker,
+  getRocketImpactScreenFlash,
+  ROCKET_IMPACT_HUD_FLICKER_DURATION_SEC,
+} from "./cameraShake";
 import { createViewportPerformanceProfiler } from "./performanceProfiler";
 import { createRuntimeStatsTracker } from "./runtimeStats";
 
@@ -41,7 +49,6 @@ const MAX_STEPS_PER_FRAME = 12;
 const MAX_ACTIVE_BOOST_BURSTS = ROOM_CAPACITY * 2;
 const HIT_FLASH_DURATION_SEC = 0.24;
 const HP_PULSE_DURATION_SEC = 0.48;
-const CAMERA_SHAKE_DURATION_SEC = 0.3;
 const LOCAL_SANDBOX_HUD_UPDATE_INTERVAL_SEC = 1 / 12;
 const LOCAL_SANDBOX_KILL_FEED_DURATION_SEC = 4;
 
@@ -101,6 +108,8 @@ const describePlanetDeath = (
   const displayName = planet.displayName || planet.label;
 
   switch (planet.deathReason) {
+    case "boundaryAsteroid":
+      return `${displayName} was shattered by boundary debris`;
     case "boundary":
       return `${displayName} drifted beyond the arena`;
     case "blackHole":
@@ -120,6 +129,7 @@ const isPlanetExplosionDeath = (
   deathReason: CombatPlanetDeathReason | undefined,
 ): boolean =>
   deathReason === "rocket" ||
+  deathReason === "boundaryAsteroid" ||
   deathReason === "planetCollision" ||
   deathReason === "sunCollision" ||
   deathReason === "neutronStar";
@@ -156,6 +166,9 @@ const computeForesightPathsByEntityId = (
   }
 
   const pathsByEntityId = new Map<number, Vec2[]>();
+  const activeSunIds = new Set(
+    getActiveCombatSuns(state.suns).map((sun) => sun.id),
+  );
   let predictedSuns = getActiveCombatSuns(state.suns).map<CombatSandboxSun>(
     (sun) => ({
       ...sun,
@@ -181,14 +194,30 @@ const computeForesightPathsByEntityId = (
   }
 
   for (let step = 0; step < stepCount; step += 1) {
-    predictedSuns = stepSuns(
-      predictedSuns,
-      FORESIGHT_STEP_SEC,
-      state.blackHole ?? undefined,
-    ).map((sun) => ({
-      ...sun,
-      swallowedAtSec: null,
-    }));
+    predictedSuns =
+      state.starMotion.mode === "fixedPattern"
+        ? sampleRuntimeFixedPatternSunSeeds(
+            state.starMotion,
+            state.elapsedSec + FORESIGHT_STEP_SEC * (step + 1),
+          )
+            .filter((sun) => activeSunIds.has(sun.id))
+            .map((sun) => ({
+              id: sun.id,
+              kind: "sun" as const,
+              mass: sun.mass,
+              radius: sun.radius,
+              pos: { x: sun.pos.x, y: sun.pos.y },
+              vel: { x: sun.vel.x, y: sun.vel.y },
+              swallowedAtSec: null,
+            }))
+        : stepSuns(
+            predictedSuns,
+            FORESIGHT_STEP_SEC,
+            state.blackHole ?? undefined,
+          ).map((sun) => ({
+            ...sun,
+            swallowedAtSec: null,
+          }));
 
     predictedPlanets = predictedPlanets.map((planet) =>
       stepBody(
@@ -237,6 +266,7 @@ export const createLocalSandboxSimulationState = (
     nextKillFeedId: 1,
     performanceProfiler: createViewportPerformanceProfiler(),
     playerDamageFlash: 0,
+    playerHudFlicker: 0,
     playerHpPulse: 0,
     previousFrameTimeSec: null as number | null,
     previousState: initialState,
@@ -298,6 +328,7 @@ export const resetLocalSandboxSimulationState = ({
   simulationState.nextKillFeedId = 1;
   simulationState.cameraShake = 0;
   simulationState.playerDamageFlash = 0;
+  simulationState.playerHudFlicker = 0;
   simulationState.playerHpPulse = 0;
   inputController?.resetForPlayer(nextState.player);
   resetLocalSandboxSimulationProfiling(simulationState);
@@ -324,6 +355,11 @@ export const decayLocalSandboxFrameEffects = ({
     simulationState.playerHpPulse,
     frameDeltaSec,
     HP_PULSE_DURATION_SEC,
+  );
+  simulationState.playerHudFlicker = decayUnitValue(
+    simulationState.playerHudFlicker,
+    frameDeltaSec,
+    ROCKET_IMPACT_HUD_FLICKER_DURATION_SEC,
   );
   simulationState.cameraShake = decayUnitValue(
     simulationState.cameraShake,
@@ -515,6 +551,38 @@ export const runLocalSandboxSimulationFrame = ({
         }
         simulationState.nextKillFeedId += 1;
       }
+    }
+
+    for (const burst of simulationState.currentState.impactBursts) {
+      if (
+        burst.startedAtTick !== simulationState.currentState.tick ||
+        burst.planetId !== simulationState.currentState.player.planetId ||
+        burst.sourceKind !== "rocket"
+      ) {
+        continue;
+      }
+
+      simulationState.cameraShake = Math.max(
+        simulationState.cameraShake,
+        getRocketImpactCameraShake({
+          absorbedByShield: burst.absorbedByShield,
+          rocketKind: burst.rocketKind,
+        }),
+      );
+      simulationState.playerDamageFlash = Math.max(
+        simulationState.playerDamageFlash,
+        getRocketImpactScreenFlash({
+          absorbedByShield: burst.absorbedByShield,
+          rocketKind: burst.rocketKind,
+        }),
+      );
+      simulationState.playerHudFlicker = Math.max(
+        simulationState.playerHudFlicker,
+        getRocketImpactHudFlicker({
+          absorbedByShield: burst.absorbedByShield,
+          rocketKind: burst.rocketKind,
+        }),
+      );
     }
 
     for (const controller of getBoostVisualControllers(

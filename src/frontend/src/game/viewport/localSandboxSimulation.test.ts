@@ -1,4 +1,9 @@
-import { BLACK_HOLE_SPEC, FIXED_STEP_SEC, PLANET_HP } from "@3body/shared";
+import {
+  BLACK_HOLE_SPEC,
+  FIXED_STEP_SEC,
+  PLANET_HP,
+  ROCKET_SPECS,
+} from "@3body/shared";
 import { describe, expect, it } from "vitest";
 import { createSandboxState } from "../combatSandbox";
 import {
@@ -163,6 +168,96 @@ describe("local sandbox held ability visuals", () => {
 
     expect(simulationState.currentState.player.gravityPulseHeld).toBe(false);
     expect(simulationState.activeGravityPulse).not.toBeNull();
+    expect(simulationState.cameraShake).toBeGreaterThan(0.3);
+  });
+
+  it("shakes the camera when the player's shield absorbs a rocket hit", () => {
+    const initialState = createSandboxState();
+    const playerPlanetId = initialState.player.planetId;
+
+    initialState.suns = [];
+    initialState.caches = [];
+    initialState.cacheRespawnAtTicks = [];
+    initialState.debris = [];
+    initialState.impactBursts = [];
+    initialState.bots = [];
+    initialState.planets = initialState.planets.map((planet) =>
+      planet.id === playerPlanetId
+        ? {
+            ...planet,
+            alive: true,
+            deathReason: undefined,
+            debuffs: {},
+            hp: PLANET_HP,
+            pos: { x: 0, y: 0 },
+            radius: 20,
+            vel: { x: 0, y: 0 },
+          }
+        : {
+            ...planet,
+            alive: false,
+            deathReason: "rocket",
+            debuffs: {},
+            hp: 0,
+            pos: { x: 5_000 + planet.id, y: 0 },
+            vel: { x: 0, y: 0 },
+          },
+    );
+    initialState.rockets = [
+      {
+        id: 90_001,
+        kind: "rocket",
+        ownerId: "enemy",
+        rocketKind: "light",
+        targetId: playerPlanetId,
+        ttlUntilTick: initialState.tick + 5,
+        pos: { x: 40, y: 0 },
+        vel: { x: 0, y: 0 },
+        radius: ROCKET_SPECS.light.radius,
+        damage: ROCKET_SPECS.light.damage,
+        color: "#ffffff",
+        trailColor: "#b7e6ff",
+        dragOnHit: false,
+        launchPlanetArchetype: "terra",
+        turnRateMultiplier: 1,
+        launchPlanetPos: { x: 80, y: 0 },
+        launchPlanetRadius: 20,
+      },
+    ];
+
+    const simulationState = createLocalSandboxSimulationState(initialState);
+    const inputRuntime = createInputRuntime();
+    inputRuntime.pendingAbilityRequests.shield = true;
+    inputRuntime.inputState.aimWorld = { x: 100, y: 0 };
+
+    runLocalSandboxSimulationFrame({
+      blackHoleSettings: BLACK_HOLE_SPEC,
+      inputController: null,
+      inputRuntime,
+      nowSec: 0,
+      profilingEnabled: false,
+      resetAccumulator: false,
+      sandboxPaused: false,
+      simulationState,
+    });
+    runLocalSandboxSimulationFrame({
+      blackHoleSettings: BLACK_HOLE_SPEC,
+      inputController: null,
+      inputRuntime,
+      nowSec: FIXED_STEP_SEC * 1.5,
+      profilingEnabled: false,
+      resetAccumulator: false,
+      sandboxPaused: false,
+      simulationState,
+    });
+
+    expect(
+      simulationState.currentState.planets.find(
+        (planet) => planet.id === playerPlanetId,
+      )?.hp,
+    ).toBe(PLANET_HP);
+    expect(simulationState.playerDamageFlash).toBeGreaterThan(0.3);
+    expect(simulationState.playerHudFlicker).toBeGreaterThan(0.4);
     expect(simulationState.cameraShake).toBeGreaterThan(0.3);
   });
 

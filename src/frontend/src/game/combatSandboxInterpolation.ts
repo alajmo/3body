@@ -271,6 +271,7 @@ export const syncInterpolatedSandboxState = (
     alpha,
   );
   targetState.preset = currentState.preset;
+  targetState.starMotion = currentState.starMotion;
   targetState.neutronStars = currentState.neutronStars.map((star) => ({
     ...star,
     pos: { ...star.pos },

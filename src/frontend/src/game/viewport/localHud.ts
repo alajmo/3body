@@ -74,6 +74,7 @@ interface BuildLocalSandboxHudStateParams {
   planetBars?: GameViewportPlanetBar[];
   planetBodyScale: number;
   playerDamageFlash: number;
+  playerHudFlicker: number;
   playerHpPulse: number;
   playerLabel: string;
   profilingEnabled: boolean;
@@ -493,13 +494,12 @@ export const buildLocalSandboxHudState = (
       (planet) => planet.id === params.currentState.player.planetId,
     ) ?? null;
   const playerMotion = getPlayerMotionHud(playerPlanet?.vel);
-  const highlightedMinimapEntity =
-    playerPlanet?.alive
-      ? {
-          id: playerPlanet.id,
-          kind: "planet" as const,
-        }
-      : null;
+  const highlightedMinimapEntity = playerPlanet?.alive
+    ? {
+        id: playerPlanet.id,
+        kind: "planet" as const,
+      }
+    : null;
 
   return {
     abilities: buildAbilities(params),
@@ -525,6 +525,7 @@ export const buildLocalSandboxHudState = (
     damageFlash: params.playerDamageFlash,
     debugItems: buildProfilerDebugItems(params),
     foresightSettings: { ...params.foresightSettings },
+    hudFlicker: params.playerHudFlicker,
     hudOpacity: 1,
     killFeed: params.killFeed,
     minimap: createHudMinimapState({

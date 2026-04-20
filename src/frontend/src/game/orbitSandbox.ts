@@ -19,7 +19,11 @@ import {
   type OrbitPreset,
   type OrbitRiskProfile,
 } from "./orbitPresets";
-import { resolveRuntimeOrbitPreset } from "./runtimeOrbitPreset";
+import {
+  resolveRuntimeOrbitPreset,
+  sampleRuntimeFixedPatternSunSeeds,
+  type RuntimeOrbitStarMotion,
+} from "./runtimeOrbitPreset";
 
 export const getPlanetSoftBoundaryRadius = (): number => ARENA_RADIUS + 36;
 
@@ -50,6 +54,7 @@ interface SandboxState {
   tick: number;
   elapsedSec: number;
   preset: OrbitPreset;
+  starMotion: RuntimeOrbitStarMotion;
   suns: Sun[];
   planets: SandboxPlanet[];
 }
@@ -70,24 +75,35 @@ const clonePlanetSeed = (planetSeed: OrbitPlanetSeed): SandboxPlanet => ({
   vel: { x: planetSeed.vel.x, y: planetSeed.vel.y },
 });
 
+const createSunFromSeed = (sunSeed: OrbitPreset["suns"][number]): Sun => ({
+  id: sunSeed.id,
+  kind: "sun",
+  mass: sunSeed.mass,
+  radius: sunSeed.radius,
+  pos: { x: sunSeed.pos.x, y: sunSeed.pos.y },
+  vel: { x: sunSeed.vel.x, y: sunSeed.vel.y },
+});
+
+const stepSandboxSuns = (state: SandboxState, nextElapsedSec: number): Sun[] =>
+  state.starMotion.mode === "fixedPattern"
+    ? sampleRuntimeFixedPatternSunSeeds(state.starMotion, nextElapsedSec).map(
+        createSunFromSeed,
+      )
+    : stepSuns(state.suns, FIXED_STEP_SEC);
+
 export const createSandboxState = (
   preset: OrbitPreset = DEFAULT_ORBIT_PRESET,
 ): SandboxState => {
   const resolvedPreset = resolveRuntimeOrbitPreset(preset);
+  const resolvedRuntimePreset = resolvedPreset.preset;
 
   return {
     tick: 0,
     elapsedSec: 0,
-    preset: resolvedPreset,
-    suns: resolvedPreset.suns.map((sunSeed) => ({
-      id: sunSeed.id,
-      kind: "sun",
-      mass: sunSeed.mass,
-      radius: sunSeed.radius,
-      pos: { x: sunSeed.pos.x, y: sunSeed.pos.y },
-      vel: { x: sunSeed.vel.x, y: sunSeed.vel.y },
-    })),
-    planets: resolvedPreset.planets.map(clonePlanetSeed),
+    preset: resolvedRuntimePreset,
+    starMotion: resolvedPreset.starMotion,
+    suns: resolvedRuntimePreset.suns.map(createSunFromSeed),
+    planets: resolvedRuntimePreset.planets.map(clonePlanetSeed),
   };
 };
 
@@ -197,7 +213,8 @@ const markPlanetOutcome = (
 };
 
 export const stepSandbox = (state: SandboxState): SandboxState => {
-  const suns = stepSuns(state.suns, FIXED_STEP_SEC);
+  const nextElapsedSec = state.elapsedSec + FIXED_STEP_SEC;
+  const suns = stepSandboxSuns(state, nextElapsedSec);
   const planets = state.planets.map((planet) => {
     if (!planet.alive) {
       return planet;
@@ -211,8 +228,9 @@ export const stepSandbox = (state: SandboxState): SandboxState => {
 
   return {
     tick: state.tick + 1,
-    elapsedSec: state.elapsedSec + FIXED_STEP_SEC,
+    elapsedSec: nextElapsedSec,
     preset: state.preset,
+    starMotion: state.starMotion,
     suns,
     planets,
   };
@@ -254,6 +272,7 @@ export const interpolateSandboxState = (
   tick: currentState.tick,
   elapsedSec: lerp(previousState.elapsedSec, currentState.elapsedSec, alpha),
   preset: currentState.preset,
+  starMotion: currentState.starMotion,
   suns: currentState.suns.map((sun, index) => ({
     ...sun,
     pos: lerpVec2(previousState.suns[index]!.pos, sun.pos, alpha),

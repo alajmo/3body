@@ -1,6 +1,3 @@
-import { renderOutput } from "three/tsl";
-import { bloom } from "three/addons/tsl/display/BloomNode.js";
-import { rgbShift } from "three/addons/tsl/display/RGBShiftNode.js";
 import {
   Mesh,
   type MeshBasicNodeMaterial,
@@ -11,11 +8,14 @@ import {
   type WebGPURenderer,
 } from "three/webgpu";
 import {
+  createShowcaseDisplayPipeline,
+  type ShowcaseDisplayMode,
+} from "../showcaseDisplayMode";
+import {
   type LocalViewportCameraState,
   applyLocalViewportCameraFrame,
 } from "./localViewportCamera";
 import { registerViewportDisposables } from "./disposables";
-import { createCompatibleScenePass } from "./postProcessingCompat";
 
 interface StarfieldLayerVisual {
   geometry: { dispose: () => void };
@@ -43,27 +43,23 @@ interface StarfieldLayerConfig {
 }
 
 export const createLocalViewportRenderShell = ({
-  bloomRadius,
-  bloomStrength,
-  bloomThreshold,
   camera,
   cameraState,
   createBackgroundLayer,
   currentSsaaLevel,
+  displayMode,
   hostElement,
   renderer,
   backdropMaterial,
   sceneBackground,
   backgroundLayers,
 }: {
-  bloomRadius: number;
-  bloomStrength: number;
-  bloomThreshold: number;
   camera: OrthographicCamera;
   cameraState: LocalViewportCameraState;
   backdropMaterial: MeshBasicNodeMaterial;
   createBackgroundLayer: (config: StarfieldLayerConfig) => StarfieldLayerVisual;
   currentSsaaLevel: number;
+  displayMode: ShowcaseDisplayMode;
   hostElement: HTMLDivElement;
   renderer: WebGPURenderer;
   sceneBackground: import("three/webgpu").Color;
@@ -92,32 +88,24 @@ export const createLocalViewportRenderShell = ({
     return layer;
   });
 
-  const scenePass = createCompatibleScenePass(
-    renderer,
-    scene,
-    camera,
-    currentSsaaLevel,
-  );
-  const bloomNode = bloom(
-    scenePass,
-    bloomStrength,
-    bloomRadius,
-    bloomThreshold,
-  );
-  const chromaticAberrationNode = rgbShift(scenePass.add(bloomNode), 0, 0);
-  const outputFrame = renderOutput(
+  const {
     chromaticAberrationNode,
-    renderer.toneMapping,
-    renderer.outputColorSpace,
-  );
-  const postProcessing = new RenderPipeline(renderer, outputFrame);
+    disposables: effectDisposables,
+    outputNode,
+  } = createShowcaseDisplayPipeline({
+    camera,
+    mode: displayMode,
+    renderer,
+    sampleLevel: currentSsaaLevel,
+    scene,
+  });
+  const postProcessing = new RenderPipeline(renderer, outputNode);
   postProcessing.outputColorTransform = false;
   registerViewportDisposables(
     disposables,
     backdropGeometry,
     backdropMaterial,
-    scenePass,
-    bloomNode,
+    ...effectDisposables,
   );
 
   return {
@@ -126,7 +114,6 @@ export const createLocalViewportRenderShell = ({
     disposables,
     postProcessing,
     scene,
-    scenePass,
     backgroundLayers: shellBackgroundLayers,
   };
 };

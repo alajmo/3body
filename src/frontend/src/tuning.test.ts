@@ -1,6 +1,6 @@
 import {
-  createNeutronStars,
   CURRENT_GAME_TUNING,
+  createNeutronStars,
   mulberry32,
   sanitizeGameTuning,
 } from "@3body/shared";
@@ -35,6 +35,33 @@ describe("sanitizeGameTuning", () => {
     });
 
     expect(nextTuning.gameplay.orbits.planetCircleRadius).toBe(7200);
+  });
+
+  it("preserves fixed-pattern orbit motion tuning", () => {
+    const nextTuning = sanitizeGameTuning({
+      ...CURRENT_GAME_TUNING,
+      gameplay: {
+        ...CURRENT_GAME_TUNING.gameplay,
+        orbits: {
+          ...CURRENT_GAME_TUNING.gameplay.orbits,
+          planetStartSpeedScale: 1.35,
+          starPatternDistanceScale: 1.6,
+          starMotion: {
+            mode: "fixedPattern",
+            patternId: "equilateral-circle",
+            speed: 1.75,
+          },
+        },
+      },
+    });
+
+    expect(nextTuning.gameplay.orbits.planetStartSpeedScale).toBe(1.35);
+    expect(nextTuning.gameplay.orbits.starPatternDistanceScale).toBe(1.6);
+    expect(nextTuning.gameplay.orbits.starMotion).toEqual({
+      mode: "fixedPattern",
+      patternId: "equilateral-circle",
+      speed: 1.75,
+    });
   });
 
   it("does not cap orbit sun radius", () => {

@@ -5,6 +5,8 @@ export * from "./constants";
 export * from "./entities";
 export * from "./gameplay";
 export * from "./neutronStars";
+export * from "./orbitPatternCatalog";
+export * from "./orbitPatternTracks";
 export * from "./physics";
 export * from "./protocol";
 export * from "./rng";

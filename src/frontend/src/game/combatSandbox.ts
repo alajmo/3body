@@ -1,5 +1,6 @@
 import type {
   ArchetypeId,
+  AsteroidTier,
   BlackHole,
   BlackHoleSpec,
   BotDifficulty,
@@ -37,8 +38,8 @@ import {
   cloneCombatBotMemory,
   consumeBlackHoleBodies,
   createCombatBotMemory,
-  createNeutronStars,
   createInitialAmmo,
+  createNeutronStars,
   DEBRIS_TTL_SEC,
   decideCombatBot,
   dist,
@@ -47,14 +48,19 @@ import {
   FORESIGHT_EXT_MULTIPLIER,
   FORESIGHT_SPEC,
   fromAngle,
-  getOuterRingMax,
-  getOuterRingMin,
-  getBaseShieldLoad,
-  getBlackHoleMassAtElapsedSec,
-  getSeekerLockTicks,
-  getShieldLoadCapacity,
   GRAVITY_PULSE_IMPULSE,
   GRAVITY_PULSE_RADIUS,
+  createBoundaryAsteroidSpawn,
+  getBaseShieldLoad,
+  getBoundaryAsteroidDamage,
+  getBoundaryAsteroidExplosionBaseSpeed,
+  getBoundaryAsteroidExplosionPieces,
+  getBoundaryAsteroidExplosionSpeedVariance,
+  getBlackHoleMassAtElapsedSec,
+  getOuterRingMax,
+  getOuterRingMin,
+  getSeekerLockTicks,
+  getShieldLoadCapacity,
   len,
   lerp,
   lerpVec2,
@@ -68,6 +74,7 @@ import {
   SHIELD_EXT_MULTIPLIER,
   SHIELD_SPEC,
   SIM_HZ,
+  sampleBoundaryAsteroidSpawnCount,
   scale,
   stepBody,
   stepBodyWithGravityScale,
@@ -83,9 +90,14 @@ import {
 } from "./orbitPresets";
 import { findMinPlanetSunGap, findMinSunSunGap } from "./orbitSandbox";
 import { getPlanetBodyScaleForArchetype } from "./planetVisualTuning";
-import { resolveRuntimeOrbitPreset } from "./runtimeOrbitPreset";
+import {
+  type RuntimeOrbitStarMotion,
+  resolveRuntimeOrbitPreset,
+  sampleRuntimeFixedPatternSunSeeds,
+} from "./runtimeOrbitPreset";
 import { getRuntimeTuningDocument } from "./runtimeTuning";
 import { SHIELD_OUTER_SCALE } from "./shieldPresentation";
+
 export {
   createInterpolatedSandboxState,
   createSandboxInterpolationCache,
@@ -111,6 +123,16 @@ const ROCKET_DEBRIS_BURST_SPEED_VARIANCE = 104;
 const CACHE_DEBRIS_PIECES = 10;
 const CACHE_DEBRIS_BURST_SPEED = 140;
 const CACHE_DEBRIS_BURST_SPEED_VARIANCE = 92;
+const BOUNDARY_ASTEROID_COLOR_BY_TIER = {
+  large: "#ffb87a",
+  micro: "#d7f1ff",
+  small: "#ffd98f",
+} as const satisfies Record<AsteroidTier, string>;
+const BOUNDARY_ASTEROID_TIERS = [
+  "micro",
+  "small",
+  "large",
+] as const satisfies readonly AsteroidTier[];
 const PLAYER_LOST_RESET_DELAY_SEC = 6;
 const DEFAULT_AIM_DIR = { x: 1, y: 0 } satisfies Vec2;
 const LOCAL_BOT_DIFFICULTY: BotDifficulty = "normal";
@@ -188,6 +210,7 @@ export type CombatPlanetDeathReason =
   | "sunCollision"
   | "neutronStar"
   | "planetCollision"
+  | "boundaryAsteroid"
   | "boundary"
   | "blackHole";
 
@@ -224,7 +247,7 @@ export interface CombatSandboxDebris extends Debris {
   color: string;
 }
 
-export interface CombatSandboxImpactBurst {
+interface CombatSandboxImpactBurstBase {
   id: number;
   planetId: number;
   absorbedByShield: boolean;
@@ -234,6 +257,15 @@ export interface CombatSandboxImpactBurst {
   startedAtTick: number;
   ttlUntilTick: number;
 }
+
+export type CombatSandboxImpactBurst =
+  | (CombatSandboxImpactBurstBase & {
+      sourceKind: "boundaryAsteroid";
+    })
+  | (CombatSandboxImpactBurstBase & {
+      sourceKind: "rocket";
+      rocketKind: RocketKind;
+    });
 
 export interface CombatSandboxRocketLaunchBurst {
   id: number;
@@ -296,6 +328,7 @@ export interface CombatSandboxState {
   tick: number;
   elapsedSec: number;
   preset: OrbitPreset;
+  starMotion: RuntimeOrbitStarMotion;
   suns: CombatSandboxSun[];
   neutronStars: NeutronStar[];
   planets: CombatSandboxPlanet[];
@@ -600,12 +633,15 @@ const createCombatBotWorld = (
     | "blackHole"
     | "caches"
     | "debris"
+    | "elapsedSec"
     | "neutronStars"
     | "planets"
     | "rockets"
+    | "starMotion"
     | "suns"
   >,
 ): {
+  orbitStarMotion?: import("@3body/shared").World["orbitStarMotion"];
   suns: CombatSandboxSun[];
   neutronStars: NeutronStar[];
   planets: PlanetPublic[];
@@ -623,6 +659,21 @@ const createCombatBotWorld = (
   blackHole: state.blackHole ?? undefined,
   debris: state.debris,
   arenaRadius: ARENA_RADIUS,
+  orbitStarMotion:
+    state.starMotion.mode === "fixedPattern"
+      ? {
+          mode: "fixedPattern",
+          elapsedSec: state.elapsedSec,
+          patternId: state.starMotion.patternId,
+          speed: state.starMotion.speed,
+          distanceScale: state.starMotion.distanceScale,
+          sunIds: [
+            state.starMotion.suns[0]!.id,
+            state.starMotion.suns[1]!.id,
+            state.starMotion.suns[2]!.id,
+          ],
+        }
+      : undefined,
 });
 
 const getBotAimWorldDistance = (): number => ARENA_RADIUS * 2.4;
@@ -724,6 +775,18 @@ const isSunSwallowed = (
   sun: Pick<CombatSandboxSun, "swallowedAtSec">,
 ): boolean => sun.swallowedAtSec !== null;
 
+const createCombatSunFromSeed = (
+  sunSeed: OrbitPreset["suns"][number],
+): CombatSandboxSun => ({
+  id: sunSeed.id,
+  kind: "sun",
+  mass: sunSeed.mass,
+  radius: sunSeed.radius,
+  pos: { x: sunSeed.pos.x, y: sunSeed.pos.y },
+  vel: { x: sunSeed.vel.x, y: sunSeed.vel.y },
+  swallowedAtSec: null,
+});
+
 export const getActiveCombatSuns = (
   suns: readonly CombatSandboxSun[],
 ): CombatSandboxSun[] => suns.filter((sun) => !isSunSwallowed(sun));
@@ -810,16 +873,25 @@ const getBlackHoleBonusMass = (
 
 const stepCombatSuns = (
   suns: readonly CombatSandboxSun[],
+  starMotion: RuntimeOrbitStarMotion,
   blackHole: BlackHole | null,
   swallowedAtSec: number,
 ): CombatSandboxSun[] => {
-  const steppedActiveById = new Map(
-    stepSuns(
-      getActiveCombatSuns(suns),
-      FIXED_STEP_SEC,
-      blackHole ?? undefined,
-    ).map((sun) => [sun.id, sun] as const),
-  );
+  const steppedActiveById =
+    starMotion.mode === "fixedPattern"
+      ? new Map(
+          sampleRuntimeFixedPatternSunSeeds(starMotion, swallowedAtSec).map(
+            (sunSeed) =>
+              [sunSeed.id, createCombatSunFromSeed(sunSeed)] as const,
+          ),
+        )
+      : new Map(
+          stepSuns(
+            getActiveCombatSuns(suns),
+            FIXED_STEP_SEC,
+            blackHole ?? undefined,
+          ).map((sun) => [sun.id, sun] as const),
+        );
 
   return suns.map((sun) => {
     if (isSunSwallowed(sun)) {
@@ -1139,6 +1211,66 @@ const createDebrisBurst = (
   return pieces;
 };
 
+const isBoundaryAsteroidDebris = (
+  piece: CombatSandboxDebris,
+): piece is CombatSandboxDebris & { asteroidTier: AsteroidTier } =>
+  piece.asteroidTier !== undefined;
+
+const createBoundaryAsteroidDebris = (
+  tick: number,
+  nextEntityId: number,
+  arenaRadius: number,
+  rng: () => number,
+  tier: AsteroidTier,
+): CombatSandboxDebris => {
+  const spawn = createBoundaryAsteroidSpawn({
+    arenaRadius,
+    rng,
+    tier,
+  });
+
+  return {
+    asteroidTier: spawn.asteroidTier,
+    color: BOUNDARY_ASTEROID_COLOR_BY_TIER[tier],
+    id: nextEntityId,
+    kind: "debris",
+    ownerPlayerId: undefined,
+    pos: spawn.pos,
+    radius: spawn.radius,
+    ttlUntilTick: tick + getAbilityTicks(spawn.ttlSec),
+    vel: spawn.vel,
+  };
+};
+
+const spawnBoundaryAsteroidDebris = (
+  tick: number,
+  nextEntityId: number,
+  arenaRadius: number,
+  rng: () => number,
+): { debris: CombatSandboxDebris[]; nextEntityId: number } => {
+  const debris: CombatSandboxDebris[] = [];
+  let nextId = nextEntityId;
+
+  for (const tier of BOUNDARY_ASTEROID_TIERS) {
+    const spawnCount = sampleBoundaryAsteroidSpawnCount({
+      dtSec: FIXED_STEP_SEC,
+      rng,
+      tier,
+    });
+    for (let index = 0; index < spawnCount; index += 1) {
+      debris.push(
+        createBoundaryAsteroidDebris(tick, nextId, arenaRadius, rng, tier),
+      );
+      nextId += 1;
+    }
+  }
+
+  return {
+    debris,
+    nextEntityId: nextId,
+  };
+};
+
 const getPlanetImpactNormal = (
   planet: Pick<EntityBase, "pos">,
   source: Pick<EntityBase, "pos" | "vel">,
@@ -1157,14 +1289,24 @@ const createPlanetImpactBurst = (
   elapsedSec: number,
   planet: Pick<EntityBase, "id" | "pos">,
   source: Pick<EntityBase, "pos" | "vel">,
-  color: string,
-  absorbedByShield: boolean,
+  impact: Pick<CombatSandboxImpactBurstBase, "absorbedByShield" | "color"> &
+    Pick<CombatSandboxImpactBurst, "sourceKind"> & {
+      rocketKind?: RocketKind;
+    },
 ): CombatSandboxImpactBurst => ({
   id: nextEntityId,
   planetId: planet.id,
-  absorbedByShield,
-  color,
+  absorbedByShield: impact.absorbedByShield,
+  color: impact.color,
   normal: getPlanetImpactNormal(planet, source),
+  ...(impact.sourceKind === "rocket"
+    ? {
+        rocketKind: impact.rocketKind ?? "light",
+        sourceKind: "rocket" as const,
+      }
+    : {
+        sourceKind: "boundaryAsteroid" as const,
+      }),
   startedAtSec: elapsedSec,
   startedAtTick: tick,
   ttlUntilTick: tick + planetImpactTtlTicks,
@@ -1467,6 +1609,119 @@ const stepDebris = (
   return nextDebris;
 };
 
+const applyBoundaryAsteroidImpacts = ({
+  debris,
+  debrisBursts,
+  deathPlanetIds,
+  impactBursts,
+  nextEntityId,
+  planets,
+  tick,
+  elapsedSec,
+  controllers,
+}: {
+  debris: readonly CombatSandboxDebris[];
+  debrisBursts: CombatSandboxDebris[];
+  deathPlanetIds: Set<number>;
+  impactBursts: CombatSandboxImpactBurst[];
+  nextEntityId: number;
+  planets: CombatSandboxPlanet[];
+  tick: number;
+  elapsedSec: number;
+  controllers: ReadonlyMap<string, CombatSandboxControllerState>;
+}): { debris: CombatSandboxDebris[]; nextEntityId: number } => {
+  const survivingDebris: CombatSandboxDebris[] = [];
+  let nextId = nextEntityId;
+
+  for (const piece of debris) {
+    if (!isBoundaryAsteroidDebris(piece)) {
+      survivingDebris.push(piece);
+      continue;
+    }
+
+    let impactedPlanet = false;
+
+    for (let index = 0; index < planets.length; index += 1) {
+      const planet = planets[index]!;
+      if (!planet.alive || deathPlanetIds.has(planet.id)) {
+        continue;
+      }
+
+      if (dist(piece.pos, planet.pos) > piece.radius + planet.radius) {
+        continue;
+      }
+
+      const damage = getBoundaryAsteroidDamage(piece.asteroidTier);
+      const absorbedByShield = shieldProtectsImpact(
+        planet,
+        controllers,
+        piece.pos,
+        tick,
+      );
+      impactBursts.push(
+        createPlanetImpactBurst(tick, nextId, elapsedSec, planet, piece, {
+          absorbedByShield,
+          color: piece.color,
+          sourceKind: "boundaryAsteroid",
+        }),
+      );
+      nextId += 1;
+
+      const burst = createDebrisBurst(tick, nextId, piece, {
+        color: piece.color,
+        pieces: getBoundaryAsteroidExplosionPieces(piece.asteroidTier),
+        baseSpeed: getBoundaryAsteroidExplosionBaseSpeed(piece.asteroidTier),
+        speedVariance: getBoundaryAsteroidExplosionSpeedVariance(
+          piece.asteroidTier,
+        ),
+      });
+      debrisBursts.push(...burst);
+      nextId += burst.length;
+
+      if (absorbedByShield) {
+        const controller = controllers.get(planet.playerId);
+        if (controller !== undefined) {
+          planets[index] = applyShieldDamageToPlanet(
+            planet,
+            controller,
+            damage,
+          );
+        }
+      } else {
+        const hpAfter = planet.hp - damage;
+        planets[index] =
+          hpAfter <= 0
+            ? killPlanet(
+                {
+                  ...planet,
+                  hp: hpAfter,
+                },
+                "boundaryAsteroid",
+              )
+            : {
+                ...planet,
+                hp: hpAfter,
+              };
+        if (hpAfter <= 0) {
+          deathPlanetIds.add(planet.id);
+        }
+      }
+
+      impactedPlanet = true;
+      break;
+    }
+
+    if (!impactedPlanet) {
+      survivingDebris.push(piece);
+    }
+  }
+
+  return {
+    debris: survivingDebris,
+    nextEntityId: nextId,
+  };
+};
+
 const stepImpactBursts = (
   impactBursts: readonly CombatSandboxImpactBurst[],
   tick: number,
@@ -1748,12 +2003,13 @@ export const createSandboxState = (
   options: CreateSandboxStateOptions = {},
 ): CombatSandboxState => {
   const resolvedPreset = resolveRuntimeOrbitPreset(preset);
+  const runtimePreset = resolvedPreset.preset;
   const playerBehavior = options.playerBehavior === "bot" ? "bot" : "human";
   const participantCount = getSandboxParticipantCount(
     options.participantCount,
-    resolvedPreset.planets.length,
+    runtimePreset.planets.length,
   );
-  const planetSeeds = resolvedPreset.planets.slice(0, participantCount);
+  const planetSeeds = runtimePreset.planets.slice(0, participantCount);
   const playerPlanetIndex = Math.min(
     PLAYER_PLANET_INDEX,
     Math.max(planetSeeds.length - 1, 0),
@@ -1800,12 +2056,12 @@ export const createSandboxState = (
               memory: createCombatBotMemory(),
             }),
           );
-  const rng = createSandboxRng(resolvedPreset);
+  const rng = createSandboxRng(runtimePreset);
   let nextEntityId = nextRocketIdBase;
   const neutronStars = createNeutronStars({
     arenaRadius: ARENA_RADIUS,
     blockedBodies: [
-      ...resolvedPreset.suns.map((sun) => ({
+      ...runtimePreset.suns.map((sun) => ({
         pos: sun.pos,
         radius: sun.radius,
       })),
@@ -1828,16 +2084,9 @@ export const createSandboxState = (
   return {
     tick: 0,
     elapsedSec: 0,
-    preset: resolvedPreset,
-    suns: resolvedPreset.suns.map((sunSeed) => ({
-      id: sunSeed.id,
-      kind: "sun",
-      mass: sunSeed.mass,
-      radius: sunSeed.radius,
-      pos: { x: sunSeed.pos.x, y: sunSeed.pos.y },
-      vel: { x: sunSeed.vel.x, y: sunSeed.vel.y },
-      swallowedAtSec: null,
-    })),
+    preset: runtimePreset,
+    starMotion: resolvedPreset.starMotion,
+    suns: runtimePreset.suns.map(createCombatSunFromSeed),
     neutronStars,
     planets,
     rockets: [],
@@ -1928,9 +2177,11 @@ export const stepSandbox = (
     blackHole,
     caches,
     debris: state.debris,
+    elapsedSec: state.elapsedSec,
     neutronStars: state.neutronStars,
     planets,
     rockets,
+    starMotion: state.starMotion,
     suns: state.suns,
   });
   const runBotControllerStep = ({
@@ -2156,7 +2407,12 @@ export const stepSandbox = (
     launchBursts.push(...spawnedLaunchBursts);
   }
 
-  const suns = stepCombatSuns(state.suns, blackHole, nextElapsedSec);
+  const suns = stepCombatSuns(
+    state.suns,
+    state.starMotion,
+    blackHole,
+    nextElapsedSec,
+  );
   const swallowedSuns =
     blackHole === null
       ? []
@@ -2354,8 +2610,12 @@ export const stepSandbox = (
         nextElapsedSec,
         planet,
         rocket,
-        rocket.color,
-        absorbedByShield,
+        {
+          absorbedByShield,
+          color: rocket.color,
+          rocketKind: rocket.rocketKind,
+          sourceKind: "rocket",
+        },
       ),
     );
     nextEntityId += 1;
@@ -2610,6 +2870,32 @@ export const stepSandbox = (
     nextEntityId += 1;
   }
 
+  const steppedDebris = stepDebris(
+    state.debris,
+    activeSuns,
+    blackHole,
+    nextTick,
+  );
+  const spawnedBoundaryAsteroids = spawnBoundaryAsteroidDebris(
+    nextTick,
+    nextEntityId,
+    ARENA_RADIUS,
+    state.rng,
+  );
+  nextEntityId = spawnedBoundaryAsteroids.nextEntityId;
+  const boundaryAsteroidImpactState = applyBoundaryAsteroidImpacts({
+    controllers: controllerByPlayerId,
+    debris: [...steppedDebris, ...spawnedBoundaryAsteroids.debris],
+    debrisBursts,
+    deathPlanetIds,
+    elapsedSec: nextElapsedSec,
+    impactBursts,
+    nextEntityId,
+    planets,
+    tick: nextTick,
+  });
+  nextEntityId = boundaryAsteroidImpactState.nextEntityId;
+
   for (const planet of planets) {
     if (!deathPlanetIds.has(planet.id)) {
       continue;
@@ -2625,10 +2911,7 @@ export const stepSandbox = (
     nextEntityId += burst.length;
   }
 
-  const debris = [
-    ...stepDebris(state.debris, activeSuns, blackHole, nextTick),
-    ...debrisBursts,
-  ];
+  const debris = [...boundaryAsteroidImpactState.debris, ...debrisBursts];
   syncControllersToPlanets(planets, controllerByPlayerId);
   const nextPlayerPlanet = findPlayerPlanet(planets, player.planetId);
 
@@ -2642,6 +2925,7 @@ export const stepSandbox = (
     tick: nextTick,
     elapsedSec: nextElapsedSec,
     preset: state.preset,
+    starMotion: state.starMotion,
     suns,
     neutronStars: state.neutronStars,
     planets,

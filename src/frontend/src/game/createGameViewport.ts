@@ -114,9 +114,6 @@ import {
 const TRAIL_DURATION_SEC = 3.5;
 const TRAIL_POINT_SIZE = 12;
 const MAX_TRAIL_SAMPLES = Math.ceil(TRAIL_DURATION_SEC * 180) + 8;
-const BLOOM_STRENGTH = 1.02;
-const BLOOM_RADIUS = 0.18;
-const BLOOM_THRESHOLD = 0.82;
 const SUN_GEOMETRY_SEGMENTS = 40;
 const GLOW_GEOMETRY_SEGMENTS = 52;
 const WARP_GEOMETRY_SEGMENTS = 72;
@@ -263,6 +260,8 @@ export function createGameViewport(
 ): () => void {
   const sandboxSessionConfig = options.sandboxSessionConfig ?? {};
   const cameraWorldHeightOverride = options.cameraWorldHeightOverride;
+  const displayMode =
+    options.displayMode ?? getRuntimeTuningDocument().visuals.displayMode;
   const observerMode = sandboxSessionConfig.playerBehavior === "bot";
   const sandboxStorageEnabled = options.enableSandboxStorage === true;
   const storage = sandboxStorageEnabled
@@ -398,14 +397,12 @@ export function createGameViewport(
           const backgroundVisuals = getBackgroundVisuals();
           const shell = createLocalViewportRenderShell({
             backdropMaterial: createBackdropMaterial(backgroundVisuals),
-            bloomRadius: BLOOM_RADIUS,
-            bloomStrength: BLOOM_STRENGTH,
-            bloomThreshold: BLOOM_THRESHOLD,
             backgroundLayers: createBackgroundLayerConfigs(backgroundVisuals),
             camera: nextCamera,
             cameraState,
             createBackgroundLayer,
             currentSsaaLevel,
+            displayMode,
             hostElement,
             renderer: nextRenderer,
             sceneBackground: createSceneBackgroundColor(backgroundVisuals),
@@ -985,6 +982,7 @@ export function createGameViewport(
                       playerPlanetVisuals?.bodyScale ??
                       lastHudState.planetBodyScale,
                     playerDamageFlash: simulationState.playerDamageFlash,
+                    playerHudFlicker: simulationState.playerHudFlicker,
                     playerHpPulse: simulationState.playerHpPulse,
                     playerLabel:
                       playerPlanet?.displayName ??

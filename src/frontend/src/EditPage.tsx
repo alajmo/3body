@@ -1,15 +1,19 @@
 import {
-  ARENA_RADIUS_MIN,
   ARCHETYPE_IDS,
   ARCHETYPES,
+  ARENA_RADIUS_MIN,
   type BotDifficulty,
-  DEFAULT_GAME_TUNING,
   clamp,
+  clampOrbitPatternDistanceScale,
   cloneGameTuningDocument,
-  sanitizeGameTuning,
+  DEFAULT_GAME_TUNING,
+  EDITOR_FIXED_ORBIT_PATTERNS,
   type GameTuningDocument,
+  getOrbitPatternMinimumDistanceScale,
   type PlanetTintOffsetTuning,
   type RocketKind,
+  resolveEditorFixedOrbitPatternId,
+  sanitizeGameTuning,
 } from "@3body/shared";
 import { startTransition, useEffect, useMemo, useRef, useState } from "react";
 import { EditGameViewportPanel } from "./EditGameViewportPanel";
@@ -29,11 +33,12 @@ import {
   applyRuntimeTuningDocument,
   getRuntimeTuningDocument,
 } from "./game/runtimeTuning";
+import { SHOWCASE_DISPLAY_MODE_OPTIONS } from "./game/showcaseDisplayMode";
 import {
   CACHE_ICON_KEYS,
+  type CacheIconKey,
   getCacheIconAccent,
   getCacheIconLabel,
-  type CacheIconKey,
 } from "./game/showcaseVisuals";
 import {
   CACHE_ARENA_BADGE_SIZE_FACTOR,
@@ -282,11 +287,30 @@ const ORBIT_BOUNDARY_DEBRIS_SPEED_MIN = 0.1;
 const ORBIT_BOUNDARY_DEBRIS_SPEED_STEP = 0.05;
 const ORBIT_BOUNDARY_DEBRIS_THICKNESS_MIN = 24;
 const ORBIT_BOUNDARY_DEBRIS_THICKNESS_STEP = 2;
+const ARENA_ASTEROID_DAMAGE_STEP = 0.1;
+const ARENA_ASTEROID_RANDOMIZATION_STEP = 0.01;
 const ORBIT_SUN_DISTANCE_SCALE_MIN = 0.5;
 const ORBIT_SUN_DISTANCE_SCALE_STEP = 0.05;
+const ORBIT_PATTERN_DISTANCE_SCALE_MIN = 0.5;
+const ORBIT_PATTERN_DISTANCE_SCALE_STEP = 0.05;
+const ORBIT_PATTERN_SPEED_MIN = 0;
+const ORBIT_PATTERN_SPEED_STEP = 0.05;
+const ORBIT_PLANET_START_SPEED_MIN = 0;
+const ORBIT_PLANET_START_SPEED_STEP = 0.05;
 const ORBIT_START_POSITION_MIN = -10000;
 const ORBIT_START_POSITION_MAX = 10000;
 const ORBIT_START_POSITION_STEP = 10;
+const ORBIT_STAR_MOTION_OPTIONS = [
+  { label: "Physics seed", value: "physicsSeed" },
+  { label: "Fixed pattern", value: "fixedPattern" },
+] as const;
+const ORBIT_PATTERN_OPTIONS = EDITOR_FIXED_ORBIT_PATTERNS.map((pattern) => ({
+  label: pattern.label,
+  value: pattern.id,
+})) as {
+  label: string;
+  value: string;
+}[];
 const AI_GAMEPLAY_MIN_PARTICIPANTS = 2;
 const AI_GAMEPLAY_MAX_PARTICIPANTS = DEFAULT_ORBIT_PRESET.planets.length;
 const BOT_DIFFICULTY_VALUES = ["easy", "normal", "hard"] as const;
@@ -891,6 +915,8 @@ const resetItemToDefaults = (
       return;
     case "background":
       draft.visuals.background = defaults.visuals.background;
+      draft.gameplay.arena.asteroidField =
+        defaults.gameplay.arena.asteroidField;
       return;
     case "planets":
       draft.visuals.planets = defaults.visuals.planets;
@@ -959,6 +985,34 @@ const serializeEditorTuningDocument = (value: GameTuningDocument): unknown => {
     gameplay: value.gameplay,
     visuals: value.visuals,
   };
+};
+
+const normalizeEditorTuningDocument = (
+  value: GameTuningDocument,
+): GameTuningDocument => {
+  if (value.gameplay.orbits.starMotion.mode !== "fixedPattern") {
+    return value;
+  }
+
+  const resolvedPatternId = resolveEditorFixedOrbitPatternId(
+    value.gameplay.orbits.starMotion.patternId,
+  );
+  const clampedDistanceScale = clampOrbitPatternDistanceScale(
+    resolvedPatternId,
+    value.gameplay.orbits.starPatternDistanceScale,
+    value.gameplay.orbits.suns,
+  );
+  if (
+    resolvedPatternId === value.gameplay.orbits.starMotion.patternId &&
+    clampedDistanceScale === value.gameplay.orbits.starPatternDistanceScale
+  ) {
+    return value;
+  }
+
+  const nextDocument = cloneGameTuningDocument(value);
+  nextDocument.gameplay.orbits.starMotion.patternId = resolvedPatternId;
+  nextDocument.gameplay.orbits.starPatternDistanceScale = clampedDistanceScale;
+  return nextDocument;
 };
 
 const getPreviewMode = (
@@ -1565,7 +1619,9 @@ export function EditPage() {
           throw new Error(`Request failed with ${response.status}`);
         }
 
-        const nextDocument = sanitizeGameTuning(await response.json());
+        const nextDocument = normalizeEditorTuningDocument(
+          sanitizeGameTuning(await response.json()),
+        );
         if (!active) {
           return;
         }
@@ -1601,7 +1657,9 @@ export function EditPage() {
   }, []);
 
   const applyPreviewChange = (updater: (draft: GameTuningDocument) => void) => {
-    const nextDocument = updateDocument(documentRef.current, updater);
+    const nextDocument = normalizeEditorTuningDocument(
+      updateDocument(documentRef.current, updater),
+    );
     documentRef.current = nextDocument;
     applyRuntimeTuningDocument(nextDocument);
     setDocumentValue(nextDocument);
@@ -1625,7 +1683,9 @@ export function EditPage() {
         throw new Error(`Request failed with ${response.status}`);
       }
 
-      const savedDocument = sanitizeGameTuning(await response.json());
+      const savedDocument = normalizeEditorTuningDocument(
+        sanitizeGameTuning(await response.json()),
+      );
       applyRuntimeTuningDocument(savedDocument);
       documentRef.current = savedDocument;
       startTransition(() => {
@@ -1644,7 +1704,9 @@ export function EditPage() {
   };
 
   const commitChange = (updater: (draft: GameTuningDocument) => void) => {
-    const nextDocument = updateDocument(documentRef.current, updater);
+    const nextDocument = normalizeEditorTuningDocument(
+      updateDocument(documentRef.current, updater),
+    );
     documentRef.current = nextDocument;
     applyRuntimeTuningDocument(nextDocument);
     setDocumentValue(nextDocument);
@@ -1665,7 +1727,9 @@ export function EditPage() {
         throw new Error(`Request failed with ${response.status}`);
       }
 
-      const syncedDocument = sanitizeGameTuning(await response.json());
+      const syncedDocument = normalizeEditorTuningDocument(
+        sanitizeGameTuning(await response.json()),
+      );
       applyRuntimeTuningDocument(syncedDocument);
       documentRef.current = syncedDocument;
       startTransition(() => {
@@ -1703,6 +1767,22 @@ export function EditPage() {
   };
   const sectionResetDisabled =
     saveStatus === "loading" || saveStatus === "saving";
+  const fixedPatternDistanceScaleMin =
+    documentValue.gameplay.orbits.starMotion.mode === "fixedPattern"
+      ? Math.max(
+          ORBIT_PATTERN_DISTANCE_SCALE_MIN,
+          getOrbitPatternMinimumDistanceScale(
+            resolveEditorFixedOrbitPatternId(
+              documentValue.gameplay.orbits.starMotion.patternId,
+            ),
+            documentValue.gameplay.orbits.suns,
+          ),
+        )
+      : ORBIT_PATTERN_DISTANCE_SCALE_MIN;
+  const fixedPatternDistanceScaleLabel =
+    fixedPatternDistanceScaleMin > ORBIT_PATTERN_DISTANCE_SCALE_MIN
+      ? `Star distance scale (min ${fixedPatternDistanceScaleMin.toFixed(2)})`
+      : "Star distance scale";
 
   const restartSelectedPreview = () => {
     if (!canRestartPreview(selectedItemId)) {
@@ -2524,47 +2604,64 @@ export function EditPage() {
     switch (selectedItemId) {
       case "overview":
         return (
-          <InspectorSection
-            title="Camera Modes"
-            note="Larger values zoom farther out. Sandbox uses the gameplay camera height."
-            resetDisabled={sectionResetDisabled}
-            onReset={() =>
-              resetInspectorSection((draft, defaults) => {
-                draft.gameplay.camera = defaults.gameplay.camera;
-              })
-            }
-          >
-            <NumberField
-              label="Gameplay camera height"
-              step={10}
-              value={documentValue.gameplay.camera.gameplayCameraWorldHeight}
-              onPreviewChange={(value) =>
-                applyPreviewChange((draft) => {
-                  draft.gameplay.camera.gameplayCameraWorldHeight = value;
+          <>
+            <InspectorSection
+              title="Preview Style"
+              note="This post-processing preset is saved in tuning and reused by the local sandbox."
+            >
+              <SelectField
+                label="Display mode"
+                options={SHOWCASE_DISPLAY_MODE_OPTIONS}
+                value={documentValue.visuals.displayMode}
+                onCommit={(mode) =>
+                  commitChange((draft) => {
+                    draft.visuals.displayMode = mode;
+                  })
+                }
+              />
+            </InspectorSection>
+            <InspectorSection
+              title="Camera Modes"
+              note="Larger values zoom farther out. Sandbox uses the gameplay camera height."
+              resetDisabled={sectionResetDisabled}
+              onReset={() =>
+                resetInspectorSection((draft, defaults) => {
+                  draft.gameplay.camera = defaults.gameplay.camera;
                 })
               }
-              onCommit={(value) =>
-                commitChange((draft) => {
-                  draft.gameplay.camera.gameplayCameraWorldHeight = value;
-                })
-              }
-            />
-            <NumberField
-              label="Preview camera height"
-              step={10}
-              value={documentValue.gameplay.camera.previewCameraWorldHeight}
-              onPreviewChange={(value) =>
-                applyPreviewChange((draft) => {
-                  draft.gameplay.camera.previewCameraWorldHeight = value;
-                })
-              }
-              onCommit={(value) =>
-                commitChange((draft) => {
-                  draft.gameplay.camera.previewCameraWorldHeight = value;
-                })
-              }
-            />
-          </InspectorSection>
+            >
+              <NumberField
+                label="Gameplay camera height"
+                step={10}
+                value={documentValue.gameplay.camera.gameplayCameraWorldHeight}
+                onPreviewChange={(value) =>
+                  applyPreviewChange((draft) => {
+                    draft.gameplay.camera.gameplayCameraWorldHeight = value;
+                  })
+                }
+                onCommit={(value) =>
+                  commitChange((draft) => {
+                    draft.gameplay.camera.gameplayCameraWorldHeight = value;
+                  })
+                }
+              />
+              <NumberField
+                label="Preview camera height"
+                step={10}
+                value={documentValue.gameplay.camera.previewCameraWorldHeight}
+                onPreviewChange={(value) =>
+                  applyPreviewChange((draft) => {
+                    draft.gameplay.camera.previewCameraWorldHeight = value;
+                  })
+                }
+                onCommit={(value) =>
+                  commitChange((draft) => {
+                    draft.gameplay.camera.previewCameraWorldHeight = value;
+                  })
+                }
+              />
+            </InspectorSection>
+          </>
         );
       case "hud":
         return (
@@ -3403,32 +3500,120 @@ export function EditPage() {
               />
             </InspectorSection>
             <InspectorSection
-              title="Sun system"
-              note="Distance keeps the stable orbit ratio and derives starting speed automatically"
+              title="Star motion"
+              note={
+                documentValue.gameplay.orbits.starMotion.mode === "physicsSeed"
+                  ? "Distance keeps the stable orbit ratio and derives starting speed automatically"
+                  : "Loop-stable patterns keep the stars on a stable path while planets still feel their gravity"
+              }
               resetDisabled={sectionResetDisabled}
               onReset={() =>
                 resetInspectorSection((draft, defaults) => {
+                  draft.gameplay.orbits.starMotion =
+                    defaults.gameplay.orbits.starMotion;
+                  draft.gameplay.orbits.starPatternDistanceScale =
+                    defaults.gameplay.orbits.starPatternDistanceScale;
                   draft.gameplay.orbits.sunStartDistanceScale =
                     defaults.gameplay.orbits.sunStartDistanceScale;
+                  draft.gameplay.orbits.planetStartSpeedScale =
+                    defaults.gameplay.orbits.planetStartSpeedScale;
                 })
               }
             >
-              <NumberField
-                label="Start distance scale"
-                min={ORBIT_SUN_DISTANCE_SCALE_MIN}
-                step={ORBIT_SUN_DISTANCE_SCALE_STEP}
-                value={documentValue.gameplay.orbits.sunStartDistanceScale}
-                onPreviewChange={(value) =>
-                  applyPreviewChange((draft) => {
-                    draft.gameplay.orbits.sunStartDistanceScale = value;
-                  })
-                }
+              <SelectField
+                label="Star motion"
+                options={ORBIT_STAR_MOTION_OPTIONS}
+                value={documentValue.gameplay.orbits.starMotion.mode}
                 onCommit={(value) =>
                   commitChange((draft) => {
-                    draft.gameplay.orbits.sunStartDistanceScale = value;
+                    draft.gameplay.orbits.starMotion.mode = value;
                   })
                 }
               />
+              {documentValue.gameplay.orbits.starMotion.mode ===
+              "fixedPattern" ? (
+                <>
+                  <SelectField
+                    label="Pattern"
+                    options={ORBIT_PATTERN_OPTIONS}
+                    value={resolveEditorFixedOrbitPatternId(
+                      documentValue.gameplay.orbits.starMotion.patternId,
+                    )}
+                    onCommit={(value) =>
+                      commitChange((draft) => {
+                        draft.gameplay.orbits.starMotion.patternId = value;
+                      })
+                    }
+                  />
+                  <NumberField
+                    label="Star pattern speed"
+                    min={ORBIT_PATTERN_SPEED_MIN}
+                    step={ORBIT_PATTERN_SPEED_STEP}
+                    value={documentValue.gameplay.orbits.starMotion.speed}
+                    onPreviewChange={(value) =>
+                      applyPreviewChange((draft) => {
+                        draft.gameplay.orbits.starMotion.speed = value;
+                      })
+                    }
+                    onCommit={(value) =>
+                      commitChange((draft) => {
+                        draft.gameplay.orbits.starMotion.speed = value;
+                      })
+                    }
+                  />
+                  <NumberField
+                    label={fixedPatternDistanceScaleLabel}
+                    min={fixedPatternDistanceScaleMin}
+                    step={ORBIT_PATTERN_DISTANCE_SCALE_STEP}
+                    value={
+                      documentValue.gameplay.orbits.starPatternDistanceScale
+                    }
+                    onPreviewChange={(value) =>
+                      applyPreviewChange((draft) => {
+                        draft.gameplay.orbits.starPatternDistanceScale = value;
+                      })
+                    }
+                    onCommit={(value) =>
+                      commitChange((draft) => {
+                        draft.gameplay.orbits.starPatternDistanceScale = value;
+                      })
+                    }
+                  />
+                  <NumberField
+                    label="Planet start speed"
+                    min={ORBIT_PLANET_START_SPEED_MIN}
+                    step={ORBIT_PLANET_START_SPEED_STEP}
+                    value={documentValue.gameplay.orbits.planetStartSpeedScale}
+                    onPreviewChange={(value) =>
+                      applyPreviewChange((draft) => {
+                        draft.gameplay.orbits.planetStartSpeedScale = value;
+                      })
+                    }
+                    onCommit={(value) =>
+                      commitChange((draft) => {
+                        draft.gameplay.orbits.planetStartSpeedScale = value;
+                      })
+                    }
+                  />
+                </>
+              ) : (
+                <NumberField
+                  label="Start distance scale"
+                  min={ORBIT_SUN_DISTANCE_SCALE_MIN}
+                  step={ORBIT_SUN_DISTANCE_SCALE_STEP}
+                  value={documentValue.gameplay.orbits.sunStartDistanceScale}
+                  onPreviewChange={(value) =>
+                    applyPreviewChange((draft) => {
+                      draft.gameplay.orbits.sunStartDistanceScale = value;
+                    })
+                  }
+                  onCommit={(value) =>
+                    commitChange((draft) => {
+                      draft.gameplay.orbits.sunStartDistanceScale = value;
+                    })
+                  }
+                />
+              )}
             </InspectorSection>
             <InspectorSection
               title="Planet ring"
@@ -3584,7 +3769,12 @@ export function EditPage() {
                 <InspectorSection
                   key={sunLabel}
                   title={sunLabel}
-                  note="Mass, radius, and initial orbit state"
+                  note={
+                    documentValue.gameplay.orbits.starMotion.mode ===
+                    "fixedPattern"
+                      ? "Mass and radius still apply, but the selected pattern drives the stars' path"
+                      : "Mass, radius, and initial orbit state"
+                  }
                   collapsible
                   defaultOpen={index === 0}
                   resetDisabled={sectionResetDisabled}
@@ -3616,28 +3806,37 @@ export function EditPage() {
                     }
                     onCommit={(value) => commitOrbitNumber("radius", value)}
                   />
-                  <NumberField
-                    label="Start X"
-                    min={ORBIT_START_POSITION_MIN}
-                    max={ORBIT_START_POSITION_MAX}
-                    step={ORBIT_START_POSITION_STEP}
-                    value={sunOrbit.pos.x}
-                    onPreviewChange={(value) =>
-                      previewOrbitVector("pos", "x", value)
-                    }
-                    onCommit={(value) => commitOrbitVector("pos", "x", value)}
-                  />
-                  <NumberField
-                    label="Start Y"
-                    min={ORBIT_START_POSITION_MIN}
-                    max={ORBIT_START_POSITION_MAX}
-                    step={ORBIT_START_POSITION_STEP}
-                    value={sunOrbit.pos.y}
-                    onPreviewChange={(value) =>
-                      previewOrbitVector("pos", "y", value)
-                    }
-                    onCommit={(value) => commitOrbitVector("pos", "y", value)}
-                  />
+                  {documentValue.gameplay.orbits.starMotion.mode ===
+                  "physicsSeed" ? (
+                    <>
+                      <NumberField
+                        label="Start X"
+                        min={ORBIT_START_POSITION_MIN}
+                        max={ORBIT_START_POSITION_MAX}
+                        step={ORBIT_START_POSITION_STEP}
+                        value={sunOrbit.pos.x}
+                        onPreviewChange={(value) =>
+                          previewOrbitVector("pos", "x", value)
+                        }
+                        onCommit={(value) =>
+                          commitOrbitVector("pos", "x", value)
+                        }
+                      />
+                      <NumberField
+                        label="Start Y"
+                        min={ORBIT_START_POSITION_MIN}
+                        max={ORBIT_START_POSITION_MAX}
+                        step={ORBIT_START_POSITION_STEP}
+                        value={sunOrbit.pos.y}
+                        onPreviewChange={(value) =>
+                          previewOrbitVector("pos", "y", value)
+                        }
+                        onCommit={(value) =>
+                          commitOrbitVector("pos", "y", value)
+                        }
+                      />
+                    </>
+                  ) : null}
                 </InspectorSection>
               );
             })}
@@ -4082,6 +4281,129 @@ export function EditPage() {
                 onCommit={(value) =>
                   commitChange((draft) => {
                     draft.visuals.background.distantBodiesScale = value;
+                  })
+                }
+              />
+            </InspectorSection>
+            <InspectorSection
+              title="Asteroid Field"
+              note="Some boundary debris breaks off the ring, drifts inward, and explodes on impact. Randomization 0 keeps that tier locked to the ring; 1 allows the strongest inward drift behavior."
+              resetDisabled={sectionResetDisabled}
+              onReset={() =>
+                resetInspectorSection((draft, defaults) => {
+                  draft.gameplay.arena.asteroidField =
+                    defaults.gameplay.arena.asteroidField;
+                })
+              }
+            >
+              <NumberField
+                label="Micro asteroid damage"
+                min={0}
+                step={ARENA_ASTEROID_DAMAGE_STEP}
+                value={documentValue.gameplay.arena.asteroidField.micro.damage}
+                onPreviewChange={(value) =>
+                  applyPreviewChange((draft) => {
+                    draft.gameplay.arena.asteroidField.micro.damage = value;
+                  })
+                }
+                onCommit={(value) =>
+                  commitChange((draft) => {
+                    draft.gameplay.arena.asteroidField.micro.damage = value;
+                  })
+                }
+              />
+              <NumberField
+                label="Micro inward drift randomization"
+                min={0}
+                max={1}
+                step={ARENA_ASTEROID_RANDOMIZATION_STEP}
+                value={
+                  documentValue.gameplay.arena.asteroidField.micro.randomization
+                }
+                onPreviewChange={(value) =>
+                  applyPreviewChange((draft) => {
+                    draft.gameplay.arena.asteroidField.micro.randomization =
+                      value;
+                  })
+                }
+                onCommit={(value) =>
+                  commitChange((draft) => {
+                    draft.gameplay.arena.asteroidField.micro.randomization =
+                      value;
+                  })
+                }
+              />
+              <NumberField
+                label="Small asteroid damage"
+                min={0}
+                step={ARENA_ASTEROID_DAMAGE_STEP}
+                value={documentValue.gameplay.arena.asteroidField.small.damage}
+                onPreviewChange={(value) =>
+                  applyPreviewChange((draft) => {
+                    draft.gameplay.arena.asteroidField.small.damage = value;
+                  })
+                }
+                onCommit={(value) =>
+                  commitChange((draft) => {
+                    draft.gameplay.arena.asteroidField.small.damage = value;
+                  })
+                }
+              />
+              <NumberField
+                label="Small inward drift randomization"
+                min={0}
+                max={1}
+                step={ARENA_ASTEROID_RANDOMIZATION_STEP}
+                value={
+                  documentValue.gameplay.arena.asteroidField.small.randomization
+                }
+                onPreviewChange={(value) =>
+                  applyPreviewChange((draft) => {
+                    draft.gameplay.arena.asteroidField.small.randomization =
+                      value;
+                  })
+                }
+                onCommit={(value) =>
+                  commitChange((draft) => {
+                    draft.gameplay.arena.asteroidField.small.randomization =
+                      value;
+                  })
+                }
+              />
+              <NumberField
+                label="Large asteroid damage"
+                min={0}
+                step={ARENA_ASTEROID_DAMAGE_STEP}
+                value={documentValue.gameplay.arena.asteroidField.large.damage}
+                onPreviewChange={(value) =>
+                  applyPreviewChange((draft) => {
+                    draft.gameplay.arena.asteroidField.large.damage = value;
+                  })
+                }
+                onCommit={(value) =>
+                  commitChange((draft) => {
+                    draft.gameplay.arena.asteroidField.large.damage = value;
+                  })
+                }
+              />
+              <NumberField
+                label="Large inward drift randomization"
+                min={0}
+                max={1}
+                step={ARENA_ASTEROID_RANDOMIZATION_STEP}
+                value={
+                  documentValue.gameplay.arena.asteroidField.large.randomization
+                }
+                onPreviewChange={(value) =>
+                  applyPreviewChange((draft) => {
+                    draft.gameplay.arena.asteroidField.large.randomization =
+                      value;
+                  })
+                }
+                onCommit={(value) =>
+                  commitChange((draft) => {
+                    draft.gameplay.arena.asteroidField.large.randomization =
+                      value;
                   })
                 }
               />
@@ -5496,6 +5818,7 @@ export function EditPage() {
               externalRevision={previewResetRevision}
               hudTuning={documentValue.visuals.hud}
               itemId={selectedItemId}
+              overviewDisplayMode={documentValue.visuals.displayMode}
               showHud={previewMode.showHud}
             />
           )}

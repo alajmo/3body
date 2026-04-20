@@ -3,6 +3,7 @@ import { startTransition, useEffect, useRef, useState } from "react";
 import { CombatHud } from "./CombatHud";
 import { createGameViewport } from "./game/createGameViewport";
 import { getRuntimeTuningDocument } from "./game/runtimeTuning";
+import type { ShowcaseDisplayMode } from "./game/showcaseDisplayMode";
 import {
   createInitialHudState,
   type GameViewportController,
@@ -11,12 +12,14 @@ import {
 export function GameViewportPanel({
   className = "app-shell",
   defaultBotsEnabled = true,
+  displayMode,
   enableSandboxStorage = false,
   hudTuning = getRuntimeTuningDocument().visuals.hud,
   showPerformanceTools = true,
 }: {
   className?: string;
   defaultBotsEnabled?: boolean;
+  displayMode?: ShowcaseDisplayMode;
   enableSandboxStorage?: boolean;
   hudTuning?: HudVisualTuning;
   showPerformanceTools?: boolean;
@@ -37,6 +40,7 @@ export function GameViewportPanel({
 
     return createGameViewport(viewportElement, {
       defaultBotsEnabled,
+      displayMode,
       enableSandboxStorage,
       onControllerReady: setViewportController,
       onHudStateChange: (nextState) => {
@@ -45,7 +49,7 @@ export function GameViewportPanel({
         });
       },
     });
-  }, [defaultBotsEnabled, enableSandboxStorage]);
+  }, [defaultBotsEnabled, displayMode, enableSandboxStorage]);
 
   return (
     <div className={className}>
@@ -53,6 +57,7 @@ export function GameViewportPanel({
       <div className="hud-root">
         <CombatHud
           controller={viewportController}
+          displayMode={displayMode}
           hud={hudState}
           hudTuning={hudTuning}
           showPerformanceTools={showPerformanceTools}

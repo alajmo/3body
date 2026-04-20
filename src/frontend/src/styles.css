@@ -168,9 +168,7 @@ body {
 .edit-column--objects {
   overscroll-behavior: contain;
   scrollbar-width: thin;
-  scrollbar-color:
-    rgba(155, 196, 237, 0.64)
-    rgba(255, 255, 255, 0.04);
+  scrollbar-color: rgba(155, 196, 237, 0.64) rgba(255, 255, 255, 0.04);
   scrollbar-gutter: stable;
 }
 
@@ -182,7 +180,11 @@ body {
   margin: 8px 0;
   border-radius: 999px;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02)),
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.04),
+      rgba(255, 255, 255, 0.02)
+    ),
     rgba(7, 14, 24, 0.52);
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.03),
@@ -192,26 +194,24 @@ body {
 .edit-column--objects::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
   border-radius: 999px;
-  background:
-    linear-gradient(
-        180deg,
-        rgba(232, 244, 255, 0.82),
-        rgba(134, 188, 239, 0.66)
-      )
-      padding-box;
+  background: linear-gradient(
+      180deg,
+      rgba(232, 244, 255, 0.82),
+      rgba(134, 188, 239, 0.66)
+    )
+    padding-box;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.18),
     0 0 14px rgba(94, 149, 209, 0.18);
 }
 
 .edit-column--objects::-webkit-scrollbar-thumb:hover {
-  background:
-    linear-gradient(
-        180deg,
-        rgba(242, 248, 255, 0.92),
-        rgba(156, 208, 255, 0.82)
-      )
-      padding-box;
+  background: linear-gradient(
+      180deg,
+      rgba(242, 248, 255, 0.92),
+      rgba(156, 208, 255, 0.82)
+    )
+    padding-box;
 }
 
 .edit-column--preview {
@@ -558,11 +558,7 @@ body {
 
 .edit-object-preview--neutron-stars {
   background:
-    radial-gradient(
-      circle at 50% 2px,
-      rgba(86, 150, 255, 0.3),
-      transparent 52%
-    ),
+    radial-gradient(circle at 50% 2px, rgba(86, 150, 255, 0.3), transparent 52%),
     linear-gradient(180deg, #040914, #010203);
 }
 
@@ -612,8 +608,13 @@ body {
   width: 18px;
   height: 18px;
   border-radius: 999px;
-  background:
-    radial-gradient(circle, #ffffff 0%, #bfe8ff 22%, #4fc2ff 48%, rgba(30, 94, 174, 0.16) 100%);
+  background: radial-gradient(
+    circle,
+    #ffffff 0%,
+    #bfe8ff 22%,
+    #4fc2ff 48%,
+    rgba(30, 94, 174, 0.16) 100%
+  );
   box-shadow:
     0 0 10px rgba(116, 218, 255, 0.88),
     0 0 22px rgba(54, 145, 255, 0.44);
@@ -1874,9 +1875,15 @@ body {
 .combat-hud {
   position: absolute;
   inset: 0;
-  opacity: var(--hud-opacity, 1);
+  isolation: isolate;
+  opacity: calc(var(--hud-opacity, 1) * (1 - var(--hud-hit-flicker, 0) * 0.06));
+  filter: brightness(calc(1 + var(--hud-hit-flicker, 0) * 0.24))
+    saturate(calc(1 - var(--hud-hit-flicker, 0) * 0.12));
   pointer-events: none;
-  transition: opacity 140ms ease;
+  transition:
+    opacity 140ms ease,
+    filter 40ms linear;
+  text-shadow: var(--hud-mode-text-shadow, none);
   --cockpit-card-height: 52px;
   --hud-bottom-shortcuts-clearance: calc(
     var(--cockpit-card-height, 52px) +
@@ -1906,8 +1913,7 @@ body {
     ),
     rgba(4, 12, 16, 0.74);
   --hud-theme-shadow:
-    0 18px 44px rgba(0, 0, 0, 0.28),
-    0 0 26px rgba(73, 205, 174, 0.08),
+    0 18px 44px rgba(0, 0, 0, 0.28), 0 0 26px rgba(73, 205, 174, 0.08),
     inset 0 1px 0 rgba(241, 255, 252, 0.05),
     inset 0 0 32px rgba(73, 205, 174, 0.06);
   --hud-theme-section-bg:
@@ -1921,6 +1927,703 @@ body {
   --hud-theme-soft-fill: rgba(96, 255, 205, 0.1);
   --hud-theme-soft-fill-strong: rgba(96, 255, 205, 0.16);
   --hud-theme-outline-soft: rgba(110, 222, 233, 0.16);
+}
+
+.combat-hud::before,
+.combat-hud::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.combat-hud::before {
+  z-index: 0;
+}
+
+.combat-hud::after {
+  z-index: 1;
+}
+
+.combat-hud > * {
+  position: relative;
+  z-index: 2;
+}
+
+.combat-hud__screen-flicker,
+.combat-hud__damage-flash {
+  z-index: 1;
+}
+
+.combat-hud--mode-vhs {
+  --hud-mode-text-shadow:
+    0.06em 0 rgba(255, 89, 125, 0.28), -0.06em 0 rgba(95, 210, 255, 0.24),
+    0 0 10px rgba(255, 206, 140, 0.14);
+  --hud-theme-border: #ff8aa6;
+  --hud-theme-accent: #7bdcff;
+  --hud-theme-bright: #fff0d8;
+  --hud-theme-text: #fff5e7;
+  --hud-theme-text-soft: #f0d8d2;
+  --hud-theme-muted: #d4a3b7;
+  --hud-theme-surface:
+    repeating-linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.028) 0 1px,
+      rgba(0, 0, 0, 0) 1px 3px
+    ),
+    linear-gradient(180deg, rgba(36, 18, 28, 0.9), rgba(14, 6, 10, 0.76)),
+    radial-gradient(
+      circle at 50% 0%,
+      rgba(255, 110, 150, 0.12),
+      rgba(8, 4, 7, 0) 66%
+    ),
+    rgba(10, 4, 8, 0.84);
+  --hud-theme-surface-subtle:
+    repeating-linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.024) 0 1px,
+      rgba(0, 0, 0, 0) 1px 4px
+    ),
+    linear-gradient(180deg, rgba(30, 14, 22, 0.84), rgba(10, 4, 8, 0.68)),
+    radial-gradient(
+      circle at 50% 0%,
+      rgba(123, 220, 255, 0.08),
+      rgba(8, 4, 7, 0) 76%
+    ),
+    rgba(10, 4, 8, 0.74);
+  --hud-theme-shadow:
+    0 18px 44px rgba(0, 0, 0, 0.36), 0 0 22px rgba(255, 97, 166, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    inset 0 0 28px rgba(95, 210, 255, 0.06);
+  --hud-theme-section-bg:
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.034),
+      rgba(255, 255, 255, 0.012)
+    ),
+    rgba(27, 11, 18, 0.66);
+  --hud-theme-field-bg: rgba(26, 10, 18, 0.9);
+  --hud-theme-soft-fill: rgba(123, 220, 255, 0.12);
+  --hud-theme-soft-fill-strong: rgba(255, 138, 166, 0.18);
+  --hud-theme-outline-soft: rgba(255, 138, 166, 0.2);
+}
+
+.combat-hud--mode-vhs::before {
+  background:
+    repeating-linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.06) 0 1px,
+      rgba(255, 255, 255, 0) 1px 4px
+    ),
+    linear-gradient(
+      90deg,
+      rgba(255, 86, 124, 0.06),
+      rgba(255, 86, 124, 0) 16%,
+      rgba(125, 223, 255, 0) 84%,
+      rgba(125, 223, 255, 0.06)
+    );
+  opacity: 0.72;
+  mix-blend-mode: screen;
+}
+
+.combat-hud--mode-vhs::after {
+  background:
+    radial-gradient(
+      circle at 50% 50%,
+      rgba(255, 255, 255, 0) 46%,
+      rgba(0, 0, 0, 0.18) 86%,
+      rgba(0, 0, 0, 0.34) 100%
+    ),
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.06),
+      rgba(255, 255, 255, 0) 12%,
+      rgba(0, 0, 0, 0) 78%,
+      rgba(0, 0, 0, 0.18)
+    );
+  opacity: 0.58;
+}
+
+.combat-hud--mode-pixelArt {
+  font-family: "IBM Plex Mono", "SFMono-Regular", "Menlo", monospace;
+  letter-spacing: 0.02em;
+  --hud-mode-text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.42);
+  --hud-theme-border: #ffd36a;
+  --hud-theme-accent: #ffef9c;
+  --hud-theme-bright: #fff8db;
+  --hud-theme-text: #fff3bf;
+  --hud-theme-text-soft: #f1dfa1;
+  --hud-theme-muted: #cfba72;
+  --hud-theme-surface:
+    linear-gradient(180deg, rgba(31, 27, 15, 0.94), rgba(14, 10, 5, 0.84)),
+    rgba(12, 9, 4, 0.88);
+  --hud-theme-surface-subtle:
+    linear-gradient(180deg, rgba(28, 23, 12, 0.88), rgba(10, 8, 4, 0.76)),
+    rgba(10, 8, 4, 0.8);
+  --hud-theme-shadow:
+    4px 4px 0 rgba(0, 0, 0, 0.36), inset 0 1px 0 rgba(255, 243, 191, 0.08);
+  --hud-theme-section-bg:
+    linear-gradient(
+      180deg,
+      rgba(255, 243, 191, 0.05),
+      rgba(255, 243, 191, 0.015)
+    ),
+    rgba(22, 17, 8, 0.76);
+  --hud-theme-field-bg: rgba(28, 22, 10, 0.94);
+  --hud-theme-soft-fill: rgba(255, 211, 106, 0.12);
+  --hud-theme-soft-fill-strong: rgba(255, 211, 106, 0.2);
+  --hud-theme-outline-soft: rgba(255, 211, 106, 0.24);
+}
+
+.combat-hud--mode-pixelArt::before {
+  background:
+    linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.025) 0 1px,
+      rgba(255, 255, 255, 0) 1px 8px
+    ),
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.025) 0 1px,
+      rgba(255, 255, 255, 0) 1px 8px
+    );
+  opacity: 0.26;
+}
+
+.combat-hud--mode-pixelArt::after {
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 214, 127, 0.05),
+      rgba(255, 214, 127, 0) 18%,
+      rgba(0, 0, 0, 0) 78%,
+      rgba(0, 0, 0, 0.14)
+    ),
+    radial-gradient(
+      circle at 50% 50%,
+      rgba(255, 255, 255, 0) 52%,
+      rgba(0, 0, 0, 0.16) 100%
+    );
+  opacity: 0.5;
+}
+
+.combat-hud--mode-vectorAsteroids {
+  font-family: "IBM Plex Mono", "SFMono-Regular", "Menlo", monospace;
+  --hud-mode-text-shadow: 0 0 8px rgba(255, 255, 255, 0.08);
+  --hud-theme-border: #f4f4f4;
+  --hud-theme-accent: #ffffff;
+  --hud-theme-bright: #ffffff;
+  --hud-theme-text: #ffffff;
+  --hud-theme-text-soft: #dfdfdf;
+  --hud-theme-muted: #b8b8b8;
+  --hud-theme-surface:
+    linear-gradient(180deg, rgba(11, 11, 11, 0.96), rgba(0, 0, 0, 0.88)),
+    rgba(0, 0, 0, 0.9);
+  --hud-theme-surface-subtle:
+    linear-gradient(180deg, rgba(10, 10, 10, 0.9), rgba(0, 0, 0, 0.8)),
+    rgba(0, 0, 0, 0.84);
+  --hud-theme-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.08), 0 0 18px rgba(255, 255, 255, 0.08),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  --hud-theme-section-bg:
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.035),
+      rgba(255, 255, 255, 0.01)
+    ),
+    rgba(0, 0, 0, 0.82);
+  --hud-theme-field-bg: rgba(6, 6, 6, 0.96);
+  --hud-theme-soft-fill: rgba(255, 255, 255, 0.07);
+  --hud-theme-soft-fill-strong: rgba(255, 255, 255, 0.13);
+  --hud-theme-outline-soft: rgba(255, 255, 255, 0.16);
+}
+
+.combat-hud--mode-vectorAsteroids::before {
+  background:
+    radial-gradient(
+      circle at 50% 50%,
+      rgba(255, 255, 255, 0.02) 0 44%,
+      rgba(255, 255, 255, 0) 60%
+    ),
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.012),
+      rgba(255, 255, 255, 0) 12%,
+      rgba(0, 0, 0, 0) 88%,
+      rgba(255, 255, 255, 0.015)
+    );
+  opacity: 0.42;
+}
+
+.combat-hud--mode-vectorAsteroids::after {
+  background: radial-gradient(
+    circle at 50% 50%,
+    rgba(255, 255, 255, 0) 56%,
+    rgba(0, 0, 0, 0.2) 100%
+  );
+  opacity: 0.36;
+}
+
+.combat-hud--mode-pixelArt .hud-panel,
+.combat-hud--mode-pixelArt .hud-pill,
+.combat-hud--mode-pixelArt .planet-bar,
+.combat-hud--mode-pixelArt .ability-card,
+.combat-hud--mode-pixelArt .cockpit-summary,
+.combat-hud--mode-pixelArt .shortcut-chip,
+.combat-hud--mode-pixelArt .sandbox-stat,
+.combat-hud--mode-pixelArt .kill-feed__entry,
+.combat-hud--mode-pixelArt .hud-button,
+.combat-hud--mode-pixelArt .hud-field__input,
+.combat-hud--mode-pixelArt .hud-field__select {
+  backdrop-filter: none;
+  border-width: 2px;
+  border-radius: 4px;
+  box-shadow:
+    4px 4px 0 rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 rgba(255, 243, 191, 0.06);
+}
+
+.combat-hud--mode-vhs .hud-panel,
+.combat-hud--mode-vhs .hud-pill,
+.combat-hud--mode-vhs .planet-bar,
+.combat-hud--mode-vhs .ability-card,
+.combat-hud--mode-vhs .cockpit-summary,
+.combat-hud--mode-vhs .shortcut-chip,
+.combat-hud--mode-vhs .sandbox-stat,
+.combat-hud--mode-vhs .kill-feed__entry {
+  border-color: color-mix(
+    in srgb,
+    var(--hud-theme-border, #ff8aa6) 28%,
+    rgba(123, 220, 255, 0.12)
+  );
+  backdrop-filter: blur(calc(var(--hud-panel-blur, 14px) * 1.1));
+  box-shadow:
+    0 20px 46px rgba(0, 0, 0, 0.34),
+    0 0 28px rgba(255, 110, 150, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 0 24px rgba(95, 210, 255, 0.06);
+}
+
+.combat-hud--mode-vectorAsteroids .hud-panel,
+.combat-hud--mode-vectorAsteroids .hud-pill,
+.combat-hud--mode-vectorAsteroids .planet-bar,
+.combat-hud--mode-vectorAsteroids .ability-card,
+.combat-hud--mode-vectorAsteroids .cockpit-summary,
+.combat-hud--mode-vectorAsteroids .shortcut-chip,
+.combat-hud--mode-vectorAsteroids .sandbox-stat,
+.combat-hud--mode-vectorAsteroids .kill-feed__entry {
+  border-width: 1px;
+  border-radius: 0;
+  border-style: solid;
+  border-color: rgba(255, 255, 255, 0.52);
+  background: rgba(0, 0, 0, 0.84);
+  backdrop-filter: none;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.06),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  clip-path: polygon(
+    8px 0,
+    calc(100% - 8px) 0,
+    100% 8px,
+    100% calc(100% - 8px),
+    calc(100% - 8px) 100%,
+    8px 100%,
+    0 calc(100% - 8px),
+    0 8px
+  );
+}
+
+.combat-hud--mode-vhs .hud-panel__eyebrow,
+.combat-hud--mode-vhs .hud-pill__label,
+.combat-hud--mode-vhs .hud-field__label,
+.combat-hud--mode-vhs .sandbox-stat__label,
+.combat-hud--mode-vhs .shortcut-row__detail,
+.combat-hud--mode-vhs .ability-card__status,
+.combat-hud--mode-vhs .connection-indicator__label,
+.combat-hud--mode-vhs .match-timer__status {
+  letter-spacing: 0.14em;
+}
+
+.combat-hud--mode-vhs .match-timer__value,
+.combat-hud--mode-vhs .movement-hud__speed,
+.combat-hud--mode-vhs .connection-indicator__metric,
+.combat-hud--mode-vhs .combat-tray__metric,
+.combat-hud--mode-vhs .cockpit-summary__value,
+.combat-hud--mode-vhs .ability-card__value {
+  text-shadow:
+    0.045em 0 rgba(255, 94, 136, 0.28),
+    -0.045em 0 rgba(111, 225, 255, 0.24),
+    0 0 14px rgba(255, 214, 156, 0.08);
+}
+
+.combat-hud--mode-vhs .ability-card__meter-fill,
+.combat-hud--mode-vhs .cockpit-summary__fill,
+.combat-hud--mode-vhs .planet-bar__fill {
+  background: linear-gradient(90deg, #ff7db8, #8ee0ff 62%, #fff0c4);
+  box-shadow: 0 0 18px rgba(255, 125, 184, 0.18);
+}
+
+.combat-hud--mode-vhs .shortcut-chip__key,
+.combat-hud--mode-vhs .shortcut-row__key,
+.combat-hud--mode-vhs .ability-card__key,
+.combat-hud--mode-vhs .connection-indicator__state {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0)),
+    color-mix(
+      in srgb,
+      var(--hud-theme-accent, #7bdcff) 16%,
+      rgba(255, 255, 255, 0.04)
+    );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 0 12px rgba(123, 220, 255, 0.12);
+}
+
+.combat-hud--mode-vhs .minimap-panel__map-frame {
+  border-radius: 24px;
+  background:
+    repeating-linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.022) 0 1px,
+      rgba(255, 255, 255, 0) 1px 4px
+    ),
+    linear-gradient(180deg, rgba(24, 9, 17, 0.98), rgba(7, 3, 6, 0.96)),
+    radial-gradient(
+      circle at 50% 54%,
+      rgba(255, 109, 152, 0.16),
+      rgba(7, 3, 6, 0) 34%,
+      rgba(7, 3, 6, 0) 64%
+    );
+  box-shadow:
+    0 22px 50px rgba(0, 0, 0, 0.38),
+    inset 0 0 0 1px rgba(255, 242, 224, 0.05),
+    inset 0 0 46px rgba(123, 220, 255, 0.1);
+}
+
+.combat-hud--mode-vhs .minimap-panel__grid {
+  opacity: 0.58;
+}
+
+.combat-hud--mode-vhs .minimap-panel__scan-lines {
+  opacity: 0.62;
+  mix-blend-mode: screen;
+}
+
+.combat-hud--mode-vhs .minimap-panel__scan-sweep {
+  box-shadow:
+    0 0 18px rgba(255, 128, 180, 0.08),
+    0 0 34px rgba(111, 225, 255, 0.08);
+}
+
+.combat-hud--mode-pixelArt .hud-panel__eyebrow,
+.combat-hud--mode-pixelArt .hud-pill__label,
+.combat-hud--mode-pixelArt .hud-field__label,
+.combat-hud--mode-pixelArt .sandbox-stat__label,
+.combat-hud--mode-pixelArt .shortcut-row__detail,
+.combat-hud--mode-pixelArt .ability-card__status,
+.combat-hud--mode-pixelArt .connection-indicator__label,
+.combat-hud--mode-pixelArt .match-timer__status {
+  letter-spacing: 0.16em;
+}
+
+.combat-hud--mode-pixelArt .shortcut-chip__key,
+.combat-hud--mode-pixelArt .shortcut-row__key,
+.combat-hud--mode-pixelArt .ability-card__key,
+.combat-hud--mode-pixelArt .connection-indicator__state,
+.combat-hud--mode-pixelArt .hud-button,
+.combat-hud--mode-pixelArt .hud-field__input,
+.combat-hud--mode-pixelArt .hud-field__select {
+  border-width: 2px;
+  border-radius: 4px;
+  box-shadow:
+    2px 2px 0 rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 248, 219, 0.08);
+}
+
+.combat-hud--mode-pixelArt .match-timer__value,
+.combat-hud--mode-pixelArt .movement-hud__speed,
+.combat-hud--mode-pixelArt .connection-indicator__metric,
+.combat-hud--mode-pixelArt .combat-tray__metric,
+.combat-hud--mode-pixelArt .cockpit-summary__value,
+.combat-hud--mode-pixelArt .ability-card__value {
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-shadow:
+    2px 2px 0 rgba(0, 0, 0, 0.42),
+    0 0 8px rgba(255, 211, 106, 0.08);
+}
+
+.combat-hud--mode-pixelArt .ability-card__meter,
+.combat-hud--mode-pixelArt .cockpit-summary__track,
+.combat-hud--mode-pixelArt .planet-bar__track {
+  height: 8px;
+  border-radius: 0;
+}
+
+.combat-hud--mode-pixelArt .ability-card__meter-fill,
+.combat-hud--mode-pixelArt .cockpit-summary__fill,
+.combat-hud--mode-pixelArt .planet-bar__fill {
+  border-radius: 0;
+  background: repeating-linear-gradient(
+    90deg,
+    #ffd36a 0 10px,
+    #fff2b0 10px 20px
+  );
+  box-shadow: none;
+}
+
+.combat-hud--mode-pixelArt .minimap-panel__map-frame {
+  border-width: 2px;
+  border-radius: 6px;
+  background:
+    linear-gradient(180deg, rgba(26, 21, 11, 0.98), rgba(10, 8, 4, 0.96)),
+    linear-gradient(
+      90deg,
+      rgba(255, 214, 127, 0.05) 0 2px,
+      rgba(255, 214, 127, 0) 2px 10px
+    ),
+    linear-gradient(
+      180deg,
+      rgba(255, 214, 127, 0.05) 0 2px,
+      rgba(255, 214, 127, 0) 2px 10px
+    );
+  box-shadow:
+    4px 4px 0 rgba(0, 0, 0, 0.36),
+    inset 0 0 0 1px rgba(255, 248, 219, 0.05);
+}
+
+.combat-hud--mode-pixelArt .minimap-panel__grid {
+  opacity: 0.86;
+  background-size:
+    20% 20%,
+    20% 20%,
+    10% 10%,
+    10% 10%,
+    100% 100%;
+}
+
+.combat-hud--mode-pixelArt .minimap-panel__scan-lines {
+  opacity: 0.24;
+  background: repeating-linear-gradient(
+    180deg,
+    rgba(255, 242, 176, 0.08) 0 2px,
+    rgba(255, 242, 176, 0) 2px 6px
+  );
+}
+
+.combat-hud--mode-vectorAsteroids .hud-panel__eyebrow,
+.combat-hud--mode-vectorAsteroids .hud-pill__label,
+.combat-hud--mode-vectorAsteroids .hud-field__label,
+.combat-hud--mode-vectorAsteroids .sandbox-stat__label,
+.combat-hud--mode-vectorAsteroids .shortcut-row__detail,
+.combat-hud--mode-vectorAsteroids .ability-card__status,
+.combat-hud--mode-vectorAsteroids .connection-indicator__label,
+.combat-hud--mode-vectorAsteroids .match-timer__status,
+.combat-hud--mode-vectorAsteroids .shortcut-chip__detail,
+.combat-hud--mode-vectorAsteroids .cockpit-summary__label {
+  letter-spacing: 0.14em;
+}
+
+.combat-hud--mode-vectorAsteroids .hud-panel,
+.combat-hud--mode-vectorAsteroids .hud-pill,
+.combat-hud--mode-vectorAsteroids .planet-bar,
+.combat-hud--mode-vectorAsteroids .match-timer,
+.combat-hud--mode-vectorAsteroids .connection-indicator,
+.combat-hud--mode-vectorAsteroids .shortcut-chip,
+.combat-hud--mode-vectorAsteroids .cockpit-summary,
+.combat-hud--mode-vectorAsteroids .ability-card,
+.combat-hud--mode-vectorAsteroids .sandbox-stat,
+.combat-hud--mode-vectorAsteroids .kill-feed__entry {
+  background: rgba(0, 0, 0, 0.88);
+}
+
+.combat-hud--mode-vectorAsteroids .shortcut-chip__key,
+.combat-hud--mode-vectorAsteroids .shortcut-row__key,
+.combat-hud--mode-vectorAsteroids .ability-card__key,
+.combat-hud--mode-vectorAsteroids .connection-indicator__state,
+.combat-hud--mode-vectorAsteroids .hud-button,
+.combat-hud--mode-vectorAsteroids .hud-field__input,
+.combat-hud--mode-vectorAsteroids .hud-field__select {
+  border: 1px solid rgba(255, 255, 255, 0.56);
+  border-radius: 0;
+  background: #000;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  clip-path: polygon(
+    6px 0,
+    calc(100% - 6px) 0,
+    100% 6px,
+    100% calc(100% - 6px),
+    calc(100% - 6px) 100%,
+    6px 100%,
+    0 calc(100% - 6px),
+    0 6px
+  );
+}
+
+.combat-hud--mode-vectorAsteroids .match-timer__value,
+.combat-hud--mode-vectorAsteroids .movement-hud__speed,
+.combat-hud--mode-vectorAsteroids .connection-indicator__metric,
+.combat-hud--mode-vectorAsteroids .combat-tray__metric,
+.combat-hud--mode-vectorAsteroids .cockpit-summary__value,
+.combat-hud--mode-vectorAsteroids .ability-card__value,
+.combat-hud--mode-vectorAsteroids .shortcut-chip__label {
+  text-shadow: none;
+}
+
+.combat-hud--mode-vectorAsteroids .ability-card::before {
+  opacity: 0.16;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.18),
+    transparent 34%
+  );
+}
+
+.combat-hud--mode-vectorAsteroids .ability-card__meter,
+.combat-hud--mode-vectorAsteroids .cockpit-summary__track,
+.combat-hud--mode-vectorAsteroids .planet-bar__track {
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+
+.combat-hud--mode-vectorAsteroids .ability-card__meter-fill,
+.combat-hud--mode-vectorAsteroids .cockpit-summary__fill,
+.combat-hud--mode-vectorAsteroids .planet-bar__fill {
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.72), #ffffff);
+  box-shadow: none;
+}
+
+.combat-hud--mode-vectorAsteroids .combat-tray__metric--selected,
+.combat-hud--mode-vectorAsteroids .shortcut-chip--active {
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.14),
+    0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.combat-hud--mode-vectorAsteroids .minimap-panel__map-frame {
+  border-width: 1px;
+  border-radius: 0;
+  background:
+    linear-gradient(180deg, rgba(8, 8, 8, 0.98), rgba(0, 0, 0, 0.96)),
+    rgba(0, 0, 0, 0.98);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.06),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  clip-path: polygon(
+    12px 0,
+    calc(100% - 12px) 0,
+    100% 12px,
+    100% calc(100% - 12px),
+    calc(100% - 12px) 100%,
+    12px 100%,
+    0 calc(100% - 12px),
+    0 12px
+  );
+}
+
+.combat-hud--mode-vectorAsteroids .minimap-panel__map-frame::before {
+  opacity: 0.16;
+  background:
+    linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.06),
+      rgba(255, 255, 255, 0) 30%,
+      rgba(255, 255, 255, 0) 70%,
+      rgba(255, 255, 255, 0.03)
+    ),
+    none;
+}
+
+.combat-hud--mode-vectorAsteroids .minimap-panel__map-frame::after {
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    inset 0 0 26px rgba(255, 255, 255, 0.04);
+}
+
+.combat-hud--mode-vectorAsteroids .minimap-panel__grid {
+  opacity: 0.76;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.18) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.18) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.08) 1px, transparent 1px), none;
+}
+
+.combat-hud--mode-vectorAsteroids .minimap-panel__phosphor,
+.combat-hud--mode-vectorAsteroids .minimap-panel__scan-lines,
+.combat-hud--mode-vectorAsteroids .minimap-panel__scan-sweep {
+  opacity: 0.16;
+  mix-blend-mode: normal;
+}
+
+.combat-hud--mode-vectorAsteroids .minimap__entity {
+  filter: none;
+}
+
+.combat-hud--mode-vectorAsteroids .minimap__marker-highlight {
+  stroke: rgba(255, 255, 255, 0.94);
+}
+
+.combat-hud--mode-vectorAsteroids .minimap__marker--black-hole,
+.combat-hud--mode-vectorAsteroids .minimap__marker--cache,
+.combat-hud--mode-vectorAsteroids .minimap__marker--sun,
+.combat-hud--mode-vectorAsteroids .minimap__marker--planet {
+  fill: rgba(0, 0, 0, 0.84);
+  stroke: rgba(255, 255, 255, 0.9);
+}
+
+.combat-hud--mode-vectorAsteroids .minimap__marker-core--black-hole,
+.combat-hud--mode-vectorAsteroids .minimap__marker--cache-latch,
+.combat-hud--mode-vectorAsteroids .minimap__marker--cache-core {
+  fill: rgba(255, 255, 255, 0.14);
+  stroke: rgba(255, 255, 255, 0.9);
+}
+
+.combat-hud--mode-vectorAsteroids .hud-compass__ring {
+  background: rgba(0, 0, 0, 0.72);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.combat-hud--mode-vectorAsteroids .hud-compass__ring::before,
+.combat-hud--mode-vectorAsteroids .hud-compass__ring::after {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.combat-hud--mode-vectorAsteroids .hud-compass__needle::before {
+  filter: none;
+}
+
+.combat-hud--mode-vectorAsteroids .hud-compass__hub {
+  box-shadow: none;
+}
+
+.combat-hud__screen-flicker {
+  position: absolute;
+  inset: 0;
+  opacity: var(--screen-flicker-opacity, 0);
+  background:
+    repeating-linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.08) 0 2px,
+      rgba(255, 255, 255, 0) 2px 6px
+    ),
+    radial-gradient(
+      circle at 50% 54%,
+      rgba(255, 246, 224, 0.2),
+      rgba(255, 246, 224, 0) 40%
+    ),
+    linear-gradient(
+      180deg,
+      rgba(255, 214, 187, 0.16),
+      rgba(255, 104, 70, 0.08) 52%,
+      rgba(255, 104, 70, 0) 100%
+    );
+  mix-blend-mode: screen;
+  animation: combat-hud-hit-screen-flicker 120ms steps(3, end) infinite;
+  transition: opacity 34ms linear;
 }
 
 .combat-hud__damage-flash {
@@ -1941,6 +2644,60 @@ body {
     );
   mix-blend-mode: screen;
   transition: opacity 34ms linear;
+}
+
+.combat-hud[data-hit-flicker="active"] .hud-panel,
+.combat-hud[data-hit-flicker="active"] .hud-pill,
+.combat-hud[data-hit-flicker="active"] .planet-bar,
+.combat-hud[data-hit-flicker="active"] .ability-card,
+.combat-hud[data-hit-flicker="active"] .weapon-card,
+.combat-hud[data-hit-flicker="active"] .cockpit-summary,
+.combat-hud[data-hit-flicker="active"] .shortcut-chip,
+.combat-hud[data-hit-flicker="active"] .shortcuts-dock__section,
+.combat-hud[data-hit-flicker="active"] .sandbox-stat,
+.combat-hud[data-hit-flicker="active"] .kill-feed__entry,
+.combat-hud[data-hit-flicker="active"] .movement-hud,
+.combat-hud[data-hit-flicker="active"] .minimap-panel {
+  animation: combat-hud-hit-panel-flicker 90ms steps(2, end) infinite;
+}
+
+@keyframes combat-hud-hit-screen-flicker {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+    filter: blur(0);
+  }
+
+  35% {
+    transform: translate3d(1px, -1px, 0);
+    filter: blur(0.3px);
+  }
+
+  68% {
+    transform: translate3d(-1px, 0.5px, 0);
+    filter: blur(0.15px);
+  }
+}
+
+@keyframes combat-hud-hit-panel-flicker {
+  0%,
+  100% {
+    opacity: 1;
+    filter: brightness(calc(1 + var(--hud-hit-flicker, 0) * 0.18));
+    transform: translate3d(0, 0, 0);
+  }
+
+  38% {
+    opacity: calc(1 - var(--hud-hit-flicker, 0) * 0.26);
+    filter: brightness(calc(1 - var(--hud-hit-flicker, 0) * 0.14));
+    transform: translate3d(-1px, 0.4px, 0);
+  }
+
+  72% {
+    opacity: calc(1 - var(--hud-hit-flicker, 0) * 0.12);
+    filter: brightness(calc(1 + var(--hud-hit-flicker, 0) * 0.08));
+    transform: translate3d(0.8px, -0.3px, 0);
+  }
 }
 
 .combat-hud__movement-hud {
@@ -2042,8 +2799,11 @@ body {
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
-  scrollbar-color:
-    color-mix(in srgb, var(--hud-theme-accent, #9ac6f0) 42%, transparent)
+  scrollbar-color: color-mix(
+      in srgb,
+      var(--hud-theme-accent, #9ac6f0) 42%,
+      transparent
+    )
     rgba(255, 255, 255, 0.04);
   scrollbar-gutter: stable;
 }
@@ -2077,7 +2837,8 @@ section.sandbox-panel--dock {
     padding-box;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.14),
-    0 0 10px color-mix(in srgb, var(--hud-theme-accent, #518ac4) 18%, transparent);
+    0 0 10px
+    color-mix(in srgb, var(--hud-theme-accent, #518ac4) 18%, transparent);
 }
 
 .sandbox-panel--dock::-webkit-scrollbar-thumb:hover {
@@ -2230,7 +2991,8 @@ section.sandbox-panel--dock {
 .hud-field__select:focus-visible {
   outline: none;
   border-color: color-mix(in srgb, var(--hud-theme-accent, #98d0ff) 72%, white);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--hud-theme-accent, #4c84bc) 18%, transparent);
+  box-shadow: 0 0 0 3px
+    color-mix(in srgb, var(--hud-theme-accent, #4c84bc) 18%, transparent);
 }
 
 .hud-field {
@@ -2342,8 +3104,10 @@ section.sandbox-panel--dock {
     );
   box-shadow:
     0 20px 48px rgba(0, 0, 0, 0.28),
-    inset 0 0 0 1px color-mix(in srgb, var(--hud-theme-bright, #b8fff4) 8%, transparent),
-    inset 0 0 40px color-mix(in srgb, var(--hud-theme-accent, #49cdae) 16%, transparent);
+    inset 0 0 0 1px
+    color-mix(in srgb, var(--hud-theme-bright, #b8fff4) 8%, transparent),
+    inset 0 0 40px
+    color-mix(in srgb, var(--hud-theme-accent, #49cdae) 16%, transparent);
 }
 
 .minimap-panel__map-frame::before,
@@ -2986,7 +3750,8 @@ section.sandbox-panel--dock {
   );
   overflow: hidden;
   box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--hud-theme-bright, #ffffff) 6%, transparent),
+    inset 0 0 0 1px
+    color-mix(in srgb, var(--hud-theme-bright, #ffffff) 6%, transparent),
     0 0 calc(22px * var(--cockpit-hit, 0)) rgba(255, 114, 78, 0.16);
 }
 
@@ -3055,7 +3820,8 @@ section.sandbox-panel--dock {
     ),
     linear-gradient(180deg, rgba(241, 255, 252, 0.06), rgba(6, 10, 18, 0.18));
   box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--hud-theme-bright, #ffffff) 6%, transparent),
+    inset 0 0 0 1px
+    color-mix(in srgb, var(--hud-theme-bright, #ffffff) 6%, transparent),
     0 0 18px rgba(73, 205, 174, 0.14);
 }
 
@@ -3109,7 +3875,8 @@ section.sandbox-panel--dock {
 
 .hud-compass__needle::after {
   bottom: 7px;
-  border-top: 12px solid color-mix(in srgb, var(--hud-theme-muted, #82abd6) 72%, transparent);
+  border-top: 12px solid
+    color-mix(in srgb, var(--hud-theme-muted, #82abd6) 72%, transparent);
 }
 
 .hud-compass__hub {

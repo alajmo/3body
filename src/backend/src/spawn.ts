@@ -1,33 +1,40 @@
 import {
   ARCHETYPES,
   ARENA_RADIUS,
+  type ArchetypeId,
   BOOST_SPEC,
   CACHE_RADIUS,
   CACHE_SPEC,
   CACHE_TANGENTIAL_SPEED_MAX,
   CACHE_TANGENTIAL_SPEED_MIN,
+  type Cache,
+  clampOrbitPatternDistanceScale,
   createInitialAmmo,
   createNeutronStars,
   fromAngle,
-  G,
+  type GameTuningDocument,
+  getOrbitGameplayPlanet,
+  getOrbitGameplaySun,
+  getOrbitPatternTrack,
+  getOrbitPlanetCircleRadius,
   getOuterRingMax,
   getOuterRingMin,
   getShieldLoadCapacity,
-  NEUTRON_STAR_SPEC,
   mulberry32,
+  NEUTRON_STAR_SPEC,
   nextFloat,
   PLANET_HP,
-  rollCacheContents,
-  scale,
-  SUN_MASS,
-  type ArchetypeId,
-  type Cache,
   type PlanetPrivateState,
   type PlanetPublic,
   type PlayerId,
+  resolveEditorFixedOrbitPatternId,
+  rollCacheContents,
   type Sun,
+  sampleOrbitPatternTrack,
+  scale,
   type World,
 } from "@3body/shared";
+import { getRuntimeEditorTuningDocument } from "./editor-tuning";
 import type { EntityIdSequence } from "./ids";
 
 interface SpawnPlayer {
@@ -35,32 +42,151 @@ interface SpawnPlayer {
   archetypeId: ArchetypeId;
 }
 
-const SUN_RADIUS = 96;
-const SUN_RING_RADIUS = 360;
-const SUN_TANGENTIAL_SPEED = 78;
-const PLANET_RADIUS = 34;
-// Keep authoritative spawns aligned with the safer local sandbox opener for now.
-const PLANET_RING_RADIUS = 1_150;
+const createScaledSunSeeds = (
+  tuning: GameTuningDocument["gameplay"]["orbits"],
+): Array<Pick<Sun, "mass" | "pos" | "radius" | "vel">> => {
+  const tunedSuns = tuning.suns.map((_, index) => {
+    const tunedSun = getOrbitGameplaySun(tuning, index);
 
-const createSun = (
-  index: number,
+    return {
+      mass: tunedSun.mass,
+      pos: { x: tunedSun.pos.x, y: tunedSun.pos.y },
+      radius: tunedSun.radius,
+      vel: { x: tunedSun.vel.x, y: tunedSun.vel.y },
+    };
+  });
+
+  if (tuning.sunStartDistanceScale === 1) {
+    return tunedSuns;
+  }
+
+  const totalMass = tunedSuns.reduce((sum, sun) => sum + sun.mass, 0);
+  const centerPosition =
+    totalMass > 0
+      ? tunedSuns.reduce(
+          (center, sun) => ({
+            x: center.x + (sun.pos.x * sun.mass) / totalMass,
+            y: center.y + (sun.pos.y * sun.mass) / totalMass,
+          }),
+          { x: 0, y: 0 },
+        )
+      : { x: 0, y: 0 };
+  const centerVelocity =
+    totalMass > 0
+      ? tunedSuns.reduce(
+          (center, sun) => ({
+            x: center.x + (sun.vel.x * sun.mass) / totalMass,
+            y: center.y + (sun.vel.y * sun.mass) / totalMass,
+          }),
+          { x: 0, y: 0 },
+        )
+      : { x: 0, y: 0 };
+  const velocityScale = 1 / Math.sqrt(tuning.sunStartDistanceScale);
+
+  return tunedSuns.map((sun) => ({
+    ...sun,
+    pos: {
+      x:
+        centerPosition.x +
+        (sun.pos.x - centerPosition.x) * tuning.sunStartDistanceScale,
+      y:
+        centerPosition.y +
+        (sun.pos.y - centerPosition.y) * tuning.sunStartDistanceScale,
+    },
+    vel: {
+      x: centerVelocity.x + (sun.vel.x - centerVelocity.x) * velocityScale,
+      y: centerVelocity.y + (sun.vel.y - centerVelocity.y) * velocityScale,
+    },
+  }));
+};
+
+const createInitialSuns = (
   entityIds: EntityIdSequence,
-  rng: () => number,
-): Sun => {
-  const angle = (index / 3) * Math.PI * 2;
-  const tangent = fromAngle(angle + Math.PI / 2);
-  const speed = SUN_TANGENTIAL_SPEED * (0.92 + rng() * 0.16);
+  tuningDocument: GameTuningDocument,
+): {
+  orbitStarMotion: World["orbitStarMotion"];
+  suns: [Sun, Sun, Sun];
+} => {
+  const orbitTuning = tuningDocument.gameplay.orbits;
+  const resolvedPatternId = resolveEditorFixedOrbitPatternId(
+    orbitTuning.starMotion.patternId,
+  );
+  const sunIds = [
+    entityIds.nextEntityId(),
+    entityIds.nextEntityId(),
+    entityIds.nextEntityId(),
+  ] as const;
+
+  if (orbitTuning.starMotion.mode === "fixedPattern") {
+    const fixedPatternSuns = orbitTuning.suns.map((_, index) => {
+      const tunedSun = getOrbitGameplaySun(orbitTuning, index);
+
+      return {
+        mass: tunedSun.mass,
+        radius: tunedSun.radius,
+      };
+    });
+    const safeDistanceScale = clampOrbitPatternDistanceScale(
+      resolvedPatternId,
+      orbitTuning.starPatternDistanceScale,
+      fixedPatternSuns,
+    );
+    const sampledSuns = sampleOrbitPatternTrack(
+      getOrbitPatternTrack(resolvedPatternId),
+      0,
+      orbitTuning.starMotion.speed,
+      safeDistanceScale,
+    );
+
+    return {
+      orbitStarMotion: {
+        mode: "fixedPattern",
+        elapsedSec: 0,
+        patternId: resolvedPatternId,
+        speed: orbitTuning.starMotion.speed,
+        distanceScale: safeDistanceScale,
+        sunIds: [sunIds[0], sunIds[1], sunIds[2]],
+      },
+      suns: sunIds.map((sunId, index) => {
+        const tunedSun = getOrbitGameplaySun(orbitTuning, index);
+        const sampledSun = sampledSuns[index]!;
+
+        return {
+          id: sunId,
+          kind: "sun",
+          mass: tunedSun.mass,
+          radius: tunedSun.radius,
+          pos: {
+            x: sampledSun.pos.x,
+            y: sampledSun.pos.y,
+          },
+          vel: {
+            x: sampledSun.vel.x,
+            y: sampledSun.vel.y,
+          },
+        };
+      }) as [Sun, Sun, Sun],
+    };
+  }
+
+  const scaledSuns = createScaledSunSeeds(orbitTuning);
 
   return {
-    id: entityIds.nextEntityId(),
-    kind: "sun",
-    mass: SUN_MASS,
-    radius: SUN_RADIUS,
-    pos: {
-      x: Math.cos(angle) * SUN_RING_RADIUS,
-      y: Math.sin(angle) * SUN_RING_RADIUS,
-    },
-    vel: scale(tangent, speed),
+    orbitStarMotion: undefined,
+    suns: sunIds.map((sunId, index) => ({
+      id: sunId,
+      kind: "sun",
+      mass: scaledSuns[index]!.mass,
+      radius: scaledSuns[index]!.radius,
+      pos: {
+        x: scaledSuns[index]!.pos.x,
+        y: scaledSuns[index]!.pos.y,
+      },
+      vel: {
+        x: scaledSuns[index]!.vel.x,
+        y: scaledSuns[index]!.vel.y,
+      },
+    })) as [Sun, Sun, Sun],
   };
 };
 
@@ -69,10 +195,28 @@ const createPlanet = (
   count: number,
   player: SpawnPlayer,
   entityIds: EntityIdSequence,
+  tuningDocument: GameTuningDocument,
 ): { planet: PlanetPublic; privateState: PlanetPrivateState } => {
-  const angle = (index / count) * Math.PI * 2;
-  const tangent = fromAngle(angle + Math.PI / 2);
-  const orbitalSpeed = Math.sqrt((G * (SUN_MASS * 3)) / PLANET_RING_RADIUS);
+  const orbitTuning = tuningDocument.gameplay.orbits;
+  const leadPlanet = getOrbitGameplayPlanet(orbitTuning, 0);
+  const leadAngle = Math.atan2(leadPlanet.pos.y, leadPlanet.pos.x);
+  const angleStep = (Math.PI * 2) / Math.max(1, count);
+  const tunedPlanet = getOrbitGameplayPlanet(orbitTuning, index);
+  const resolvedAngle = leadAngle + angleStep * index;
+  const tangent = fromAngle(resolvedAngle + Math.PI / 2);
+  const templateRadius = Math.max(
+    Math.hypot(tunedPlanet.pos.x, tunedPlanet.pos.y),
+    1,
+  );
+  const templateSpeed = Math.hypot(tunedPlanet.vel.x, tunedPlanet.vel.y);
+  const planetRingRadius = Math.min(
+    getOrbitPlanetCircleRadius(orbitTuning),
+    ARENA_RADIUS,
+  );
+  const orbitalSpeed =
+    templateSpeed *
+    Math.sqrt(templateRadius / planetRingRadius) *
+    orbitTuning.planetStartSpeedScale;
   const planetId = entityIds.nextEntityId();
   const boostCharges = Math.max(
     1,
@@ -86,10 +230,10 @@ const createPlanet = (
       playerId: player.playerId,
       archetype: player.archetypeId,
       hp: PLANET_HP,
-      radius: PLANET_RADIUS,
+      radius: tunedPlanet.radius,
       pos: {
-        x: Math.cos(angle) * PLANET_RING_RADIUS,
-        y: Math.sin(angle) * PLANET_RING_RADIUS,
+        x: Math.cos(resolvedAngle) * planetRingRadius,
+        y: Math.sin(resolvedAngle) * planetRingRadius,
       },
       vel: scale(tangent, orbitalSpeed),
       shieldAimDir: { x: 1, y: 0 },
@@ -151,7 +295,11 @@ export const createInitialMatchState = (
   privateStates: Map<PlayerId, PlanetPrivateState>;
 } => {
   const rng = mulberry32(seed);
-  const suns = [0, 1, 2].map((index) => createSun(index, entityIds, rng));
+  const tuningDocument = getRuntimeEditorTuningDocument();
+  const { orbitStarMotion, suns } = createInitialSuns(
+    entityIds,
+    tuningDocument,
+  );
   const privateStates = new Map<PlayerId, PlanetPrivateState>();
   const planets = players.map((player, index) => {
     const { planet, privateState } = createPlanet(
@@ -159,6 +307,7 @@ export const createInitialMatchState = (
       players.length,
       player,
       entityIds,
+      tuningDocument,
     );
     privateStates.set(player.playerId, privateState);
     return planet;
@@ -183,6 +332,7 @@ export const createInitialMatchState = (
       caches,
       debris: [],
       arenaRadius: ARENA_RADIUS,
+      orbitStarMotion,
     },
     privateStates,
   };

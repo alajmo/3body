@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   clamp,
+  DEFAULT_VIEWPORT_DISPLAY_MODE,
   type HudVisualTuning,
   PLANET_HP,
   ROCKET_SPECS,
   type RocketKind,
+  type ViewportDisplayMode,
 } from "@3body/shared";
 import type {
   GameViewportController,
@@ -576,19 +578,24 @@ function CockpitMovementHud({
 
 export function CombatHud({
   controller,
+  displayMode = DEFAULT_VIEWPORT_DISPLAY_MODE,
   hud,
   hudTuning,
   showPerformanceTools = true,
 }: {
   controller: GameViewportController | null;
+  displayMode?: ViewportDisplayMode;
   hud: GameViewportHudState;
   hudTuning: HudVisualTuning;
   showPerformanceTools?: boolean;
 }) {
   const playerHpRatio = clamp(hud.playerHp / PLANET_HP, 0, 1);
+  const screenFlickerOpacity = Math.max(hud.damageFlash, hud.hudFlicker * 0.82);
   const hudStyle = {
     "--damage-flash-opacity": `${hud.damageFlash}`,
+    "--hud-hit-flicker": `${hud.hudFlicker}`,
     "--hud-opacity": `${hud.hudOpacity}`,
+    "--screen-flicker-opacity": `${screenFlickerOpacity}`,
     "--hud-bottom-inset": `${hudTuning.bottomInset}px`,
     "--hud-card-radius": `${hudTuning.cardRadius}px`,
     "--hud-compact-card-radius": `${hudTuning.compactCardRadius}px`,
@@ -628,11 +635,14 @@ export function CombatHud({
 
   return (
     <div
-      className={`combat-hud${hasSideDock ? " combat-hud--has-side-dock" : ""}${
-        hasBottomShortcuts ? " combat-hud--has-bottom-shortcuts" : ""
-      }`}
+      className={`combat-hud combat-hud--mode-${displayMode}${
+        hasSideDock ? " combat-hud--has-side-dock" : ""
+      }${hasBottomShortcuts ? " combat-hud--has-bottom-shortcuts" : ""}`}
+      data-display-mode={displayMode}
+      data-hit-flicker={hud.hudFlicker > 0.01 ? "active" : "idle"}
       style={hudStyle}
     >
+      <div className="combat-hud__screen-flicker" aria-hidden="true" />
       <div className="combat-hud__damage-flash" aria-hidden="true" />
       {hud.sandboxControlsEnabled ? (
         <div className="combat-hud__movement-hud">

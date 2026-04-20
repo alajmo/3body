@@ -1,4 +1,8 @@
-import { CURRENT_GAME_TUNING, DEFAULT_GAME_TUNING } from "@3body/shared";
+import {
+  CURRENT_GAME_TUNING,
+  clampOrbitPatternDistanceScale,
+  DEFAULT_GAME_TUNING,
+} from "@3body/shared";
 import {
   fireEvent,
   render,
@@ -21,6 +25,7 @@ type EditorPreviewStageProps = {
   documentValue: typeof CURRENT_GAME_TUNING;
   externalRevision?: number;
   itemId: string;
+  overviewDisplayMode?: string;
   showHud: boolean;
 };
 
@@ -31,6 +36,7 @@ vi.mock("./EditorPreviewStage", () => ({
       <div
         data-testid="editor-preview-stage"
         data-item-id={props.itemId}
+        data-overview-display-mode={props.overviewDisplayMode ?? ""}
         data-preview-revision={String(props.externalRevision ?? 0)}
         data-show-hud={String(props.showHud)}
       />
@@ -90,6 +96,7 @@ describe("EditPage", () => {
     editorPreviewStageMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
     applyRuntimeTuningDocument(CURRENT_GAME_TUNING);
+    window.localStorage.clear();
     window.history.pushState({}, "", "/edit");
   });
 
@@ -164,6 +171,50 @@ describe("EditPage", () => {
       "cannon",
     );
     expect(screen.queryByLabelText("Planet size")).not.toBeInTheDocument();
+  });
+
+  it("saves overview display mode changes into tuning", async () => {
+    mockTuningFetch();
+
+    render(<EditPage />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+    });
+
+    expect(screen.getByTestId("editor-preview-stage")).toHaveAttribute(
+      "data-item-id",
+      "overview",
+    );
+    expect(screen.getByTestId("editor-preview-stage")).toHaveAttribute(
+      "data-overview-display-mode",
+      "default",
+    );
+
+    fireEvent.change(screen.getByLabelText("Display mode"), {
+      target: { value: "vectorAsteroids" },
+    });
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    expect(screen.getByTestId("editor-preview-stage")).toHaveAttribute(
+      "data-overview-display-mode",
+      "vectorAsteroids",
+    );
+    const saveCall = fetchMock.mock.calls[1];
+    expect(saveCall?.[0]).toBe("/api/editor/tuning");
+    expect(saveCall?.[1]).toMatchObject({
+      method: "PUT",
+    });
+    expect(
+      JSON.parse(String((saveCall?.[1] as RequestInit | undefined)?.body)),
+    ).toMatchObject({
+      visuals: {
+        displayMode: "vectorAsteroids",
+      },
+    });
   });
 
   it("renders missile scale controls and saves rocket visual scale changes", async () => {
@@ -660,7 +711,7 @@ describe("EditPage", () => {
     });
   });
 
-  it("renders numeric editor inputs without min or max attributes", async () => {
+  it("renders asteroid-field controls under background and saves per-size tuning changes", async () => {
     mockTuningFetch();
 
     render(<EditPage />);
@@ -671,12 +722,91 @@ describe("EditPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Background/i }));
 
-    const spinbuttons = await screen.findAllByRole("spinbutton");
-    expect(spinbuttons.length).toBeGreaterThan(0);
-    for (const input of spinbuttons) {
-      expect(input).not.toHaveAttribute("min");
-      expect(input).not.toHaveAttribute("max");
-    }
+    const microDamageInput = await screen.findByLabelText(
+      "Micro asteroid damage",
+    );
+    const microRandomizationInput = screen.getByLabelText(
+      "Micro inward drift randomization",
+    );
+    const smallDamageInput = screen.getByLabelText("Small asteroid damage");
+    const smallRandomizationInput = screen.getByLabelText(
+      "Small inward drift randomization",
+    );
+    const largeDamageInput = screen.getByLabelText("Large asteroid damage");
+    const largeRandomizationInput = screen.getByLabelText(
+      "Large inward drift randomization",
+    );
+
+    expect(microDamageInput).toHaveValue(
+      CURRENT_GAME_TUNING.gameplay.arena.asteroidField.micro.damage,
+    );
+    expect(microRandomizationInput).toHaveValue(
+      CURRENT_GAME_TUNING.gameplay.arena.asteroidField.micro.randomization,
+    );
+    expect(smallDamageInput).toHaveValue(
+      CURRENT_GAME_TUNING.gameplay.arena.asteroidField.small.damage,
+    );
+    expect(smallRandomizationInput).toHaveValue(
+      CURRENT_GAME_TUNING.gameplay.arena.asteroidField.small.randomization,
+    );
+    expect(largeDamageInput).toHaveValue(
+      CURRENT_GAME_TUNING.gameplay.arena.asteroidField.large.damage,
+    );
+    expect(largeRandomizationInput).toHaveValue(
+      CURRENT_GAME_TUNING.gameplay.arena.asteroidField.large.randomization,
+    );
+
+    fireEvent.change(microDamageInput, { target: { value: "0.75" } });
+    fireEvent.blur(microDamageInput);
+    fireEvent.change(microRandomizationInput, { target: { value: "0.15" } });
+    fireEvent.blur(microRandomizationInput);
+    fireEvent.change(smallDamageInput, { target: { value: "2.25" } });
+    fireEvent.blur(smallDamageInput);
+    fireEvent.change(smallRandomizationInput, { target: { value: "0.35" } });
+    fireEvent.blur(smallRandomizationInput);
+    fireEvent.change(largeDamageInput, { target: { value: "9.5" } });
+    fireEvent.blur(largeDamageInput);
+    fireEvent.change(largeRandomizationInput, { target: { value: "0.92" } });
+    fireEvent.blur(largeRandomizationInput);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(7);
+    });
+
+    const saveCall = fetchMock.mock.calls.at(-1);
+    const savedDocument = JSON.parse(
+      String((saveCall?.[1] as RequestInit | undefined)?.body),
+    ) as typeof CURRENT_GAME_TUNING;
+
+    expect(savedDocument.gameplay.arena.asteroidField.micro.damage).toBe(0.75);
+    expect(savedDocument.gameplay.arena.asteroidField.micro.randomization).toBe(
+      0.15,
+    );
+    expect(savedDocument.gameplay.arena.asteroidField.small.damage).toBe(2.25);
+    expect(savedDocument.gameplay.arena.asteroidField.small.randomization).toBe(
+      0.35,
+    );
+    expect(savedDocument.gameplay.arena.asteroidField.large.damage).toBe(9.5);
+    expect(savedDocument.gameplay.arena.asteroidField.large.randomization).toBe(
+      0.92,
+    );
+  });
+
+  it("forwards numeric input min and max attributes", async () => {
+    mockTuningFetch();
+
+    render(<EditPage />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Background/i }));
+
+    const starDensityInput = await screen.findByLabelText("Star density");
+
+    expect(starDensityInput).toHaveAttribute("min", "0");
+    expect(starDensityInput).toHaveAttribute("max", "3");
   });
 
   it("defers color preview updates until blur", async () => {
@@ -904,8 +1034,8 @@ describe("EditPage", () => {
     expect(maxSizeInput).toHaveValue(
       CURRENT_GAME_TUNING.gameplay.neutronStars.maxSize,
     );
-    expect(minSizeInput).not.toHaveAttribute("max");
-    expect(maxSizeInput).not.toHaveAttribute("max");
+    expect(minSizeInput).toHaveAttribute("max", "220");
+    expect(maxSizeInput).toHaveAttribute("max", "260");
 
     fireEvent.change(minSizeInput, { target: { value: "320" } });
     fireEvent.blur(minSizeInput);
@@ -1161,6 +1291,137 @@ describe("EditPage", () => {
     expect(savedDocument.gameplay.orbits.sunStartDistanceScale).toBe(4.2);
   });
 
+  it("shows fixed-pattern orbit controls and saves them", async () => {
+    const fixedPatternDocument = structuredClone(CURRENT_GAME_TUNING);
+    fixedPatternDocument.gameplay.orbits.starMotion = {
+      mode: "fixedPattern",
+      patternId: "figure-eight-v1a",
+      speed: 1.2,
+    };
+    fixedPatternDocument.gameplay.orbits.starPatternDistanceScale = 1.4;
+    fixedPatternDocument.gameplay.orbits.planetStartSpeedScale = 0.9;
+    mockTuningFetch(fixedPatternDocument);
+    const initialClampedDistanceScale = clampOrbitPatternDistanceScale(
+      "figure-eight-v1a",
+      fixedPatternDocument.gameplay.orbits.starPatternDistanceScale,
+      fixedPatternDocument.gameplay.orbits.suns,
+    );
+    const savedClampedDistanceScale = clampOrbitPatternDistanceScale(
+      "equilateral-circle",
+      1.8,
+      fixedPatternDocument.gameplay.orbits.suns,
+    );
+
+    render(<EditPage />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /OrbitsOrbit seed tuning/i }),
+    );
+
+    const starMotionSelect = await screen.findByLabelText("Star motion");
+    const patternSelect = screen.getByLabelText("Pattern");
+    const starPatternSpeedInput = screen.getByLabelText("Star pattern speed");
+    const starDistanceScaleInput =
+      screen.getByLabelText(/^Star distance scale/);
+    const planetStartSpeedInput = screen.getByLabelText("Planet start speed");
+
+    expect(starMotionSelect).toHaveValue("fixedPattern");
+    expect(patternSelect).toHaveValue("figure-eight-v1a");
+    expect(starPatternSpeedInput).toHaveValue(1.2);
+    expect(starDistanceScaleInput).toHaveValue(initialClampedDistanceScale);
+    expect(planetStartSpeedInput).toHaveValue(0.9);
+    expect(
+      screen.queryByLabelText("Start distance scale"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Start X")).not.toBeInTheDocument();
+
+    fireEvent.change(patternSelect, {
+      target: { value: "equilateral-circle" },
+    });
+    fireEvent.change(starPatternSpeedInput, { target: { value: "1.35" } });
+    fireEvent.blur(starPatternSpeedInput);
+    fireEvent.change(starDistanceScaleInput, { target: { value: "1.8" } });
+    fireEvent.blur(starDistanceScaleInput);
+    fireEvent.change(planetStartSpeedInput, { target: { value: "1.1" } });
+    fireEvent.blur(planetStartSpeedInput);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(5);
+    });
+
+    const saveCall = fetchMock.mock.calls.at(-1);
+    const savedDocument = JSON.parse(
+      String((saveCall?.[1] as RequestInit | undefined)?.body),
+    ) as typeof CURRENT_GAME_TUNING;
+
+    expect(savedDocument.gameplay.orbits.starMotion).toEqual({
+      mode: "fixedPattern",
+      patternId: "equilateral-circle",
+      speed: 1.35,
+    });
+    expect(savedDocument.gameplay.orbits.starPatternDistanceScale).toBe(
+      savedClampedDistanceScale,
+    );
+    expect(savedDocument.gameplay.orbits.planetStartSpeedScale).toBe(1.1);
+  });
+
+  it("clamps fixed-pattern star distance scale on load and save", async () => {
+    const fixedPatternDocument = structuredClone(CURRENT_GAME_TUNING);
+    fixedPatternDocument.gameplay.orbits.starMotion = {
+      mode: "fixedPattern",
+      patternId: "equilateral-circle",
+      speed: 0.8,
+    };
+    fixedPatternDocument.gameplay.orbits.starPatternDistanceScale = 0.5;
+    fixedPatternDocument.gameplay.orbits.suns =
+      fixedPatternDocument.gameplay.orbits.suns.map((sun) => ({
+        ...sun,
+        radius: 800,
+      })) as typeof fixedPatternDocument.gameplay.orbits.suns;
+    mockTuningFetch(fixedPatternDocument);
+
+    const clampedDistanceScale = clampOrbitPatternDistanceScale(
+      "equilateral-circle",
+      fixedPatternDocument.gameplay.orbits.starPatternDistanceScale,
+      fixedPatternDocument.gameplay.orbits.suns,
+    );
+
+    render(<EditPage />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /OrbitsOrbit seed tuning/i }),
+    );
+
+    const starDistanceScaleInput =
+      await screen.findByLabelText(/^Star distance scale/);
+
+    expect(starDistanceScaleInput).toHaveValue(clampedDistanceScale);
+
+    fireEvent.change(starDistanceScaleInput, { target: { value: "0.5" } });
+    fireEvent.blur(starDistanceScaleInput);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    const saveCall = fetchMock.mock.calls[1];
+    const savedDocument = JSON.parse(
+      String((saveCall?.[1] as RequestInit | undefined)?.body),
+    ) as typeof CURRENT_GAME_TUNING;
+
+    expect(savedDocument.gameplay.orbits.starPatternDistanceScale).toBe(
+      clampedDistanceScale,
+    );
+  });
+
   it("saves uncapped orbit sun radius", async () => {
     mockTuningFetch();
 
@@ -1392,7 +1653,7 @@ describe("EditPage", () => {
     expect(arenaRadiusInput).toHaveValue(
       CURRENT_GAME_TUNING.gameplay.arena.radius,
     );
-    expect(arenaRadiusInput).not.toHaveAttribute("min");
+    expect(arenaRadiusInput).toHaveAttribute("min", "1400");
     expect(arenaRadiusInput).not.toHaveAttribute("max");
     expect(instantDeathInput).toBeChecked();
 

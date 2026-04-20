@@ -5,7 +5,11 @@ import type {
   WildcardKind,
 } from "./entities";
 import { applyCombatAiTuning } from "./ai/runtimeTuning";
-import { CURRENT_GAME_TUNING, type GameplayTuning } from "./tuning";
+import {
+  CURRENT_GAME_TUNING,
+  type ArenaAsteroidFieldTuning,
+  type GameplayTuning,
+} from "./tuning";
 
 export interface RocketSpec {
   damage: number;
@@ -122,6 +126,12 @@ export const CACHE_SPEC: CacheSpec = {
 const OUTER_RING_MIN_RATIO = OUTER_RING_MIN / DEFAULT_ARENA_RADIUS;
 const OUTER_RING_MAX_RATIO = OUTER_RING_MAX / DEFAULT_ARENA_RADIUS;
 
+export const ARENA_ASTEROID_FIELD_SPEC: ArenaAsteroidFieldTuning = {
+  large: { ...initialGameplay.arena.asteroidField.large },
+  micro: { ...initialGameplay.arena.asteroidField.micro },
+  small: { ...initialGameplay.arena.asteroidField.small },
+};
+
 export const ARENA_BOUNDARY_SPEC: ArenaBoundarySpec = {
   baseDps: 5,
   instantDeath: initialGameplay.arena.instantDeath,
@@ -231,6 +241,18 @@ export const applyGameplayTuning = (gameplay: GameplayTuning) => {
   Object.assign(ROCKET_SPECS.seeker, gameplay.rockets.seeker);
   ARENA_RADIUS = gameplay.arena.radius;
   ARENA_BOUNDARY_SPEC.instantDeath = gameplay.arena.instantDeath;
+  Object.assign(
+    ARENA_ASTEROID_FIELD_SPEC.micro,
+    gameplay.arena.asteroidField.micro,
+  );
+  Object.assign(
+    ARENA_ASTEROID_FIELD_SPEC.small,
+    gameplay.arena.asteroidField.small,
+  );
+  Object.assign(
+    ARENA_ASTEROID_FIELD_SPEC.large,
+    gameplay.arena.asteroidField.large,
+  );
   Object.assign(FORESIGHT_SPEC, gameplay.abilities.foresight);
   Object.assign(SHIELD_SPEC, gameplay.abilities.shield);
   Object.assign(BOOST_SPEC, gameplay.abilities.boost);

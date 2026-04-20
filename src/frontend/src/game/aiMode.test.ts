@@ -118,8 +118,7 @@ const createContext = ({
   world,
   self,
   privateState,
-  runtime: runtime ?? {
-  },
+  runtime: runtime ?? {},
 });
 
 const createStepInput = (
@@ -1122,6 +1121,7 @@ describe("AI mode", () => {
       planetAuraScale: 1.8,
       planetBodyScale: 2,
       playerDamageFlash: 0,
+      playerHudFlicker: 0,
       playerHpPulse: 0,
       playerLabel: "Observer",
       profilingEnabled: false,

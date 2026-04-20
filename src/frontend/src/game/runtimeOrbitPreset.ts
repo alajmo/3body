@@ -1,14 +1,45 @@
 import {
   ARENA_RADIUS,
+  clampOrbitPatternDistanceScale,
   getOrbitGameplayPlanet,
-  getOrbitPlanetCircleRadius,
   getOrbitGameplaySun,
+  getOrbitPatternTrack,
+  getOrbitPlanetCircleRadius,
+  type OrbitPatternTrack,
+  resolveEditorFixedOrbitPatternId,
+  sampleOrbitPatternTrack,
 } from "@3body/shared";
 import { DEFAULT_ORBIT_PRESET, type OrbitPreset } from "./orbitPresets";
 import { getRuntimeTuningDocument } from "./runtimeTuning";
 
+export type RuntimeOrbitStarMotion =
+  | {
+      mode: "physicsSeed";
+    }
+  | {
+      mode: "fixedPattern";
+      patternId: string;
+      speed: number;
+      distanceScale: number;
+      suns: OrbitPreset["suns"];
+      track: OrbitPatternTrack;
+    };
+
+export interface ResolvedRuntimeOrbitPreset {
+  preset: OrbitPreset;
+  starMotion: RuntimeOrbitStarMotion;
+}
+
+const cloneSunSeed = (sun: OrbitPreset["suns"][number]) => ({
+  ...sun,
+  pos: { x: sun.pos.x, y: sun.pos.y },
+  vel: { x: sun.vel.x, y: sun.vel.y },
+});
+
 const createScaledSunSeeds = (
-  orbitTuning: ReturnType<typeof getRuntimeTuningDocument>["gameplay"]["orbits"],
+  orbitTuning: ReturnType<
+    typeof getRuntimeTuningDocument
+  >["gameplay"]["orbits"],
   preset: OrbitPreset,
   distanceScale: number,
 ): OrbitPreset["suns"] => {
@@ -64,13 +95,84 @@ const createScaledSunSeeds = (
   }));
 };
 
-export const resolveRuntimeOrbitPreset = (preset: OrbitPreset): OrbitPreset => {
+export const sampleRuntimeFixedPatternSunSeeds = (
+  starMotion: Extract<RuntimeOrbitStarMotion, { mode: "fixedPattern" }>,
+  elapsedSec: number,
+): OrbitPreset["suns"] => {
+  const sampledSuns = sampleOrbitPatternTrack(
+    starMotion.track,
+    elapsedSec,
+    starMotion.speed,
+    starMotion.distanceScale,
+  );
+
+  return starMotion.suns.map((sun, index) => ({
+    ...sun,
+    pos: {
+      x: sampledSuns[index]!.pos.x,
+      y: sampledSuns[index]!.pos.y,
+    },
+    vel: {
+      x: sampledSuns[index]!.vel.x,
+      y: sampledSuns[index]!.vel.y,
+    },
+  }));
+};
+
+const createFixedPatternSunMotion = (
+  orbitTuning: ReturnType<
+    typeof getRuntimeTuningDocument
+  >["gameplay"]["orbits"],
+  preset: OrbitPreset,
+): Extract<RuntimeOrbitStarMotion, { mode: "fixedPattern" }> => {
+  const patternId = resolveEditorFixedOrbitPatternId(
+    orbitTuning.starMotion.patternId,
+  );
+  const suns = preset.suns.map((sun, index) => {
+    const tunedSun = getOrbitGameplaySun(orbitTuning, index);
+
+    return {
+      ...cloneSunSeed(sun),
+      mass: tunedSun.mass,
+      radius: tunedSun.radius,
+    };
+  });
+  const distanceScale = clampOrbitPatternDistanceScale(
+    patternId,
+    orbitTuning.starPatternDistanceScale,
+    suns,
+  );
+
+  return {
+    mode: "fixedPattern",
+    patternId,
+    speed: orbitTuning.starMotion.speed,
+    distanceScale,
+    suns,
+    track: getOrbitPatternTrack(patternId),
+  };
+};
+
+export const resolveRuntimeOrbitPreset = (
+  preset: OrbitPreset,
+): ResolvedRuntimeOrbitPreset => {
   if (preset.id !== DEFAULT_ORBIT_PRESET.id) {
-    return preset;
+    return {
+      preset,
+      starMotion: { mode: "physicsSeed" },
+    };
   }
 
   const orbitTuning = getRuntimeTuningDocument().gameplay.orbits;
   const sunDistanceScale = orbitTuning.sunStartDistanceScale;
+  const starMotion =
+    orbitTuning.starMotion.mode === "fixedPattern"
+      ? createFixedPatternSunMotion(orbitTuning, preset)
+      : ({ mode: "physicsSeed" } as const);
+  const suns =
+    starMotion.mode === "fixedPattern"
+      ? sampleRuntimeFixedPatternSunSeeds(starMotion, 0)
+      : createScaledSunSeeds(orbitTuning, preset, sunDistanceScale);
   // Keep the local sandbox orbit ring inside the arena killzone.
   const circleRadius = Math.min(
     getOrbitPlanetCircleRadius(orbitTuning),
@@ -81,45 +183,51 @@ export const resolveRuntimeOrbitPreset = (preset: OrbitPreset): OrbitPreset => {
   const leadAngle = Math.atan2(leadPlanet.pos.y, leadPlanet.pos.x);
 
   return {
-    ...preset,
-    suns: createScaledSunSeeds(orbitTuning, preset, sunDistanceScale),
-    planets: preset.planets.map((planet, index) => {
-      const tunedPlanet = getOrbitGameplayPlanet(orbitTuning, index);
-      const angle = leadAngle + angleStep * index;
-      const templateRadius = Math.max(
-        Math.hypot(tunedPlanet.pos.x, tunedPlanet.pos.y),
-        1,
-      );
-      const templateSpeed = Math.hypot(tunedPlanet.vel.x, tunedPlanet.vel.y);
-      const speed = templateSpeed * Math.sqrt(templateRadius / circleRadius);
-      const angularDirection =
-        Math.sign(
-          tunedPlanet.pos.x * tunedPlanet.vel.y -
-            tunedPlanet.pos.y * tunedPlanet.vel.x,
-        ) || 1;
-      const tangent =
-        angularDirection >= 0
-          ? {
-              x: -Math.sin(angle),
-              y: Math.cos(angle),
-            }
-          : {
-              x: Math.sin(angle),
-              y: -Math.cos(angle),
-            };
+    preset: {
+      ...preset,
+      suns,
+      planets: preset.planets.map((planet, index) => {
+        const tunedPlanet = getOrbitGameplayPlanet(orbitTuning, index);
+        const angle = leadAngle + angleStep * index;
+        const templateRadius = Math.max(
+          Math.hypot(tunedPlanet.pos.x, tunedPlanet.pos.y),
+          1,
+        );
+        const templateSpeed = Math.hypot(tunedPlanet.vel.x, tunedPlanet.vel.y);
+        const speed =
+          templateSpeed *
+          Math.sqrt(templateRadius / circleRadius) *
+          orbitTuning.planetStartSpeedScale;
+        const angularDirection =
+          Math.sign(
+            tunedPlanet.pos.x * tunedPlanet.vel.y -
+              tunedPlanet.pos.y * tunedPlanet.vel.x,
+          ) || 1;
+        const tangent =
+          angularDirection >= 0
+            ? {
+                x: -Math.sin(angle),
+                y: Math.cos(angle),
+              }
+            : {
+                x: Math.sin(angle),
+                y: -Math.cos(angle),
+              };
 
-      return {
-        ...planet,
-        pos: {
-          x: Math.cos(angle) * circleRadius,
-          y: Math.sin(angle) * circleRadius,
-        },
-        radius: tunedPlanet.radius,
-        vel: {
-          x: tangent.x * speed,
-          y: tangent.y * speed,
-        },
-      };
-    }),
+        return {
+          ...planet,
+          pos: {
+            x: Math.cos(angle) * circleRadius,
+            y: Math.sin(angle) * circleRadius,
+          },
+          radius: tunedPlanet.radius,
+          vel: {
+            x: tangent.x * speed,
+            y: tangent.y * speed,
+          },
+        };
+      }),
+    },
+    starMotion,
   };
 };

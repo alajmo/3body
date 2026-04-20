@@ -1,10 +1,22 @@
 import { CURRENT_GAME_TUNING } from "@3body/shared";
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EditorPreviewStage } from "./EditorPreviewStage";
 
+const { combatHudSpy } = vi.hoisted(() => ({
+  combatHudSpy: vi.fn(),
+}));
+
 vi.mock("./CombatHud", () => ({
-  CombatHud: () => <div data-testid="combat-hud" />,
+  CombatHud: (props: { displayMode?: string }) => {
+    combatHudSpy(props);
+    return (
+      <div
+        data-testid="combat-hud"
+        data-display-mode={props.displayMode ?? ""}
+      />
+    );
+  },
 }));
 
 vi.mock("./EditorItemViewportPanel", () => ({
@@ -24,11 +36,13 @@ vi.mock("./EditorItemViewportPanel", () => ({
 
 vi.mock("./ShowcaseViewportPanel", () => ({
   ShowcaseViewportPanel: (props: {
+    displayMode?: string;
     focus: string;
     minimumWorldHeight?: number;
     revision?: number;
   }) => (
     <div
+      data-display-mode={props.displayMode ?? ""}
       data-testid="showcase-viewport"
       data-focus={props.focus}
       data-minimum-world-height={String(props.minimumWorldHeight ?? "")}
@@ -40,6 +54,7 @@ vi.mock("./ShowcaseViewportPanel", () => ({
 describe("EditorPreviewStage", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    combatHudSpy.mockClear();
   });
 
   afterEach(() => {
@@ -73,6 +88,7 @@ describe("EditorPreviewStage", () => {
         documentValue={CURRENT_GAME_TUNING}
         hudTuning={CURRENT_GAME_TUNING.visuals.hud}
         itemId="overview"
+        overviewDisplayMode="vhs"
         showHud={true}
       />,
     );
@@ -85,7 +101,14 @@ describe("EditorPreviewStage", () => {
       "data-minimum-world-height",
       String(CURRENT_GAME_TUNING.gameplay.camera.previewCameraWorldHeight),
     );
-    expect(screen.getByTestId("combat-hud")).toBeInTheDocument();
+    expect(screen.getByTestId("showcase-viewport")).toHaveAttribute(
+      "data-display-mode",
+      "vhs",
+    );
+    expect(screen.getByTestId("combat-hud")).toHaveAttribute(
+      "data-display-mode",
+      "vhs",
+    );
   });
 
   it("renders the HUD page on top of the HUD interaction preview", () => {
@@ -108,6 +131,33 @@ describe("EditorPreviewStage", () => {
     );
     expect(screen.getByTestId("combat-hud")).toBeInTheDocument();
     expect(screen.queryByTestId("showcase-viewport")).not.toBeInTheDocument();
+  });
+
+  it("can trigger the HUD missile-hit preview from the HUD editor page", () => {
+    render(
+      <EditorPreviewStage
+        documentValue={CURRENT_GAME_TUNING}
+        hudTuning={CURRENT_GAME_TUNING.visuals.hud}
+        itemId="hud"
+        showHud={true}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Preview missile hit" }),
+    );
+
+    expect(combatHudSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        hud: expect.objectContaining({
+          damageFlash: expect.any(Number),
+          hudFlicker: expect.any(Number),
+        }),
+      }),
+    );
+    const latestHud = combatHudSpy.mock.lastCall?.[0].hud;
+    expect(latestHud.damageFlash).toBeGreaterThan(0);
+    expect(latestHud.hudFlicker).toBeGreaterThan(0);
   });
 
   it("bumps the viewport revision after non-HUD tuning changes", () => {

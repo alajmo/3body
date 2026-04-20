@@ -94,6 +94,7 @@ const createHudParams = (controlsEnabled: boolean) => {
     planetAuraScale: 1.8,
     planetBodyScale: 2,
     playerDamageFlash: 0.2,
+    playerHudFlicker: 0.3,
     playerHpPulse: 0.1,
     playerLabel: "Player",
     profilingEnabled: true,

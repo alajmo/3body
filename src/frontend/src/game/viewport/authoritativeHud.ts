@@ -61,8 +61,10 @@ interface BuildAuthoritativeHudStateParams {
   controlsEnabled: boolean;
   currentEffectsQuality: ViewportEffectsQuality;
   currentTick: number;
+  damageFlash: number;
   eventLog: readonly AuthoritativeEventRecord[];
   extrapolating: boolean;
+  hudFlicker: number;
   currentMaxPixelRatio: number;
   playerId: string | null;
   playerPlanet: PlanetPublic | null;
@@ -206,6 +208,8 @@ const describeEvent = (
       switch (event.cause) {
         case "blackHole":
           return `${victim} fell into the Black Hole`;
+        case "boundaryAsteroid":
+          return `${victim} was shattered by boundary debris`;
         case "boundary":
           return `${victim} breached the arena`;
         case "neutronStar":
@@ -329,8 +333,10 @@ export const buildAuthoritativeHudState = ({
   currentEffectsQuality,
   currentTick,
   currentMaxPixelRatio,
+  damageFlash,
   eventLog,
   extrapolating,
+  hudFlicker,
   playerId,
   playerPlanet,
   profilerSnapshot,
@@ -583,7 +589,9 @@ export const buildAuthoritativeHudState = ({
       profilingEnabled,
       world,
     }),
+    damageFlash,
     foresightSettings: { ...foresightSettings },
+    hudFlicker,
     hudOpacity: 1,
     killFeed,
     minimap:

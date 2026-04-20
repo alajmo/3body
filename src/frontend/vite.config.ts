@@ -1,3 +1,4 @@
+import path from "node:path";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
 import { APP_ROUTES } from "./src/routes";
@@ -13,7 +14,10 @@ const BACKEND_WS_PROXY_TARGET = `ws://${BACKEND_PROXY_HOST}:${BACKEND_PROXY_PORT
 const normalizeRoutePath = (pathname: string): string =>
   pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname || "/";
 
-const isHtmlNavigationRequest = (url: string, acceptHeader: string): boolean => {
+const isHtmlNavigationRequest = (
+  url: string,
+  acceptHeader: string,
+): boolean => {
   const pathname = url.split("?")[0] || "/";
 
   return (
@@ -109,6 +113,17 @@ const strictAppRoutePlugin = () => ({
 });
 
 export default defineConfig({
+  build: {
+    rollupOptions: {
+      input: {
+        app: path.resolve(__dirname, "index.html"),
+        orbitPatternGallery: path.resolve(
+          __dirname,
+          "orbit-pattern-gallery.html",
+        ),
+      },
+    },
+  },
   plugins: [strictAppRoutePlugin(), react()],
   server: {
     port: 1337,

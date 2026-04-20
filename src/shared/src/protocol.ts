@@ -110,6 +110,7 @@ export type SnapshotEvent =
         | "sun"
         | "neutronStar"
         | "planetCollision"
+        | "boundaryAsteroid"
         | "boundary"
         | "blackHole";
     }

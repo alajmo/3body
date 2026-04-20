@@ -7,8 +7,13 @@ import type {
   Rocket,
   World,
 } from "../entities";
-import { stepBody, stepSuns } from "../physics";
+import {
+  advanceWorldOrbitStarMotion,
+  stepSunsWithOrbitMotion,
+} from "../orbitPatternTracks";
+import { stepBody } from "../physics";
 import type { BotDifficulty } from "../protocol";
+import type { Vec2 } from "../vec2";
 import {
   dist,
   dot,
@@ -19,7 +24,6 @@ import {
   scale,
   sub,
 } from "../vec2";
-import type { Vec2 } from "../vec2";
 import { clamp01 } from "./blackboard";
 import { COMBAT_AI_TUNING } from "./runtimeTuning";
 import {
@@ -271,9 +275,16 @@ const assessHazardThreats = ({
     shieldAimDir: { ...self.shieldAimDir },
     debuffs: { ...self.debuffs },
   };
+  let orbitStarMotion = world.orbitStarMotion;
 
   for (let step = 0; step < steps; step += 1) {
-    predictedSuns = stepSuns(predictedSuns, dt, world.blackHole);
+    predictedSuns = stepSunsWithOrbitMotion(
+      predictedSuns,
+      dt,
+      world.blackHole,
+      orbitStarMotion,
+    );
+    orbitStarMotion = advanceWorldOrbitStarMotion(orbitStarMotion, dt);
     predictedSelf = stepBody(
       predictedSelf,
       predictedSuns,

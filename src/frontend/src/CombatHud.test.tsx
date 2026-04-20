@@ -192,8 +192,12 @@ describe("CombatHud", () => {
     expect(within(heavyCard).getByText("4")).toBeInTheDocument();
     expect(within(seekerCard).getByText("7")).toBeInTheDocument();
     expect(shortcutSections).toHaveLength(3);
-    expect(within(shortcutSections[0]!).getByText("Health")).toBeInTheDocument();
-    expect(within(shortcutSections[1]!).getByText("Seeker")).toBeInTheDocument();
+    expect(
+      within(shortcutSections[0]!).getByText("Health"),
+    ).toBeInTheDocument();
+    expect(
+      within(shortcutSections[1]!).getByText("Seeker"),
+    ).toBeInTheDocument();
     expect(
       within(shortcutSections[2]!).getByText("Phase Shield"),
     ).toBeInTheDocument();
@@ -433,5 +437,48 @@ describe("CombatHud", () => {
     expect(container.querySelector(".combat-hud")).toHaveClass(
       "combat-hud--has-bottom-shortcuts",
     );
+  });
+
+  it("adds the selected display mode to the HUD root", () => {
+    const { container } = render(
+      <CombatHud
+        controller={createControllerMock()}
+        displayMode="vectorAsteroids"
+        hud={createInitialHudState()}
+        hudTuning={HUD_TUNING}
+      />,
+    );
+
+    expect(container.querySelector(".combat-hud")).toHaveAttribute(
+      "data-display-mode",
+      "vectorAsteroids",
+    );
+    expect(container.querySelector(".combat-hud")).toHaveClass(
+      "combat-hud--mode-vectorAsteroids",
+    );
+  });
+
+  it("marks the HUD as actively flickering during a missile-hit preview", () => {
+    const { container } = render(
+      <CombatHud
+        controller={createControllerMock()}
+        hud={{
+          ...createInitialHudState(),
+          damageFlash: 0.42,
+          hudFlicker: 0.58,
+        }}
+        hudTuning={HUD_TUNING}
+        showPerformanceTools={false}
+      />,
+    );
+
+    expect(container.querySelector(".combat-hud")).toHaveAttribute(
+      "data-hit-flicker",
+      "active",
+    );
+    expect(
+      container.querySelector(".combat-hud__screen-flicker"),
+    ).not.toBeNull();
+    expect(container.querySelector(".combat-hud__damage-flash")).not.toBeNull();
   });
 });

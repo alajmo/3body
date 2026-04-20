@@ -13,6 +13,7 @@
     "dev:frontend": "npm run dev -w @3body/frontend",
     "dev:backend": "npm run dev -w @3body/backend",
     "build": "npm run build -w @3body/frontend && npm run build -w @3body/backend",
+    "bake:orbit-patterns": "node scripts/bake-orbit-pattern-tracks.mjs",
     "profile:authoritative-match": "node scripts/profile-local-sandbox.mjs --target=authoritative-match",
     "profile:local-sandbox": "node scripts/profile-local-sandbox.mjs",
     "test:frontend": "npm run test -w @3body/frontend",

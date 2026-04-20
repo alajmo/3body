@@ -16,8 +16,13 @@ import type {
   Sun,
   World,
 } from "../entities";
-import { predictPath, stepBody, stepSeeker, stepSuns } from "../physics";
+import {
+  advanceWorldOrbitStarMotion,
+  stepSunsWithOrbitMotion,
+} from "../orbitPatternTracks";
+import { stepBody, stepSeeker } from "../physics";
 import type { BotDifficulty } from "../protocol";
+import type { Vec2 } from "../vec2";
 import {
   add,
   dist,
@@ -30,7 +35,6 @@ import {
   scale,
   sub,
 } from "../vec2";
-import type { Vec2 } from "../vec2";
 import { clamp01 } from "./blackboard";
 import { COMBAT_AI_TUNING } from "./runtimeTuning";
 import type {
@@ -707,15 +711,28 @@ const predictTargetPath = (
     Math.round(COMBAT_AI_TUNING.shots.targetPredictionSteps[difficulty]),
   );
   const dt = lookaheadSec / Math.max(1, steps);
-  const predictedPoints = predictPath(
-    target.pos,
-    target.vel,
-    world.suns,
-    steps,
-    dt,
-    world.blackHole,
-    world.neutronStars,
-  ).slice(1);
+  let orbitStarMotion = world.orbitStarMotion;
+  let predictedSuns = cloneSuns(world.suns);
+  let predictedTarget = clonePlanet(target);
+  const predictedPoints: Vec2[] = [];
+
+  for (let step = 0; step < steps; step += 1) {
+    predictedSuns = stepSunsWithOrbitMotion(
+      predictedSuns,
+      dt,
+      world.blackHole,
+      orbitStarMotion,
+    );
+    orbitStarMotion = advanceWorldOrbitStarMotion(orbitStarMotion, dt);
+    predictedTarget = stepBody(
+      predictedTarget,
+      predictedSuns,
+      dt,
+      world.blackHole,
+      world.neutronStars,
+    );
+    predictedPoints.push({ ...predictedTarget.pos });
+  }
 
   let chaosScore = 0;
   for (let index = 1; index < predictedPoints.length - 1; index += 1) {
@@ -1106,9 +1123,16 @@ export const scoreMovementGoals = ({
   const dt = horizonSec / Math.max(1, steps);
   const predictedSunsByStep: Sun[][] = [];
   let sunState = cloneSuns(world.suns);
+  let orbitStarMotion = world.orbitStarMotion;
 
   for (let step = 0; step < steps; step += 1) {
-    sunState = stepSuns(sunState, dt, world.blackHole);
+    sunState = stepSunsWithOrbitMotion(
+      sunState,
+      dt,
+      world.blackHole,
+      orbitStarMotion,
+    );
+    orbitStarMotion = advanceWorldOrbitStarMotion(orbitStarMotion, dt);
     predictedSunsByStep.push(sunState);
   }
 

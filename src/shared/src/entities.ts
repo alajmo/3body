@@ -12,6 +12,7 @@ export type ArchetypeId =
   | "corvus";
 export type RocketKind = "light" | "heavy" | "seeker";
 export type WildcardKind = "gravityPulse" | "cloak";
+export type AsteroidTier = "micro" | "small" | "large";
 
 export interface EntityBase {
   id: EntityId;
@@ -110,7 +111,19 @@ export type Debris = EntityBase & {
   kind: "debris";
   ttlUntilTick: number;
   ownerPlayerId?: PlayerId;
+  asteroidTier?: AsteroidTier;
 };
+
+export interface FixedPatternWorldOrbitStarMotion {
+  mode: "fixedPattern";
+  elapsedSec: number;
+  patternId: string;
+  speed: number;
+  distanceScale: number;
+  sunIds: [EntityId, EntityId, EntityId];
+}
+
+export type WorldOrbitStarMotion = FixedPatternWorldOrbitStarMotion;
 
 export interface World {
   suns: Sun[];
@@ -121,6 +134,7 @@ export interface World {
   blackHole?: BlackHole;
   debris: Debris[];
   arenaRadius: number;
+  orbitStarMotion?: WorldOrbitStarMotion;
 }
 
 export type WorldEntity =

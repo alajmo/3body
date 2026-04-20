@@ -145,8 +145,10 @@ describe("buildAuthoritativeHudState", () => {
       currentEffectsQuality: "high",
       currentMaxPixelRatio: 1.5,
       currentTick: 120,
+      damageFlash: 0,
       eventLog: [],
       extrapolating: true,
+      hudFlicker: 0,
       playerId: "pilot-1",
       playerPlanet: createPlayerPlanet(),
       profilerSnapshot: {
@@ -228,8 +230,10 @@ describe("buildAuthoritativeHudState", () => {
       currentEffectsQuality: "low",
       currentMaxPixelRatio: 1.1,
       currentTick: 0,
+      damageFlash: 0,
       eventLog: [],
       extrapolating: false,
+      hudFlicker: 0,
       playerId: null,
       playerPlanet: null,
       profilerSnapshot: null,
@@ -266,8 +270,10 @@ describe("buildAuthoritativeHudState", () => {
       currentEffectsQuality: "high",
       currentMaxPixelRatio: 1.5,
       currentTick: 120,
+      damageFlash: 0,
       eventLog: [],
       extrapolating: false,
+      hudFlicker: 0,
       playerId: "pilot-1",
       playerPlanet: {
         ...createPlayerPlanet(),
@@ -325,8 +331,10 @@ describe("buildAuthoritativeHudState", () => {
       currentEffectsQuality: "high",
       currentMaxPixelRatio: 1.5,
       currentTick: cooldownStartTick,
+      damageFlash: 0,
       eventLog: [],
       extrapolating: false,
+      hudFlicker: 0,
       playerId: "pilot-1",
       playerPlanet: {
         ...createPlayerPlanet(),
@@ -366,8 +374,10 @@ describe("buildAuthoritativeHudState", () => {
       currentEffectsQuality: "high",
       currentMaxPixelRatio: 1.5,
       currentTick: cooldownStartTick + Math.round(fullRechargeTicks / 8),
+      damageFlash: 0,
       eventLog: [],
       extrapolating: false,
+      hudFlicker: 0,
       playerId: "pilot-1",
       playerPlanet: {
         ...createPlayerPlanet(),
@@ -413,6 +423,7 @@ describe("buildAuthoritativeHudState", () => {
       currentEffectsQuality: "high",
       currentMaxPixelRatio: 1.5,
       currentTick: 120,
+      damageFlash: 0,
       eventLog: [
         {
           event: {
@@ -437,6 +448,7 @@ describe("buildAuthoritativeHudState", () => {
         },
       ],
       extrapolating: false,
+      hudFlicker: 0,
       playerId: "pilot-1",
       playerPlanet: createPlayerPlanet(),
       profilerSnapshot: null,
@@ -488,6 +500,7 @@ describe("buildAuthoritativeHudState", () => {
       currentEffectsQuality: "high",
       currentMaxPixelRatio: 1.5,
       currentTick: 120,
+      damageFlash: 0,
       eventLog: [
         {
           event: {
@@ -502,6 +515,7 @@ describe("buildAuthoritativeHudState", () => {
         },
       ],
       extrapolating: false,
+      hudFlicker: 0,
       playerId: "pilot-1",
       playerPlanet: createPlayerPlanet(),
       profilerSnapshot: null,

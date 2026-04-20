@@ -1,7 +1,4 @@
 import { getSunVisualProfile, type RocketKind, type Vec2 } from "@3body/shared";
-import { renderOutput } from "three/tsl";
-import { bloom } from "three/addons/tsl/display/BloomNode.js";
-import { rgbShift } from "three/addons/tsl/display/RGBShiftNode.js";
 import {
   type CanvasTexture,
   CircleGeometry,
@@ -41,6 +38,10 @@ import {
   wrapCentered,
   type CacheIconKey,
 } from "./showcaseVisuals";
+import {
+  createShowcaseDisplayPipeline,
+  type ShowcaseDisplayMode,
+} from "./showcaseDisplayMode";
 import { getScaledRocketVisuals } from "./rocketVisualTuning";
 import { getRuntimeTuningDocument } from "./runtimeTuning";
 import {
@@ -57,16 +58,12 @@ import {
   getViewportHostSize,
   syncViewportRendererSize,
 } from "./viewport/rendererSizing";
-import { createCompatibleScenePass } from "./viewport/postProcessingCompat";
 import { createViewportAnimationLoopController } from "./viewport/animationLoopController";
 import { getCacheArenaBadgeSize } from "./viewport/cacheVisuals";
 
 const CAMERA_DISTANCE = 100;
 const MAX_PIXEL_RATIO = 2;
 const SCENE_SSAA_LEVEL = 2;
-const BLOOM_STRENGTH = 1.02;
-const BLOOM_RADIUS = 0.18;
-const BLOOM_THRESHOLD = 0.82;
 const BACKDROP_OVERDRAW = 1.35;
 const PLANET_SECTION_CENTER = { x: -780, y: 380 } as const;
 const SUN_SECTION_CENTER = { x: 780, y: 380 } as const;
@@ -82,6 +79,7 @@ const SHOWCASE_ROCKET_KINDS = [
 ] as const satisfies readonly RocketKind[];
 
 export interface ModelShowcaseViewportOptions {
+  displayMode?: ShowcaseDisplayMode;
   focus?: "all" | "caches" | "planets" | "rockets" | "suns";
   minimumWorldHeight?: number;
   rocketKind?: RocketKind;
@@ -205,6 +203,7 @@ export function createModelShowcaseViewport(
   );
   const rocketVisuals = getScaledRocketVisuals(runtimeTuning.visuals.rockets);
   const focus = options.focus ?? (options.rocketKind ? "rockets" : "all");
+  const displayMode = options.displayMode ?? runtimeTuning.visuals.displayMode;
   const showPlanets = focus === "all" || focus === "planets";
   const showSuns = focus === "all" || focus === "suns";
   const showRockets = focus === "all" || focus === "rockets";
@@ -596,26 +595,17 @@ export function createModelShowcaseViewport(
           resizeViewport();
           window.addEventListener("resize", resizeViewport);
 
-          const scenePass = createCompatibleScenePass(
-            nextRenderer,
-            scene,
-            nextCamera,
-            SCENE_SSAA_LEVEL,
-          );
-          const bloomNode = bloom(
-            scenePass,
-            BLOOM_STRENGTH,
-            BLOOM_RADIUS,
-            BLOOM_THRESHOLD,
-          );
-          const outputFrame = renderOutput(
-            rgbShift(scenePass.add(bloomNode), 0, 0),
-            nextRenderer.toneMapping,
-            nextRenderer.outputColorSpace,
-          );
-          const postProcessing = new RenderPipeline(nextRenderer, outputFrame);
+          const { disposables: effectDisposables, outputNode } =
+            createShowcaseDisplayPipeline({
+              camera: nextCamera,
+              mode: displayMode,
+              renderer: nextRenderer,
+              sampleLevel: SCENE_SSAA_LEVEL,
+              scene,
+            });
+          const postProcessing = new RenderPipeline(nextRenderer, outputNode);
           postProcessing.outputColorTransform = false;
-          registerViewportDisposables(disposables, scenePass, bloomNode);
+          registerViewportDisposables(disposables, ...effectDisposables);
 
           animationLoopController = createViewportAnimationLoopController({
             hostElement,

@@ -2,10 +2,10 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   applyGameplayTuning,
-  cloneGameTuningDocument,
   CURRENT_GAME_TUNING,
-  sanitizeGameTuning,
+  cloneGameTuningDocument,
   type GameTuningDocument,
+  sanitizeGameTuning,
 } from "@3body/shared";
 import { config } from "./config";
 
@@ -14,6 +14,7 @@ const CURRENT_TUNING_FILE_PATH = join(
   import.meta.dir,
   "../../shared/src/tuning/current.json",
 );
+let runtimeEditorTuningDocument = cloneGameTuningDocument(CURRENT_GAME_TUNING);
 
 const serializeEditorTuningDocument = (value: GameTuningDocument): unknown => {
   return {
@@ -45,6 +46,7 @@ export const writeEditorTuningDocument = async (
     "utf8",
   );
 
+  runtimeEditorTuningDocument = cloneGameTuningDocument(nextDocument);
   applyGameplayTuning(nextDocument.gameplay);
   return nextDocument;
 };
@@ -52,9 +54,13 @@ export const writeEditorTuningDocument = async (
 export const loadEditorTuningIntoRuntime =
   async (): Promise<GameTuningDocument> => {
     const document = await readEditorTuningDocument();
+    runtimeEditorTuningDocument = cloneGameTuningDocument(document);
     applyGameplayTuning(document.gameplay);
     return document;
   };
+
+export const getRuntimeEditorTuningDocument = (): GameTuningDocument =>
+  runtimeEditorTuningDocument;
 
 export const syncEditorTuningDocumentToCurrent =
   async (): Promise<GameTuningDocument> => {

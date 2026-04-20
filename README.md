@@ -1,6 +1,8 @@
-# 3BODY
+- Shake camera when get hit by missile, I think we already have something for when a planet is destroyed 
+- Flicker HUD and screen on missile hit (when a missile hits the player) , be able to test in /edit&item=HUD
+- Asteroids losing from the circle radius going into the game, big, small, etc. shouldnt maybe destroy but damage depending on the asteroid size
 
-Show SPEED + Orientation (magnet) next to Health
+# 3BODY
 
 A 2D multiplayer arena game built on the chaotic dynamics of the three-body problem.
 

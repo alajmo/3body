@@ -1,4 +1,3 @@
-import currentTuningDocument from "./tuning/current.json";
 import { ARCHETYPE_IDS } from "./archetypes";
 import type {
   AbilitySpec,
@@ -11,7 +10,12 @@ import type {
   RocketSpec,
 } from "./constants";
 import type { ArchetypeId, RocketKind } from "./entities";
+import {
+  DEFAULT_FIXED_ORBIT_PATTERN,
+  ORBIT_PATTERN_BY_ID,
+} from "./orbitPatternCatalog";
 import type { BotDifficulty } from "./protocol";
+import currentTuningDocument from "./tuning/current.json";
 import type { Vec2 } from "./vec2";
 
 export interface ShieldSpec extends AbilitySpec {
@@ -297,12 +301,33 @@ export interface HudVisualTuning {
   topInset: number;
 }
 
+export const VIEWPORT_DISPLAY_MODES = [
+  "default",
+  "vhs",
+  "pixelArt",
+  "vectorAsteroids",
+] as const;
+
+export type ViewportDisplayMode = (typeof VIEWPORT_DISPLAY_MODES)[number];
+
+export const DEFAULT_VIEWPORT_DISPLAY_MODE: ViewportDisplayMode = "default";
+
+export const sanitizeViewportDisplayMode = (
+  value: unknown,
+  fallback: ViewportDisplayMode = DEFAULT_VIEWPORT_DISPLAY_MODE,
+): ViewportDisplayMode =>
+  typeof value === "string" &&
+  VIEWPORT_DISPLAY_MODES.some((mode) => mode === value)
+    ? (value as ViewportDisplayMode)
+    : fallback;
+
 export interface VisualTuning {
   abilities: AbilityVisualTuning;
   background: BackgroundVisualTuning;
   blackHole: BlackHoleVisualTuning;
   caches: CacheVisualTuning;
   cannon: CannonVisualTuning;
+  displayMode: ViewportDisplayMode;
   hud: HudVisualTuning;
   neutronStars: NeutronStarVisualTuning;
   orbits: OrbitVisualTuning;
@@ -316,7 +341,19 @@ export interface GameplayCameraTuning {
   previewCameraWorldHeight: number;
 }
 
+export interface ArenaAsteroidFieldPartTuning {
+  damage: number;
+  randomization: number;
+}
+
+export interface ArenaAsteroidFieldTuning {
+  large: ArenaAsteroidFieldPartTuning;
+  micro: ArenaAsteroidFieldPartTuning;
+  small: ArenaAsteroidFieldPartTuning;
+}
+
 export interface ArenaGameplayTuning {
+  asteroidField: ArenaAsteroidFieldTuning;
   instantDeath: boolean;
   radius: number;
 }
@@ -334,7 +371,18 @@ export interface OrbitPlanetGameplayTuning {
   vel: Vec2;
 }
 
+export type OrbitStarMotionMode = "physicsSeed" | "fixedPattern";
+
+export interface OrbitStarMotionTuning {
+  mode: OrbitStarMotionMode;
+  patternId: string;
+  speed: number;
+}
+
 export interface OrbitGameplayTuning {
+  planetStartSpeedScale: number;
+  starPatternDistanceScale: number;
+  starMotion: OrbitStarMotionTuning;
   sunStartDistanceScale: number;
   planetCircleRadius: number;
   suns: [
@@ -616,6 +664,39 @@ const sanitizeOrbitPlanetGameplayTuning = (
     pos: sanitizeOrbitVec2(source.pos, fallback.pos, -10_000, 10_000),
     radius: sanitizeNumber(source.radius, fallback.radius, 8, 500),
     vel: sanitizeOrbitVec2(source.vel, fallback.vel, -2_000, 2_000),
+  };
+};
+
+const sanitizeOrbitStarMotionMode = (
+  value: unknown,
+  fallback: OrbitStarMotionMode,
+): OrbitStarMotionMode =>
+  value === "physicsSeed" || value === "fixedPattern" ? value : fallback;
+
+const sanitizeOrbitStarMotionTuning = (
+  value: unknown,
+  fallback: OrbitStarMotionTuning,
+): OrbitStarMotionTuning => {
+  const candidate =
+    value !== null && typeof value === "object"
+      ? (value as Partial<Record<keyof OrbitStarMotionTuning, unknown>>)
+      : {};
+  const patternIdCandidate =
+    typeof candidate.patternId === "string"
+      ? candidate.patternId
+      : fallback.patternId;
+
+  return {
+    mode: sanitizeOrbitStarMotionMode(candidate.mode, fallback.mode),
+    patternId: ORBIT_PATTERN_BY_ID.has(patternIdCandidate)
+      ? patternIdCandidate
+      : fallback.patternId,
+    speed: sanitizeNumber(
+      candidate.speed,
+      fallback.speed,
+      0,
+      Number.POSITIVE_INFINITY,
+    ),
   };
 };
 
@@ -1187,6 +1268,7 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
       starTwinkleAmount: 1,
       starTwinkleEnabled: true,
     },
+    displayMode: DEFAULT_VIEWPORT_DISPLAY_MODE,
     planets: {
       archetypes: {
         terra: {
@@ -1610,6 +1692,20 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
       },
     },
     arena: {
+      asteroidField: {
+        large: {
+          damage: 6.5,
+          randomization: 0.85,
+        },
+        micro: {
+          damage: 0.4,
+          randomization: 0.2,
+        },
+        small: {
+          damage: 1.6,
+          randomization: 0.55,
+        },
+      },
       instantDeath: true,
       radius: 2_000,
     },
@@ -1624,6 +1720,13 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
       previewCameraWorldHeight: 7600,
     },
     orbits: {
+      planetStartSpeedScale: 1,
+      starPatternDistanceScale: 1,
+      starMotion: {
+        mode: "physicsSeed",
+        patternId: DEFAULT_FIXED_ORBIT_PATTERN.id,
+        speed: 1,
+      },
       sunStartDistanceScale: 1,
       planetCircleRadius: 2_200,
       suns: [
@@ -2040,6 +2143,42 @@ const sanitizeDifficultyRocketNumberTuning = (
   };
 };
 
+const sanitizeArenaAsteroidFieldPartTuning = (
+  value: unknown,
+  fallback: ArenaAsteroidFieldPartTuning,
+): ArenaAsteroidFieldPartTuning => {
+  const source =
+    value !== null && typeof value === "object"
+      ? (value as Partial<Record<keyof ArenaAsteroidFieldPartTuning, unknown>>)
+      : {};
+
+  return {
+    damage: sanitizeNumber(source.damage, fallback.damage, 0, 50),
+    randomization: sanitizeNumber(
+      source.randomization,
+      fallback.randomization,
+      0,
+      1,
+    ),
+  };
+};
+
+const sanitizeArenaAsteroidFieldTuning = (
+  value: unknown,
+  fallback: ArenaAsteroidFieldTuning,
+): ArenaAsteroidFieldTuning => {
+  const source =
+    value !== null && typeof value === "object"
+      ? (value as Partial<Record<keyof ArenaAsteroidFieldTuning, unknown>>)
+      : {};
+
+  return {
+    large: sanitizeArenaAsteroidFieldPartTuning(source.large, fallback.large),
+    micro: sanitizeArenaAsteroidFieldPartTuning(source.micro, fallback.micro),
+    small: sanitizeArenaAsteroidFieldPartTuning(source.small, fallback.small),
+  };
+};
+
 const sanitizeArenaGameplayTuning = (
   value: unknown,
   fallback: ArenaGameplayTuning,
@@ -2050,6 +2189,10 @@ const sanitizeArenaGameplayTuning = (
       : {};
 
   return {
+    asteroidField: sanitizeArenaAsteroidFieldTuning(
+      source.asteroidField,
+      fallback.asteroidField,
+    ),
     instantDeath: sanitizeBoolean(source.instantDeath, fallback.instantDeath),
     radius: sanitizeNumber(
       source.radius,
@@ -2701,6 +2844,10 @@ export const sanitizeGameTuning = (value: unknown): GameTuningDocument => {
           fallback.visuals.background.starTwinkleEnabled,
         ),
       },
+      displayMode: sanitizeViewportDisplayMode(
+        visuals.displayMode,
+        fallback.visuals.displayMode,
+      ),
       planets: {
         archetypes: nextArchetypes,
         material: sanitizePlanetMaterialTuning(
@@ -2925,6 +3072,22 @@ export const sanitizeGameTuning = (value: unknown): GameTuningDocument => {
         fallback.gameplay.neutronStars,
       ),
       orbits: {
+        planetStartSpeedScale: sanitizeNumber(
+          gameplay.orbits?.planetStartSpeedScale,
+          fallback.gameplay.orbits.planetStartSpeedScale,
+          0,
+          Number.POSITIVE_INFINITY,
+        ),
+        starPatternDistanceScale: sanitizeNumber(
+          gameplay.orbits?.starPatternDistanceScale,
+          fallback.gameplay.orbits.starPatternDistanceScale,
+          0.5,
+          Number.POSITIVE_INFINITY,
+        ),
+        starMotion: sanitizeOrbitStarMotionTuning(
+          gameplay.orbits?.starMotion,
+          fallback.gameplay.orbits.starMotion,
+        ),
         sunStartDistanceScale: sanitizeNumber(
           gameplay.orbits?.sunStartDistanceScale,
           fallback.gameplay.orbits.sunStartDistanceScale,

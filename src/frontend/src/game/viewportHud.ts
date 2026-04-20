@@ -18,6 +18,7 @@ import {
 } from "@3body/shared";
 import { DEFAULT_ORBIT_PRESET } from "./orbitPresets";
 import { getRuntimeTuningDocument } from "./runtimeTuning";
+import type { ShowcaseDisplayMode } from "./showcaseDisplayMode";
 const DEFAULT_PLANET_VISUALS =
   CURRENT_GAME_TUNING.visuals.planets.archetypes.terra;
 export const DEFAULT_PLANET_BODY_SCALE = DEFAULT_PLANET_VISUALS.bodyScale;
@@ -131,6 +132,7 @@ export interface GameViewportHudState {
   damageFlash: number;
   debugItems: GameViewportDebugItem[];
   foresightSettings: AbilitySpec;
+  hudFlicker: number;
   hudOpacity: number;
   killFeed: GameViewportKillFeedEntry[];
   minimap: GameViewportMinimapState;
@@ -197,6 +199,7 @@ export interface GameViewportSandboxSessionConfig {
 export interface CreateGameViewportOptions {
   cameraWorldHeightOverride?: number;
   defaultBotsEnabled?: boolean;
+  displayMode?: ShowcaseDisplayMode;
   enableSandboxStorage?: boolean;
   onControllerReady?: (controller: GameViewportController | null) => void;
   onHudStateChange?: (state: GameViewportHudState) => void;
@@ -345,6 +348,7 @@ export const createInitialHudState = (): GameViewportHudState => {
     damageFlash: 0,
     debugItems: [],
     foresightSettings: { ...DEFAULT_FORESIGHT_SETTINGS },
+    hudFlicker: 0,
     hudOpacity: 1,
     killFeed: [],
     minimap: {
@@ -433,6 +437,7 @@ export const areHudStatesEqual = (
   areConnectionStatesEqual(current.connection, next.connection) &&
   current.currentPresetId === next.currentPresetId &&
   current.damageFlash === next.damageFlash &&
+  current.hudFlicker === next.hudFlicker &&
   current.hudOpacity === next.hudOpacity &&
   areMinimapStatesEqual(current.minimap, next.minimap) &&
   current.planetBodyScale === next.planetBodyScale &&

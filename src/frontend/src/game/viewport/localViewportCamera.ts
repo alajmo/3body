@@ -4,6 +4,7 @@ import type { Mesh, OrthographicCamera, WebGPURenderer } from "three/webgpu";
 import type { CombatSandboxPlanet } from "../combatSandbox";
 import { getRuntimeTuningDocument } from "../runtimeTuning";
 import { syncBackdropFrame } from "../showcaseVisuals";
+import { getViewportCameraShakeOffsets } from "./cameraShake";
 import {
   getViewportHostSize,
   syncViewportRendererSize,
@@ -13,7 +14,6 @@ import {
 export const LOCAL_VIEWPORT_CAMERA_DISTANCE = 100;
 const CAMERA_FOLLOW_LERP = 6.4;
 const CAMERA_ZOOM_LERP = 5.2;
-const MAX_CAMERA_SHAKE_WORLD_OFFSET = 34;
 const BACKDROP_OVERDRAW = 1.35;
 const STAGE_CAMERA_PADDING = 520;
 
@@ -253,7 +253,11 @@ export const getLocalViewportCameraFrame = ({
     }
 
     if (state.blackHole !== null) {
-      expandCameraBounds(bounds, state.blackHole.pos, state.blackHole.radius * 2.4);
+      expandCameraBounds(
+        bounds,
+        state.blackHole.pos,
+        state.blackHole.radius * 2.4,
+      );
     }
 
     for (const sun of state.suns) {
@@ -274,8 +278,7 @@ export const getLocalViewportCameraFrame = ({
 
     if (Number.isFinite(bounds.minX) && Number.isFinite(bounds.minY)) {
       const halfWidth = (bounds.maxX - bounds.minX) / 2 + STAGE_CAMERA_PADDING;
-      const halfHeight =
-        (bounds.maxY - bounds.minY) / 2 + STAGE_CAMERA_PADDING;
+      const halfHeight = (bounds.maxY - bounds.minY) / 2 + STAGE_CAMERA_PADDING;
 
       return {
         centerX: (bounds.minX + bounds.maxX) / 2,
@@ -367,17 +370,14 @@ export const updateLocalViewportCamera = ({
     cameraZoomAlpha,
   );
 
-  const shakeMagnitude =
-    MAX_CAMERA_SHAKE_WORLD_OFFSET *
-    (frame.visibleWorldHeight / followWorldHeight) *
-    cameraShake *
-    cameraShake;
-  cameraState.shakeOffsetX =
-    shakeMagnitude *
-    (Math.sin(nowSec * 64 + 0.4) * 0.68 + Math.sin(nowSec * 117 + 1.7) * 0.32);
-  cameraState.shakeOffsetY =
-    shakeMagnitude *
-    (Math.cos(nowSec * 73 + 0.8) * 0.62 + Math.sin(nowSec * 109 + 2.1) * 0.38);
+  const shakeOffsets = getViewportCameraShakeOffsets({
+    cameraShake,
+    followWorldHeight,
+    nowSec,
+    visibleWorldHeight: frame.visibleWorldHeight,
+  });
+  cameraState.shakeOffsetX = shakeOffsets.x;
+  cameraState.shakeOffsetY = shakeOffsets.y;
 
   applyLocalViewportCameraFrame({
     backdropMesh,

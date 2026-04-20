@@ -1,5 +1,5 @@
 import { render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GameViewportPanel } from "./GameViewportPanel";
 import {
   createInitialHudState,
@@ -18,6 +18,7 @@ vi.mock("./game/createGameViewport", () => ({
 vi.mock("./CombatHud", () => ({
   CombatHud: (props: {
     controller: GameViewportController | null;
+    displayMode?: string;
     hud: ReturnType<typeof createInitialHudState>;
     hudTuning: unknown;
     showPerformanceTools?: boolean;
@@ -26,7 +27,8 @@ vi.mock("./CombatHud", () => ({
     return (
       <div data-testid="combat-hud">
         {props.controller === null ? "no-controller" : "controller"}:
-        {props.hud.playerLabel}:{props.showPerformanceTools ? "perf" : "no-perf"}
+        {props.hud.playerLabel}:
+        {props.showPerformanceTools ? "perf" : "no-perf"}
       </div>
     );
   },
@@ -79,6 +81,11 @@ const createControllerMock = (): GameViewportController =>
   }) as GameViewportController;
 
 describe("GameViewportPanel", () => {
+  beforeEach(() => {
+    combatHudSpy.mockClear();
+    createGameViewportMock.mockReset();
+  });
+
   it("creates the viewport and forwards controller and HUD updates into CombatHud", async () => {
     const controller = createControllerMock();
     const dispose = vi.fn();
@@ -88,6 +95,7 @@ describe("GameViewportPanel", () => {
         _element: HTMLDivElement,
         options: {
           defaultBotsEnabled?: boolean;
+          displayMode?: string;
           enableSandboxStorage?: boolean;
           onControllerReady?: (
             controller: GameViewportController | null,
@@ -126,6 +134,7 @@ describe("GameViewportPanel", () => {
     expect(combatHudSpy.mock.lastCall?.[0]).toEqual(
       expect.objectContaining({
         controller,
+        displayMode: undefined,
         hud: expect.objectContaining({
           playerLabel: "Ace Pilot",
         }),
@@ -142,5 +151,23 @@ describe("GameViewportPanel", () => {
     view.unmount();
 
     expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("forwards the requested display mode into the viewport", () => {
+    createGameViewportMock.mockReturnValue(vi.fn());
+
+    render(<GameViewportPanel displayMode="vectorAsteroids" />);
+
+    expect(createGameViewportMock).toHaveBeenCalledWith(
+      expect.any(HTMLDivElement),
+      expect.objectContaining({
+        displayMode: "vectorAsteroids",
+      }),
+    );
+    expect(combatHudSpy.mock.lastCall?.[0]).toEqual(
+      expect.objectContaining({
+        displayMode: "vectorAsteroids",
+      }),
+    );
   });
 });

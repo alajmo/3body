@@ -1,4 +1,10 @@
-import type { ClientMsg, PlanetPublic, Vec2, World } from "@3body/shared";
+import type {
+  ClientMsg,
+  PlanetPublic,
+  SnapshotEvent,
+  Vec2,
+  World,
+} from "@3body/shared";
 import {
   ARENA_RADIUS,
   clamp,
@@ -62,6 +68,15 @@ import {
   syncAuthoritativeInterpolatedWorld,
 } from "./viewport/authoritativeInterpolation";
 import { getScaledRocketVisuals } from "./rocketVisualTuning";
+import {
+  CAMERA_SHAKE_DURATION_SEC,
+  getRocketImpactCameraShake,
+  getRocketImpactHudFlicker,
+  getRocketImpactScreenFlash,
+  getViewportCameraShakeOffsets,
+  ROCKET_IMPACT_HUD_FLICKER_DURATION_SEC,
+  ROCKET_IMPACT_SCREEN_FLASH_DURATION_SEC,
+} from "./viewport/cameraShake";
 import { createRuntimeStatsTracker } from "./viewport/runtimeStats";
 import {
   areHudStatesEqual,
@@ -193,6 +208,37 @@ const getCameraFrame = (
   };
 };
 
+const worldContainsPlayerPlanet = (
+  world: World | null | undefined,
+  playerId: string,
+  planetId: number,
+): boolean =>
+  world?.planets.some(
+    (planet) => planet.id === planetId && planet.playerId === playerId,
+  ) ?? false;
+
+const isPlayerRocketHitEvent = (
+  runtime: AuthoritativeMatchRuntimeState,
+  event: Extract<SnapshotEvent, { kind: "hit" }>,
+): boolean => {
+  if (runtime.playerId === null) {
+    return false;
+  }
+
+  return (
+    worldContainsPlayerPlanet(
+      runtime.snapshot?.world ?? null,
+      runtime.playerId,
+      event.victimPlanetId,
+    ) ||
+    worldContainsPlayerPlanet(
+      runtime.previousSnapshot?.world ?? null,
+      runtime.playerId,
+      event.victimPlanetId,
+    )
+  );
+};
+
 export function createAuthoritativeViewport(
   hostElement: HTMLDivElement,
   options: CreateAuthoritativeViewportOptions,
@@ -238,6 +284,8 @@ export function createAuthoritativeViewport(
     centerY: 0,
     renderCenterX: 0,
     renderCenterY: 0,
+    shakeOffsetX: 0,
+    shakeOffsetY: 0,
     visibleWorldHeight: getGameplayCameraHeights().followWorldHeight,
   };
   const rendererSizeState = createViewportRendererSizeState();
@@ -246,6 +294,10 @@ export function createAuthoritativeViewport(
     hostElement,
     isDisposed: () => disposed,
   });
+  let cameraShake = 0;
+  let damageFlash = 0;
+  let hudFlicker = 0;
+  let lastProcessedEventId: number | null = null;
 
   const emitHudState = (nextState: GameViewportHudState) => {
     if (areHudStatesEqual(lastHudState, nextState)) {
@@ -267,8 +319,8 @@ export function createAuthoritativeViewport(
     const worldHalfHeight = cameraState.visibleWorldHeight / 2;
     const worldHalfWidth = worldHalfHeight * aspect;
 
-    cameraState.renderCenterX = cameraState.centerX;
-    cameraState.renderCenterY = cameraState.centerY;
+    cameraState.renderCenterX = cameraState.centerX + cameraState.shakeOffsetX;
+    cameraState.renderCenterY = cameraState.centerY + cameraState.shakeOffsetY;
     camera.left = -worldHalfWidth;
     camera.right = worldHalfWidth;
     camera.top = worldHalfHeight;
@@ -510,8 +562,10 @@ export function createAuthoritativeViewport(
                 currentEffectsQuality: renderQuality.effectsQuality,
                 currentTick: snapshot?.tick ?? 0,
                 currentMaxPixelRatio,
+                damageFlash,
                 eventLog: runtime.recentEvents,
                 extrapolating,
+                hudFlicker,
                 playerId,
                 playerPlanet,
                 profilerSnapshot: performanceState.profilingEnabled
@@ -684,6 +738,68 @@ export function createAuthoritativeViewport(
                   : (world.planets.find(
                       (planet) => planet.playerId === playerId,
                     ) ?? null);
+              cameraShake = Math.max(
+                0,
+                cameraShake - frameDeltaSec / CAMERA_SHAKE_DURATION_SEC,
+              );
+              damageFlash = Math.max(
+                0,
+                damageFlash -
+                  frameDeltaSec / ROCKET_IMPACT_SCREEN_FLASH_DURATION_SEC,
+              );
+              hudFlicker = Math.max(
+                0,
+                hudFlicker -
+                  frameDeltaSec / ROCKET_IMPACT_HUD_FLICKER_DURATION_SEC,
+              );
+              const latestEventId =
+                runtime.recentEvents[runtime.recentEvents.length - 1]?.id ?? 0;
+              if (
+                lastProcessedEventId === null ||
+                latestEventId < lastProcessedEventId
+              ) {
+                lastProcessedEventId = latestEventId;
+              } else {
+                for (const eventRecord of runtime.recentEvents) {
+                  if (eventRecord.id <= lastProcessedEventId) {
+                    continue;
+                  }
+
+                  if (
+                    eventRecord.event.kind === "hit" &&
+                    isPlayerRocketHitEvent(runtime, eventRecord.event)
+                  ) {
+                    damageFlash = Math.max(
+                      damageFlash,
+                      eventRecord.event.hpAfter <= 0
+                        ? 1
+                        : getRocketImpactScreenFlash({
+                            absorbedByShield:
+                              eventRecord.event.absorbedByShield,
+                            rocketKind: eventRecord.event.rocketKind,
+                          }),
+                    );
+                    hudFlicker = Math.max(
+                      hudFlicker,
+                      getRocketImpactHudFlicker({
+                        absorbedByShield: eventRecord.event.absorbedByShield,
+                        rocketKind: eventRecord.event.rocketKind,
+                      }),
+                    );
+                    cameraShake = Math.max(
+                      cameraShake,
+                      eventRecord.event.hpAfter <= 0
+                        ? 1
+                        : getRocketImpactCameraShake({
+                            absorbedByShield:
+                              eventRecord.event.absorbedByShield,
+                            rocketKind: eventRecord.event.rocketKind,
+                          }),
+                    );
+                  }
+                }
+                lastProcessedEventId = latestEventId;
+              }
               const frame = getCameraFrame(world, playerPlanet);
               const cameraMoveAlpha =
                 1 - Math.exp(-CAMERA_FOLLOW_LERP * frameDeltaSec);
@@ -704,6 +820,14 @@ export function createAuthoritativeViewport(
                 frame.visibleWorldHeight,
                 cameraZoomAlpha,
               );
+              const shakeOffsets = getViewportCameraShakeOffsets({
+                cameraShake,
+                followWorldHeight: getGameplayCameraHeights().followWorldHeight,
+                nowSec,
+                visibleWorldHeight: cameraState.visibleWorldHeight,
+              });
+              cameraState.shakeOffsetX = shakeOffsets.x;
+              cameraState.shakeOffsetY = shakeOffsets.y;
               applyCameraFrame();
               syncAimWorldToPointer?.();
 

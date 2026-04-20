@@ -1,14 +1,16 @@
 import {
   ARENA_RADIUS,
   BLACK_HOLE_SPEC,
-  CURRENT_GAME_TUNING,
-  FIXED_STEP_SEC,
-  consumeBlackHoleBodies,
-  GRAVITY_PULSE_RADIUS,
-  getSeekerLockTicks,
   type BlackHoleSpec,
+  CURRENT_GAME_TUNING,
+  consumeBlackHoleBodies,
+  FIXED_STEP_SEC,
+  GRAVITY_PULSE_RADIUS,
+  getOrbitPatternTrack,
+  getSeekerLockTicks,
   PLANET_HP,
   ROCKET_SPECS,
+  sampleOrbitPatternTrack,
 } from "@3body/shared";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
@@ -360,6 +362,57 @@ describe("combatSandbox", () => {
     });
   });
 
+  it("uses sampled fixed-pattern suns and a separate planet start speed scale", () => {
+    const tunedDocument = structuredClone(CURRENT_GAME_TUNING);
+    tunedDocument.gameplay.orbits.starMotion = {
+      mode: "fixedPattern",
+      patternId: "equilateral-circle",
+      speed: 0,
+    };
+    tunedDocument.gameplay.orbits.starPatternDistanceScale = 1.5;
+    tunedDocument.gameplay.orbits.planetStartSpeedScale = 0.5;
+    tunedDocument.gameplay.orbits.suns[0] = {
+      ...tunedDocument.gameplay.orbits.suns[0]!,
+      pos: { x: 8_000, y: -8_000 },
+      vel: { x: 4_000, y: -4_000 },
+    };
+    applyRuntimeTuningDocument(tunedDocument);
+
+    const state = createSandboxState(DEFAULT_ORBIT_PRESET, {
+      botsEnabled: false,
+    });
+    const circleRadius = Math.min(
+      tunedDocument.gameplay.orbits.planetCircleRadius,
+      ARENA_RADIUS,
+    );
+    const tunedPlanet = tunedDocument.gameplay.orbits.planets[0]!;
+    const templateRadius = Math.max(
+      Math.hypot(tunedPlanet.pos.x, tunedPlanet.pos.y),
+      1,
+    );
+    const templateSpeed = Math.hypot(tunedPlanet.vel.x, tunedPlanet.vel.y);
+    const expectedSpeed =
+      templateSpeed *
+      Math.sqrt(templateRadius / circleRadius) *
+      tunedDocument.gameplay.orbits.planetStartSpeedScale;
+    const sampledSuns = sampleOrbitPatternTrack(
+      getOrbitPatternTrack("equilateral-circle"),
+      0,
+      0,
+      tunedDocument.gameplay.orbits.starPatternDistanceScale,
+    );
+
+    expect(state.suns[0]!.pos.x).not.toBeCloseTo(
+      tunedDocument.gameplay.orbits.suns[0]!.pos.x,
+      2,
+    );
+    expect(state.suns[0]!.pos.x).toBeCloseTo(sampledSuns[0]!.pos.x, 6);
+    expect(state.suns[0]!.pos.y).toBeCloseTo(sampledSuns[0]!.pos.y, 6);
+    expect(
+      Math.hypot(state.planets[0]!.vel.x, state.planets[0]!.vel.y),
+    ).toBeCloseTo(expectedSpeed, 6);
+  });
+
   it("can start the local sandbox with bot AI disabled", () => {
     const state = createSandboxState(DEFAULT_ORBIT_PRESET, {
       botsEnabled: false,
@@ -442,6 +495,58 @@ describe("combatSandbox", () => {
     expect(playerPlanet?.hp).toBeLessThan(PLANET_HP);
     expect(playerPlanet?.deathReason).toBeUndefined();
     expect(next.playerLostAtSec).toBeNull();
+  });
+
+  it("applies size-based damage when inward-drifting boundary debris hits a planet", () => {
+    const tunedDocument = structuredClone(CURRENT_GAME_TUNING);
+    tunedDocument.gameplay.arena.asteroidField = {
+      large: { damage: 12, randomization: 0 },
+      micro: { damage: 0.6, randomization: 0 },
+      small: { damage: 3, randomization: 0 },
+    };
+    applyRuntimeTuningDocument(tunedDocument);
+
+    const { state } = createLinearCombatState();
+    const playerPlanetIndex = state.planets.findIndex(
+      (planet) => planet.id === state.player.planetId,
+    );
+    state.debris = [
+      {
+        asteroidTier: "small",
+        color: "#ffd98f",
+        id: state.nextEntityId,
+        kind: "debris",
+        ownerPlayerId: undefined,
+        pos: { x: 19, y: 0 },
+        radius: 4,
+        ttlUntilTick: state.tick + 12,
+        vel: { x: 0, y: 0 },
+      },
+    ];
+    state.nextEntityId += 1;
+
+    state.planets[playerPlanetIndex] = {
+      ...state.planets[playerPlanetIndex]!,
+      pos: { x: 0, y: 0 },
+      vel: { x: 0, y: 0 },
+    };
+    const next = stepSandbox(
+      state,
+      createStepInput(),
+      DISABLED_BLACK_HOLE_SPEC,
+    );
+    const playerPlanet = next.planets.find(
+      (planet) => planet.id === state.player.planetId,
+    );
+
+    expect(playerPlanet?.alive).toBe(true);
+    expect(playerPlanet?.hp).toBeCloseTo(PLANET_HP - 3, 6);
+    expect(playerPlanet?.deathReason).toBeUndefined();
+    expect(next.impactBursts).toHaveLength(1);
+    expect(next.debris.some((piece) => piece.asteroidTier === "small")).toBe(
+      false,
+    );
+    expect(next.debris.length).toBeGreaterThan(0);
   });
 
   it("assigns local pilot display names for the player and bots", () => {

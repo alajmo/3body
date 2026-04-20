@@ -111,6 +111,8 @@ export function NumberField(props: {
       <input
         type="number"
         className="edit-field__input"
+        max={props.max}
+        min={props.min}
         step={step}
         value={draft}
         onBlur={commit}

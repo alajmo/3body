@@ -1,5 +1,12 @@
+import {
+  CURRENT_GAME_TUNING,
+  clampOrbitPatternDistanceScale,
+  getOrbitPatternTrack,
+  sampleOrbitPatternTrack,
+} from "@3body/shared";
+import { beforeEach, describe, expect, it } from "vitest";
 import type { OrbitPreset } from "./orbitPresets";
-import { describe, expect, it } from "vitest";
+import { DEFAULT_ORBIT_PRESET } from "./orbitPresets";
 import {
   createSandboxState,
   getPlanetSoftBoundaryRadius,
@@ -8,6 +15,7 @@ import {
   interpolateSandboxState,
   stepSandbox,
 } from "./orbitSandbox";
+import { applyRuntimeTuningDocument } from "./runtimeTuning";
 
 const createTestPreset = (): OrbitPreset => ({
   id: "test-preset",
@@ -63,6 +71,10 @@ const createTestPreset = (): OrbitPreset => ({
 });
 
 describe("orbitSandbox", () => {
+  beforeEach(() => {
+    applyRuntimeTuningDocument(CURRENT_GAME_TUNING);
+  });
+
   it("clones preset entities into mutable sandbox state", () => {
     const preset = createTestPreset();
     const state = createSandboxState(preset);
@@ -141,5 +153,107 @@ describe("orbitSandbox", () => {
 
     expect(interpolated.planets[0]!.pos).toEqual(current.planets[0]!.pos);
     expect(interpolated.planets[0]!.vel).toEqual(current.planets[0]!.vel);
+  });
+
+  it("samples fixed-pattern suns kinematically when that orbit mode is active", () => {
+    const tunedDocument = structuredClone(CURRENT_GAME_TUNING);
+    tunedDocument.gameplay.orbits.starMotion = {
+      mode: "fixedPattern",
+      patternId: "figure-eight-v1a",
+      speed: 0,
+    };
+    tunedDocument.gameplay.orbits.starPatternDistanceScale = 1.75;
+    tunedDocument.gameplay.orbits.suns[0] = {
+      ...tunedDocument.gameplay.orbits.suns[0]!,
+      pos: { x: 9_999, y: -9_999 },
+      vel: { x: 1_234, y: -5_678 },
+    };
+    applyRuntimeTuningDocument(tunedDocument);
+
+    const clampedDistanceScale = clampOrbitPatternDistanceScale(
+      "figure-eight-v1a",
+      tunedDocument.gameplay.orbits.starPatternDistanceScale,
+      tunedDocument.gameplay.orbits.suns,
+    );
+    const state = createSandboxState(DEFAULT_ORBIT_PRESET);
+    const nextState = stepSandbox(state);
+    const sampledSuns = sampleOrbitPatternTrack(
+      getOrbitPatternTrack("figure-eight-v1a"),
+      0,
+      0,
+      clampedDistanceScale,
+    );
+
+    expect(state.suns[0]!.pos.x).not.toBeCloseTo(
+      tunedDocument.gameplay.orbits.suns[0]!.pos.x,
+      2,
+    );
+    expect(state.suns[0]!.pos.x).toBeCloseTo(sampledSuns[0]!.pos.x, 6);
+    expect(state.suns[0]!.pos.y).toBeCloseTo(sampledSuns[0]!.pos.y, 6);
+    expect(nextState.suns[0]!.pos.x).toBeCloseTo(state.suns[0]!.pos.x, 6);
+    expect(nextState.suns[0]!.pos.y).toBeCloseTo(state.suns[0]!.pos.y, 6);
+    expect(nextState.suns[0]!.vel.x).toBeCloseTo(state.suns[0]!.vel.x, 6);
+    expect(nextState.suns[0]!.vel.y).toBeCloseTo(state.suns[0]!.vel.y, 6);
+  });
+
+  it("falls back to the supported fixed-pattern set when legacy ids are loaded", () => {
+    const tunedDocument = structuredClone(CURRENT_GAME_TUNING);
+    tunedDocument.gameplay.orbits.starMotion = {
+      mode: "fixedPattern",
+      patternId: "yarn-prl",
+      speed: 0,
+    };
+    applyRuntimeTuningDocument(tunedDocument);
+
+    const clampedDistanceScale = clampOrbitPatternDistanceScale(
+      "figure-eight-v1a",
+      tunedDocument.gameplay.orbits.starPatternDistanceScale,
+      tunedDocument.gameplay.orbits.suns,
+    );
+    const state = createSandboxState(DEFAULT_ORBIT_PRESET);
+    const sampledSuns = sampleOrbitPatternTrack(
+      getOrbitPatternTrack("figure-eight-v1a"),
+      0,
+      0,
+      clampedDistanceScale,
+    );
+
+    expect(state.suns[0]!.pos.x).toBeCloseTo(sampledSuns[0]!.pos.x, 6);
+    expect(state.suns[0]!.pos.y).toBeCloseTo(sampledSuns[0]!.pos.y, 6);
+  });
+
+  it("clamps fixed-pattern distance scale for large suns before seeding the sandbox", () => {
+    const tunedDocument = structuredClone(CURRENT_GAME_TUNING);
+    tunedDocument.gameplay.orbits.starMotion = {
+      mode: "fixedPattern",
+      patternId: "equilateral-circle",
+      speed: 0,
+    };
+    tunedDocument.gameplay.orbits.starPatternDistanceScale = 0.5;
+    tunedDocument.gameplay.orbits.suns = tunedDocument.gameplay.orbits.suns.map(
+      (sun) => ({
+        ...sun,
+        radius: 800,
+      }),
+    ) as typeof tunedDocument.gameplay.orbits.suns;
+    applyRuntimeTuningDocument(tunedDocument);
+
+    const clampedDistanceScale = clampOrbitPatternDistanceScale(
+      "equilateral-circle",
+      tunedDocument.gameplay.orbits.starPatternDistanceScale,
+      tunedDocument.gameplay.orbits.suns,
+    );
+    const sampledSuns = sampleOrbitPatternTrack(
+      getOrbitPatternTrack("equilateral-circle"),
+      0,
+      0,
+      clampedDistanceScale,
+    );
+    const state = createSandboxState(DEFAULT_ORBIT_PRESET);
+
+    expect(clampedDistanceScale).toBeGreaterThan(0.5);
+    expect(state.suns[0]!.pos.x).toBeCloseTo(sampledSuns[0]!.pos.x, 6);
+    expect(state.suns[0]!.pos.y).toBeCloseTo(sampledSuns[0]!.pos.y, 6);
+    expect(state.suns[0]!.radius).toBe(800);
   });
 });

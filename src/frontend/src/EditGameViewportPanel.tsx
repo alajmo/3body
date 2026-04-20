@@ -53,6 +53,7 @@ const createViewportRefreshSignature = (
     blackHole: documentValue.visuals.blackHole,
     camera: documentValue.gameplay.camera,
     cameraWorldHeightOverride,
+    displayMode: documentValue.visuals.displayMode,
     sandboxSessionConfig,
     planets: {
       archetypes: documentValue.visuals.planets.archetypes,
@@ -71,10 +72,7 @@ const syncSandboxSettings = (
       previousDocument.gameplay.blackHole[key] !==
       nextDocument.gameplay.blackHole[key]
     ) {
-      controller.setBlackHoleSetting(
-        key,
-        nextDocument.gameplay.blackHole[key],
-      );
+      controller.setBlackHoleSetting(key, nextDocument.gameplay.blackHole[key]);
     }
   }
 
@@ -93,7 +91,10 @@ const syncSandboxSettings = (
       previousDocument.gameplay.abilities.shield[key] !==
       nextDocument.gameplay.abilities.shield[key]
     ) {
-      controller.setShieldSetting(key, nextDocument.gameplay.abilities.shield[key]);
+      controller.setShieldSetting(
+        key,
+        nextDocument.gameplay.abilities.shield[key],
+      );
     }
   }
 
@@ -102,7 +103,10 @@ const syncSandboxSettings = (
       previousDocument.gameplay.abilities.boost[key] !==
       nextDocument.gameplay.abilities.boost[key]
     ) {
-      controller.setBoostSetting(key, nextDocument.gameplay.abilities.boost[key]);
+      controller.setBoostSetting(
+        key,
+        nextDocument.gameplay.abilities.boost[key],
+      );
     }
   }
 
@@ -161,6 +165,7 @@ export function EditGameViewportPanel({
     disposeViewportRef.current = createGameViewport(viewportElement, {
       cameraWorldHeightOverride,
       defaultBotsEnabled: true,
+      displayMode: documentValue.visuals.displayMode,
       enableSandboxStorage: false,
       onControllerReady: (controller) => {
         setViewportController(controller);
@@ -235,7 +240,12 @@ export function EditGameViewportPanel({
       refreshTimeoutRef.current = null;
       restartViewport();
     }, VIEWPORT_REFRESH_DEBOUNCE_MS);
-  }, [cameraWorldHeightOverride, documentValue, sandboxSessionConfig, restartViewport]);
+  }, [
+    cameraWorldHeightOverride,
+    documentValue,
+    sandboxSessionConfig,
+    restartViewport,
+  ]);
 
   return (
     <div className={className}>
@@ -244,6 +254,7 @@ export function EditGameViewportPanel({
         <div className="hud-root">
           <CombatHud
             controller={viewportController}
+            displayMode={documentValue.visuals.displayMode}
             hud={hudState}
             hudTuning={hudTuning}
             showPerformanceTools={false}

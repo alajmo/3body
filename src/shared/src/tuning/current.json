@@ -34,6 +34,7 @@
       "starTwinkleAmount": 2,
       "starTwinkleEnabled": true
     },
+    "displayMode": "default",
     "planets": {
       "archetypes": {
         "terra": {
@@ -524,6 +525,20 @@
       }
     },
     "arena": {
+      "asteroidField": {
+        "large": {
+          "damage": 6.5,
+          "randomization": 0.85
+        },
+        "micro": {
+          "damage": 0.4,
+          "randomization": 0.2
+        },
+        "small": {
+          "damage": 1.6,
+          "randomization": 0.55
+        }
+      },
       "instantDeath": true,
       "radius": 15000
     },
@@ -546,6 +561,13 @@
       "randomizePositionInsidePlayableCircle": false
     },
     "orbits": {
+      "planetStartSpeedScale": 1,
+      "starPatternDistanceScale": 1,
+      "starMotion": {
+        "mode": "physicsSeed",
+        "patternId": "figure-eight-v1a",
+        "speed": 1
+      },
       "sunStartDistanceScale": 5,
       "planetCircleRadius": 10000,
       "suns": [

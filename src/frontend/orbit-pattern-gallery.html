@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>3BODY Orbit Pattern Gallery</title>
+    <style>
+      :root {
+        --page-bg: #f4ecdd;
+        --panel-bg: rgba(255, 252, 246, 0.92);
+        --panel-stroke: rgba(74, 48, 17, 0.14);
+        --heading: #2f1b0e;
+        --body: #5f4630;
+        --muted: #86674d;
+        --accent: #b45f1d;
+        --accent-soft: rgba(180, 95, 29, 0.14);
+        --grid-gap: 1.25rem;
+        color-scheme: light;
+        font-family:
+          "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Palatino,
+          "Times New Roman", serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          radial-gradient(circle at top, rgba(255, 245, 225, 0.92), transparent 40%),
+          radial-gradient(circle at bottom right, rgba(209, 129, 58, 0.16), transparent 28%),
+          linear-gradient(180deg, #f8f1e6 0%, #efe4d0 100%);
+        color: var(--body);
+      }
+
+      .page {
+        width: min(1360px, calc(100vw - 2rem));
+        margin: 0 auto;
+        padding: 2.5rem 0 3rem;
+      }
+
+      .hero {
+        display: grid;
+        gap: 1rem;
+        padding: 1.5rem;
+        border: 1px solid var(--panel-stroke);
+        border-radius: 24px;
+        background:
+          linear-gradient(135deg, rgba(255, 250, 244, 0.96), rgba(246, 231, 206, 0.82)),
+          var(--panel-bg);
+        box-shadow:
+          0 20px 60px rgba(72, 41, 12, 0.08),
+          inset 0 1px 0 rgba(255, 255, 255, 0.72);
+      }
+
+      .hero h1 {
+        margin: 0;
+        color: var(--heading);
+        font-size: clamp(2rem, 3.3vw, 3.5rem);
+        line-height: 0.95;
+        letter-spacing: -0.04em;
+      }
+
+      .hero p {
+        max-width: 54rem;
+        margin: 0;
+        color: var(--body);
+        font-size: 1.05rem;
+        line-height: 1.5;
+      }
+
+      .hero-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.9rem;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .meta-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.55rem 0.8rem;
+        border: 1px solid rgba(102, 64, 23, 0.14);
+        border-radius: 999px;
+        background: rgba(255, 253, 248, 0.72);
+        color: var(--muted);
+        font-size: 0.95rem;
+      }
+
+      .controls {
+        display: inline-flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.85rem;
+      }
+
+      .controls label {
+        color: var(--heading);
+        font-size: 0.95rem;
+      }
+
+      .controls input[type="range"] {
+        width: 220px;
+        accent-color: var(--accent);
+      }
+
+      .controls output {
+        min-width: 3.5rem;
+        color: var(--accent);
+        font-family:
+          "SFMono-Regular", "Menlo", "Monaco", "Liberation Mono", monospace;
+        font-size: 0.92rem;
+      }
+
+      .gallery {
+        margin-top: 1.5rem;
+        display: grid;
+        gap: var(--grid-gap);
+        grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
+      }
+
+      .gallery-section {
+        margin-top: 1.75rem;
+      }
+
+      .gallery-section-header {
+        display: grid;
+        gap: 0.35rem;
+      }
+
+      .gallery-section-title {
+        margin: 0;
+        color: var(--heading);
+        font-size: 1.5rem;
+        line-height: 1.05;
+      }
+
+      .gallery-section-note {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.95rem;
+        line-height: 1.45;
+      }
+
+      .pattern-card {
+        display: grid;
+        gap: 0.9rem;
+        padding: 1rem;
+        border: 1px solid var(--panel-stroke);
+        border-radius: 22px;
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(248, 237, 218, 0.88)),
+          var(--panel-bg);
+        box-shadow:
+          0 18px 36px rgba(79, 50, 23, 0.08),
+          inset 0 1px 0 rgba(255, 255, 255, 0.8);
+      }
+
+      .pattern-header {
+        display: flex;
+        gap: 0.75rem;
+        align-items: baseline;
+        justify-content: space-between;
+      }
+
+      .pattern-copy {
+        display: grid;
+        gap: 0.25rem;
+      }
+
+      .pattern-title {
+        margin: 0;
+        color: var(--heading);
+        font-size: 1.25rem;
+        line-height: 1.05;
+      }
+
+      .pattern-id {
+        color: var(--muted);
+        font-family:
+          "SFMono-Regular", "Menlo", "Monaco", "Liberation Mono", monospace;
+        font-size: 0.8rem;
+      }
+
+      .pattern-note {
+        color: var(--muted);
+        font-size: 0.86rem;
+        line-height: 1.4;
+      }
+
+      .pattern-badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 0.35rem 0.6rem;
+        border-radius: 999px;
+        font-size: 0.74rem;
+        line-height: 1;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+
+      .pattern-badge--validated {
+        background: rgba(31, 107, 91, 0.12);
+        border: 1px solid rgba(31, 107, 91, 0.18);
+        color: #1f6b5b;
+      }
+
+      .pattern-badge--candidate {
+        background: rgba(180, 95, 29, 0.12);
+        border: 1px solid rgba(180, 95, 29, 0.18);
+        color: var(--accent);
+      }
+
+      .pattern-stage {
+        position: relative;
+        min-height: 250px;
+        border-radius: 18px;
+        overflow: hidden;
+        background:
+          radial-gradient(circle at center, rgba(255, 246, 227, 0.9), rgba(238, 221, 193, 0.92)),
+          linear-gradient(180deg, rgba(239, 223, 196, 0.64), rgba(247, 239, 226, 0.88));
+        border: 1px solid rgba(110, 78, 42, 0.12);
+      }
+
+      .pattern-canvas {
+        display: block;
+        width: 100%;
+        height: 250px;
+      }
+
+      .pattern-stats {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.65rem;
+      }
+
+      .stat {
+        padding: 0.75rem;
+        border-radius: 14px;
+        background: rgba(255, 252, 247, 0.76);
+        border: 1px solid rgba(105, 69, 32, 0.1);
+      }
+
+      .stat-label {
+        color: var(--muted);
+        font-size: 0.72rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .stat-value {
+        margin-top: 0.28rem;
+        color: var(--heading);
+        font-family:
+          "SFMono-Regular", "Menlo", "Monaco", "Liberation Mono", monospace;
+        font-size: 0.92rem;
+      }
+
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.65rem;
+      }
+
+      .legend-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+        color: var(--muted);
+        font-size: 0.85rem;
+      }
+
+      .legend-dot {
+        width: 0.75rem;
+        height: 0.75rem;
+        border-radius: 50%;
+        box-shadow: 0 0 0 1px rgba(74, 48, 17, 0.12);
+      }
+
+      .footer-note {
+        margin-top: 1.35rem;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      @media (max-width: 720px) {
+        .page {
+          width: min(100vw - 1rem, 100%);
+          padding-top: 1rem;
+        }
+
+        .hero,
+        .pattern-card {
+          border-radius: 18px;
+        }
+
+        .pattern-stage,
+        .pattern-canvas {
+          height: 220px;
+          min-height: 220px;
+        }
+
+        .pattern-stats {
+          grid-template-columns: 1fr;
+        }
+
+        .controls input[type="range"] {
+          width: min(240px, 70vw);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/orbit-pattern-gallery.ts"></script>
+  </body>
+  </html>

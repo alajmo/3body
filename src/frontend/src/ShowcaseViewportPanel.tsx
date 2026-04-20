@@ -4,9 +4,11 @@ import {
   createModelShowcaseViewport,
   type ModelShowcaseViewportOptions,
 } from "./game/createModelShowcaseViewport";
+import type { ShowcaseDisplayMode } from "./game/showcaseDisplayMode";
 
 type ShowcaseViewportPanelProps = {
   className?: string;
+  displayMode?: ShowcaseDisplayMode;
   focus?: ModelShowcaseViewportOptions["focus"];
   minimumWorldHeight?: number;
   rocketKind?: RocketKind;
@@ -15,6 +17,7 @@ type ShowcaseViewportPanelProps = {
 
 export function ShowcaseViewportPanel({
   className = "app-shell",
+  displayMode,
   focus = "all",
   minimumWorldHeight,
   rocketKind,
@@ -29,11 +32,12 @@ export function ShowcaseViewportPanel({
     }
 
     return createModelShowcaseViewport(viewportElement, {
+      displayMode,
       focus,
       minimumWorldHeight,
       rocketKind,
     });
-  }, [focus, minimumWorldHeight, rocketKind]);
+  }, [displayMode, focus, minimumWorldHeight, rocketKind]);
 
   return (
     <div className={className}>

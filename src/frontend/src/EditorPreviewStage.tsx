@@ -2,18 +2,28 @@ import {
   clamp,
   type GameTuningDocument,
   type HudVisualTuning,
+  type RocketKind,
 } from "@3body/shared";
 import { useEffect, useRef, useState } from "react";
 import { CombatHud } from "./CombatHud";
 import { EditorItemViewportPanel } from "./EditorItemViewportPanel";
 import { ShowcaseViewportPanel } from "./ShowcaseViewportPanel";
 import type { EditorPreviewViewportItemId } from "./game/createEditorItemPreviewViewport";
+import type { ShowcaseDisplayMode } from "./game/showcaseDisplayMode";
+import {
+  getRocketImpactHudFlicker,
+  getRocketImpactScreenFlash,
+  ROCKET_IMPACT_HUD_FLICKER_DURATION_SEC,
+} from "./game/viewport/cameraShake";
 import {
   createInitialHudState,
   type GameViewportHudState,
 } from "./game/viewportHud";
 
 const VIEWPORT_REFRESH_DEBOUNCE_MS = 140;
+const HUD_MISSILE_HIT_PREVIEW_KIND: RocketKind = "heavy";
+const HUD_MISSILE_HIT_PREVIEW_DURATION_MS =
+  ROCKET_IMPACT_HUD_FLICKER_DURATION_SEC * 1000;
 
 const createViewportRefreshSignature = (
   documentValue: GameTuningDocument,
@@ -28,6 +38,13 @@ const createViewportRefreshSignature = (
 
 const createPreviewHudState = (
   documentValue: GameTuningDocument,
+  {
+    damageFlash = 0,
+    hudFlicker = 0,
+  }: {
+    damageFlash?: number;
+    hudFlicker?: number;
+  } = {},
 ): GameViewportHudState => {
   const base = createInitialHudState();
 
@@ -80,6 +97,8 @@ const createPreviewHudState = (
       state: "connected",
     },
     foresightSettings: { ...documentValue.gameplay.abilities.foresight },
+    damageFlash,
+    hudFlicker,
     killFeed: [
       {
         accent: documentValue.visuals.rockets.light.hudAccent,
@@ -155,22 +174,39 @@ export function EditorPreviewStage({
   externalRevision = 0,
   hudTuning,
   itemId,
+  overviewDisplayMode,
   showHud,
 }: {
   documentValue: GameTuningDocument;
   externalRevision?: number;
   hudTuning: HudVisualTuning;
   itemId: EditorPreviewViewportItemId | "orbits";
+  overviewDisplayMode?: ShowcaseDisplayMode;
   showHud: boolean;
 }) {
   const useShowcaseOverview = itemId === "overview";
   const useHudBackgroundSurface = itemId === "hud";
-  const previewHudState = createPreviewHudState(documentValue);
   const refreshTimeoutRef = useRef<number | null>(null);
+  const hudHitPreviewTimeoutRef = useRef<number | null>(null);
   const lastRefreshSignatureRef = useRef(
     createViewportRefreshSignature(documentValue),
   );
+  const [hudHitPreviewActive, setHudHitPreviewActive] = useState(false);
   const [viewportRevision, setViewportRevision] = useState(0);
+  const previewHudState = createPreviewHudState(documentValue, {
+    damageFlash: hudHitPreviewActive
+      ? getRocketImpactScreenFlash({
+          absorbedByShield: false,
+          rocketKind: HUD_MISSILE_HIT_PREVIEW_KIND,
+        })
+      : 0,
+    hudFlicker: hudHitPreviewActive
+      ? getRocketImpactHudFlicker({
+          absorbedByShield: false,
+          rocketKind: HUD_MISSILE_HIT_PREVIEW_KIND,
+        })
+      : 0,
+  });
   const resolvedRevision = viewportRevision + externalRevision;
 
   useEffect(() => {
@@ -178,6 +214,10 @@ export function EditorPreviewStage({
       if (refreshTimeoutRef.current !== null) {
         window.clearTimeout(refreshTimeoutRef.current);
         refreshTimeoutRef.current = null;
+      }
+      if (hudHitPreviewTimeoutRef.current !== null) {
+        window.clearTimeout(hudHitPreviewTimeoutRef.current);
+        hudHitPreviewTimeoutRef.current = null;
       }
     };
   }, []);
@@ -199,11 +239,23 @@ export function EditorPreviewStage({
     }, VIEWPORT_REFRESH_DEBOUNCE_MS);
   }, [documentValue]);
 
+  const triggerHudHitPreview = () => {
+    setHudHitPreviewActive(true);
+    if (hudHitPreviewTimeoutRef.current !== null) {
+      window.clearTimeout(hudHitPreviewTimeoutRef.current);
+    }
+    hudHitPreviewTimeoutRef.current = window.setTimeout(() => {
+      hudHitPreviewTimeoutRef.current = null;
+      setHudHitPreviewActive(false);
+    }, HUD_MISSILE_HIT_PREVIEW_DURATION_MS);
+  };
+
   return (
     <div className="game-stage game-stage--editor">
       {useShowcaseOverview ? (
         <ShowcaseViewportPanel
           className="editor-preview-surface"
+          displayMode={overviewDisplayMode}
           focus="all"
           minimumWorldHeight={
             documentValue.gameplay.camera.previewCameraWorldHeight
@@ -225,10 +277,20 @@ export function EditorPreviewStage({
           revision={resolvedRevision}
         />
       )}
+      {itemId === "hud" && showHud ? (
+        <button
+          type="button"
+          className="edit-action-button edit-preview-overlay-button"
+          onClick={triggerHudHitPreview}
+        >
+          Preview missile hit
+        </button>
+      ) : null}
       {showHud ? (
         <div className="hud-root">
           <CombatHud
             controller={null}
+            displayMode={overviewDisplayMode}
             hud={previewHudState}
             hudTuning={hudTuning}
             showPerformanceTools={false}

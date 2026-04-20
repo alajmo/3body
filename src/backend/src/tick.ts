@@ -1,60 +1,67 @@
 import {
   ARCHETYPES,
   ARENA_BOUNDARY_SPEC,
+  type ArchetypeId,
+  add,
+  advanceWorldOrbitStarMotion,
   BLACK_HOLE_SPEC,
+  type BlackHole,
   BOOST_SPEC,
   CACHE_GRAVITY_SCALE,
   CACHE_RADIUS,
   CACHE_SPEC,
   CACHE_TANGENTIAL_SPEED_MAX,
   CACHE_TANGENTIAL_SPEED_MIN,
+  type Cache,
+  type CacheContents,
+  clamp,
+  consumeBlackHoleBodies,
   DEBRIS_TTL_SEC,
+  type Debris,
+  type DeltaSnapshotMsg,
+  dist,
+  dot,
   FORESIGHT_EXT_MULTIPLIER,
   FORESIGHT_SPEC,
+  fromAngle,
   GRAVITY_PULSE_IMPULSE,
   GRAVITY_PULSE_RADIUS,
+  createBoundaryAsteroidSpawn,
+  getBoundaryAsteroidDamage,
+  getBoundaryAsteroidExplosionBaseSpeed,
+  getBoundaryAsteroidExplosionPieces,
+  getBoundaryAsteroidExplosionSpeedVariance,
   getBaseShieldLoad,
   getBlackHoleMassAtTick,
   getOuterRingMax,
   getOuterRingMin,
-  PLANET_HP,
-  REPAIR_AMOUNT,
-  ROCKET_SPECS,
-  SHIELD_EXT_MULTIPLIER,
-  SHIELD_SPEC,
-  add,
-  clamp,
-  consumeBlackHoleBodies,
-  dist,
-  dot,
-  fromAngle,
   len,
   normalize,
+  PLANET_HP,
+  type PlanetPrivateState,
+  type PlanetPublic,
+  type PlayerId,
+  REPAIR_AMOUNT,
+  ROCKET_SPECS,
+  type Rocket,
+  type RocketKind,
   rollCacheContents,
+  SHIELD_EXT_MULTIPLIER,
+  SHIELD_SPEC,
+  sampleBoundaryAsteroidSpawnCount,
+  type SnapshotEvent,
+  type Sun,
   scale,
   stepBody,
   stepBodyWithGravityScale,
   stepSeeker,
-  stepSuns,
+  stepSunsWithOrbitMotion,
   sub,
-  type ArchetypeId,
-  type BlackHole,
-  type Cache,
-  type CacheContents,
-  type Debris,
-  type DeltaSnapshotMsg,
-  type PlanetPrivateState,
-  type PlanetPublic,
-  type PlayerId,
-  type Rocket,
-  type RocketKind,
-  type SnapshotEvent,
-  type Sun,
   type Vec2,
   type WildcardKind,
 } from "@3body/shared";
 import type { AppConfig } from "./config";
-import type { Room, RocketRuntimeState } from "./room";
+import type { RocketRuntimeState, Room } from "./room";
 
 const TICK_MS_FLOOR = 1;
 const DEFAULT_INPUT_DIR: Vec2 = { x: 1, y: 0 };
@@ -67,6 +74,7 @@ const ROCKET_DEBRIS_SPEED_VARIANCE = 104;
 const CACHE_DEBRIS_PIECES = 10;
 const CACHE_DEBRIS_SPEED = 140;
 const CACHE_DEBRIS_SPEED_VARIANCE = 92;
+const BOUNDARY_ASTEROID_TIERS = ["micro", "small", "large"] as const;
 const LAG_COMP_MAX_REWIND_MS = 100;
 const NEAR_MISS_DISTANCE = 48;
 
@@ -281,6 +289,64 @@ const createDebrisBurst = (
       radius: 5 + ((index % 3) + 1) * 1.2,
       ttlUntilTick,
     });
+  }
+
+  return debris;
+};
+
+const isBoundaryAsteroidDebris = (
+  piece: Debris,
+): piece is Debris & {
+  asteroidTier: (typeof BOUNDARY_ASTEROID_TIERS)[number];
+} => piece.asteroidTier !== undefined;
+
+const createBoundaryAsteroidDebris = (
+  room: Room,
+  tick: number,
+  arenaRadius: number,
+  dtSec: number,
+  tier: (typeof BOUNDARY_ASTEROID_TIERS)[number],
+): Debris => {
+  const spawn = createBoundaryAsteroidSpawn({
+    arenaRadius,
+    rng: room.rng,
+    tier,
+  });
+
+  return {
+    asteroidTier: spawn.asteroidTier,
+    id: room.entityIds.nextEntityId(),
+    kind: "debris",
+    ownerPlayerId: undefined,
+    pos: spawn.pos,
+    radius: spawn.radius,
+    ttlUntilTick: tick + Math.max(1, Math.round(spawn.ttlSec / dtSec)),
+    vel: spawn.vel,
+  };
+};
+
+const spawnBoundaryAsteroidDebris = (
+  room: Room,
+  tick: number,
+  dtSec: number,
+): Debris[] => {
+  const arenaRadius = room.world?.arenaRadius ?? 0;
+  if (arenaRadius <= 0) {
+    return [];
+  }
+
+  const debris: Debris[] = [];
+  for (const tier of BOUNDARY_ASTEROID_TIERS) {
+    const spawnCount = sampleBoundaryAsteroidSpawnCount({
+      dtSec,
+      rng: room.rng,
+      tier,
+    });
+    for (let index = 0; index < spawnCount; index += 1) {
+      debris.push(
+        createBoundaryAsteroidDebris(room, tick, arenaRadius, dtSec, tier),
+      );
+    }
   }
 
   return debris;
@@ -1071,7 +1137,10 @@ const applyPlanetCollisions = (
     }
 
     for (const neutronStar of neutronStars) {
-      if (dist(planet.pos, neutronStar.pos) <= planet.radius + neutronStar.radius) {
+      if (
+        dist(planet.pos, neutronStar.pos) <=
+        planet.radius + neutronStar.radius
+      ) {
         deadPlayerIds.add(planet.playerId);
         queueKillEvent(room, nextTick, planet, "neutronStar");
         break;
@@ -1264,6 +1333,118 @@ const stepCaches = (
   );
 };
 
+const applyBoundaryAsteroidImpacts = ({
+  room,
+  planets,
+  suns,
+  blackHole,
+  nextTick,
+  dtSec,
+  debrisSink,
+}: {
+  room: Room;
+  planets: PlanetPublic[];
+  suns: readonly Sun[];
+  blackHole: BlackHole | undefined;
+  nextTick: number;
+  dtSec: number;
+  debrisSink: Debris[];
+}): {
+  debris: Debris[];
+  planets: PlanetPublic[];
+} => {
+  if (!room.world) {
+    return {
+      debris: [],
+      planets,
+    };
+  }
+
+  const steppedDebris = [
+    ...room.world.debris
+      .filter((piece) => piece.ttlUntilTick > nextTick)
+      .map((piece) => stepBody(piece, suns, dtSec, blackHole)),
+    ...spawnBoundaryAsteroidDebris(room, nextTick, dtSec),
+  ];
+  const nextPlanets = planets.slice();
+  const survivingDebris: Debris[] = [];
+
+  for (const piece of steppedDebris) {
+    if (!isBoundaryAsteroidDebris(piece)) {
+      survivingDebris.push(piece);
+      continue;
+    }
+
+    let impactedPlanet = false;
+
+    for (
+      let planetIndex = 0;
+      planetIndex < nextPlanets.length;
+      planetIndex += 1
+    ) {
+      const planet = nextPlanets[planetIndex]!;
+      if (dist(piece.pos, planet.pos) > piece.radius + planet.radius) {
+        continue;
+      }
+
+      const damage = getBoundaryAsteroidDamage(piece.asteroidTier);
+      const absorbedByShield = shieldProtectsImpact(
+        planet,
+        piece.pos,
+        nextTick,
+      );
+      const impactBurst = createDebrisBurst(
+        room,
+        piece,
+        getBoundaryAsteroidExplosionPieces(piece.asteroidTier),
+        getBoundaryAsteroidExplosionBaseSpeed(piece.asteroidTier),
+        getBoundaryAsteroidExplosionSpeedVariance(piece.asteroidTier),
+        nextTick,
+      );
+      debrisSink.push(...impactBurst);
+
+      if (absorbedByShield) {
+        nextPlanets[planetIndex] = applyShieldDamage(planet, damage);
+      } else {
+        const hpAfter = Math.max(0, planet.hp - damage);
+        nextPlanets[planetIndex] = {
+          ...planet,
+          hp: hpAfter,
+        };
+
+        if (hpAfter <= 0) {
+          queueKillEvent(room, nextTick, planet, "boundaryAsteroid");
+          debrisSink.push(
+            ...createDebrisBurst(
+              room,
+              planet,
+              PLANET_DEBRIS_PIECES,
+              PLANET_DEBRIS_SPEED,
+              PLANET_DEBRIS_SPEED_VARIANCE,
+              nextTick,
+              planet.playerId,
+            ),
+          );
+          markPlayerDeath(room, planet.playerId, nextTick);
+          nextPlanets.splice(planetIndex, 1);
+        }
+      }
+
+      impactedPlanet = true;
+      break;
+    }
+
+    if (!impactedPlanet) {
+      survivingDebris.push(piece);
+    }
+  }
+
+  return {
+    debris: survivingDebris,
+    planets: nextPlanets,
+  };
+};
+
 const applyRocketCollisions = (
   room: Room,
   planets: PlanetPublic[],
@@ -1343,7 +1524,10 @@ const applyRocketCollisions = (
 
     const neutronStars = room.world?.neutronStars ?? [];
     for (const neutronStar of neutronStars) {
-      if (dist(rocket.pos, neutronStar.pos) <= rocket.radius + neutronStar.radius) {
+      if (
+        dist(rocket.pos, neutronStar.pos) <=
+        rocket.radius + neutronStar.radius
+      ) {
         consumed = true;
         break;
       }
@@ -1736,7 +1920,12 @@ const updateWorld = (room: Room, config: AppConfig): void => {
 
   const dtSec = 1 / config.tickHz;
   let blackHole = room.world.blackHole;
-  const steppedSuns = stepSuns(room.world.suns, dtSec, blackHole);
+  const steppedSuns = stepSunsWithOrbitMotion(
+    room.world.suns,
+    dtSec,
+    blackHole,
+    room.world.orbitStarMotion,
+  );
   const swallowedSuns =
     blackHole === undefined
       ? []
@@ -1749,6 +1938,10 @@ const updateWorld = (room: Room, config: AppConfig): void => {
     blackHole = consumeBlackHoleBodies(blackHole, swallowedSuns);
     room.world.blackHole = blackHole;
   }
+  room.world.orbitStarMotion = advanceWorldOrbitStarMotion(
+    room.world.orbitStarMotion,
+    dtSec,
+  );
 
   let nextPlanets = stepPlanets(room, nextSuns, blackHole, nextTick, config);
 
@@ -1813,21 +2006,26 @@ const updateWorld = (room: Room, config: AppConfig): void => {
     debris,
   );
 
+  const boundaryAsteroidState = applyBoundaryAsteroidImpacts({
+    blackHole,
+    debrisSink: debris,
+    dtSec,
+    nextTick,
+    planets: rocketCollisionState.planets,
+    room,
+    suns: nextSuns,
+  });
+
   applyCooldownsAndRegen(room, nextTick, config);
 
   room.world = {
     ...room.world,
     blackHole,
     suns: nextSuns,
-    planets: rocketCollisionState.planets,
+    planets: boundaryAsteroidState.planets,
     rockets: rocketCollisionState.rockets,
     caches: survivingCaches,
-    debris: [
-      ...room.world.debris
-        .filter((piece) => piece.ttlUntilTick > nextTick)
-        .map((piece) => stepBody(piece, nextSuns, dtSec, blackHole)),
-      ...debris,
-    ],
+    debris: [...boundaryAsteroidState.debris, ...debris],
   };
   room.tick = nextTick;
   room.recordPlanetPositions(lagCompHistoryEntries(config.tickHz));
