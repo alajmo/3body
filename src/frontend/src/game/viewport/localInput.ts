@@ -1,11 +1,12 @@
 import type { RocketKind, Vec2 } from "@3body/shared";
 
+const DEFAULT_KEYBOARD_AIM_DISTANCE = 180;
+const KEYBOARD_AIM_ROTATION_SPEED_RAD_PER_SEC = 2.6;
+
 interface PendingAbilityRequests {
   boost: boolean;
-  foresight: boolean;
   shield: boolean;
   gravityPulse: boolean;
-  cloak: boolean;
 }
 
 interface PointerState {
@@ -20,6 +21,7 @@ export interface GameViewportInputRuntimeState {
     aimWorld: Vec2;
     selectedRocketKind: RocketKind;
   };
+  keyboardAimActive: boolean;
   pendingAbilityRequests: PendingAbilityRequests;
   pendingShots: number;
   pointerState: PointerState;
@@ -42,10 +44,8 @@ interface CreateGameViewportInputControllerOptions {
 
 const createPendingAbilityRequests = (): PendingAbilityRequests => ({
   boost: false,
-  foresight: false,
   shield: false,
   gravityPulse: false,
-  cloak: false,
 });
 
 const isEditableTarget = (target: EventTarget | null): target is HTMLElement =>
@@ -77,6 +77,7 @@ export const createGameViewportInputController = (
   dispose: () => void;
   resetForPlayer: (player: ViewportInputPlayerSeed) => void;
   state: GameViewportInputRuntimeState;
+  updateKeyboardAim: (playerPos: Vec2, deltaSec: number) => void;
 } => {
   const state: GameViewportInputRuntimeState = {
     fullViewEnabled: false,
@@ -87,6 +88,7 @@ export const createGameViewportInputController = (
       },
       selectedRocketKind: options.initialPlayer.selectedRocketKind,
     },
+    keyboardAimActive: false,
     pendingAbilityRequests: createPendingAbilityRequests(),
     pendingShots: 0,
     pointerState: {
@@ -96,15 +98,46 @@ export const createGameViewportInputController = (
     },
   };
   let boostHeld = false;
+  let keyboardRotateLeftHeld = false;
+  let keyboardRotateRightHeld = false;
+  let keyboardAimAngleRad: number | null = null;
+  let keyboardAimDistance = DEFAULT_KEYBOARD_AIM_DISTANCE;
+
+  const clearKeyboardAim = () => {
+    state.keyboardAimActive = false;
+    keyboardRotateLeftHeld = false;
+    keyboardRotateRightHeld = false;
+    keyboardAimAngleRad = null;
+    keyboardAimDistance = DEFAULT_KEYBOARD_AIM_DISTANCE;
+  };
+
+  const initializeKeyboardAim = (playerPos: Vec2) => {
+    if (keyboardAimAngleRad !== null) {
+      return;
+    }
+
+    if (state.pointerState.hasPointer) {
+      const dx = state.inputState.aimWorld.x - playerPos.x;
+      const dy = state.inputState.aimWorld.y - playerPos.y;
+      const distance = Math.hypot(dx, dy);
+
+      if (distance > 1e-3) {
+        keyboardAimAngleRad = Math.atan2(dy, dx);
+        keyboardAimDistance = distance;
+        return;
+      }
+    }
+
+    keyboardAimAngleRad = 0;
+    keyboardAimDistance = DEFAULT_KEYBOARD_AIM_DISTANCE;
+  };
 
   const clearStepScopedRequests = () => {
-    state.pendingAbilityRequests.foresight = false;
     state.pendingAbilityRequests.shield = false;
     // Preserve held boost input across simulation steps while still keeping
     // quick taps latched until the next frame consumes them.
     state.pendingAbilityRequests.boost = boostHeld;
     state.pendingAbilityRequests.gravityPulse = false;
-    state.pendingAbilityRequests.cloak = false;
   };
 
   const clearPendingGameplayRequests = () => {
@@ -119,6 +152,7 @@ export const createGameViewportInputController = (
       y: player.aimWorld.y,
     };
     state.inputState.selectedRocketKind = player.selectedRocketKind;
+    clearKeyboardAim();
     clearPendingGameplayRequests();
   };
 
@@ -136,6 +170,30 @@ export const createGameViewportInputController = (
     if (options.isShieldActive()) {
       state.pendingAbilityRequests.shield = true;
     }
+  };
+
+  const updateKeyboardAim = (playerPos: Vec2, deltaSec: number) => {
+    if (!state.keyboardAimActive) {
+      return;
+    }
+
+    initializeKeyboardAim(playerPos);
+
+    if (keyboardAimAngleRad === null) {
+      return;
+    }
+
+    const rotateDirection =
+      (keyboardRotateLeftHeld ? 1 : 0) - (keyboardRotateRightHeld ? 1 : 0);
+    if (rotateDirection !== 0 && deltaSec > 0) {
+      keyboardAimAngleRad +=
+        rotateDirection * KEYBOARD_AIM_ROTATION_SPEED_RAD_PER_SEC * deltaSec;
+    }
+
+    state.inputState.aimWorld = {
+      x: playerPos.x + Math.cos(keyboardAimAngleRad) * keyboardAimDistance,
+      y: playerPos.y + Math.sin(keyboardAimAngleRad) * keyboardAimDistance,
+    };
   };
 
   const handleKeyDown = (event: KeyboardEvent) => {
@@ -170,21 +228,40 @@ export const createGameViewportInputController = (
       return;
     }
 
+    if (event.code === "ArrowLeft" && !event.repeat) {
+      state.keyboardAimActive = true;
+      keyboardRotateLeftHeld = true;
+      keyboardRotateRightHeld = false;
+      event.preventDefault();
+      return;
+    }
+
+    if (event.code === "ArrowRight" && !event.repeat) {
+      state.keyboardAimActive = true;
+      keyboardRotateLeftHeld = false;
+      keyboardRotateRightHeld = true;
+      event.preventDefault();
+      return;
+    }
+
+    if (event.code === "Space" && !event.repeat) {
+      state.pendingShots += 1;
+      event.preventDefault();
+      return;
+    }
+
     if (event.code === "KeyQ" && !event.repeat) {
       state.pendingAbilityRequests.shield = true;
       event.preventDefault();
       return;
     }
 
-    if (event.code === "KeyW" && !event.repeat) {
+    if (
+      (event.code === "KeyW" || event.code === "ArrowUp") &&
+      !event.repeat
+    ) {
       boostHeld = true;
       state.pendingAbilityRequests.boost = true;
-      event.preventDefault();
-      return;
-    }
-
-    if (event.code === "KeyE" && !event.repeat) {
-      state.pendingAbilityRequests.foresight = true;
       event.preventDefault();
       return;
     }
@@ -194,26 +271,35 @@ export const createGameViewportInputController = (
       event.preventDefault();
       return;
     }
-
-    if (event.code === "KeyC" && !event.repeat) {
-      state.pendingAbilityRequests.cloak = true;
-      event.preventDefault();
-      return;
-    }
   };
 
   const handleKeyUp = (event: KeyboardEvent) => {
-    if (event.code !== "KeyW") {
+    if (event.code === "KeyW" || event.code === "ArrowUp") {
+      boostHeld = false;
+      if (!isEditableTarget(event.target) && options.sandboxControlsEnabled()) {
+        event.preventDefault();
+      }
       return;
     }
 
-    boostHeld = false;
-    if (!isEditableTarget(event.target) && options.sandboxControlsEnabled()) {
-      event.preventDefault();
+    if (event.code === "ArrowLeft") {
+      keyboardRotateLeftHeld = false;
+      if (!isEditableTarget(event.target) && options.sandboxControlsEnabled()) {
+        event.preventDefault();
+      }
+      return;
+    }
+
+    if (event.code === "ArrowRight") {
+      keyboardRotateRightHeld = false;
+      if (!isEditableTarget(event.target) && options.sandboxControlsEnabled()) {
+        event.preventDefault();
+      }
     }
   };
 
   const handlePointerMove = (event: PointerEvent) => {
+    clearKeyboardAim();
     state.pointerState.clientX = event.clientX;
     state.pointerState.clientY = event.clientY;
     state.pointerState.hasPointer = true;
@@ -226,6 +312,7 @@ export const createGameViewportInputController = (
     }
 
     blurActiveSandboxPanelControl(options.windowTarget);
+    clearKeyboardAim();
     state.pointerState.clientX = event.clientX;
     state.pointerState.clientY = event.clientY;
     state.pointerState.hasPointer = true;
@@ -281,5 +368,6 @@ export const createGameViewportInputController = (
     },
     resetForPlayer,
     state,
+    updateKeyboardAim,
   };
 };

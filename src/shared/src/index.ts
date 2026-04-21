@@ -1,5 +1,6 @@
 export * from "./ai/index";
 export * from "./archetypes";
+export * from "./blackHole";
 export * from "./bot";
 export * from "./constants";
 export * from "./entities";

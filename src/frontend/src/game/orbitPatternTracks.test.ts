@@ -1,13 +1,14 @@
-import { describe, expect, it } from "vitest";
 import {
   advanceWorldOrbitStarMotion,
   clampOrbitPatternDistanceScale,
   EDITOR_FIXED_ORBIT_PATTERNS,
+  getOrbitPatternDistanceScaleAtElapsedSec,
   getOrbitPatternMinimumDistanceScale,
   getOrbitPatternTrack,
   sampleOrbitPatternTrack,
   stepSunsWithOrbitMotion,
-} from "./index";
+} from "@3body/shared";
+import { describe, expect, it } from "vitest";
 
 describe("orbitPatternTracks", () => {
   it("builds looping tracks for every validated fixed pattern", () => {
@@ -59,6 +60,7 @@ describe("orbitPatternTracks", () => {
       elapsedSec: 0,
       patternId: pattern.id,
       speed: 1,
+      baseDistanceScale: 1.5,
       distanceScale: 1.5,
       sunIds: [101, 202, 303] as [number, number, number],
     };
@@ -72,6 +74,7 @@ describe("orbitPatternTracks", () => {
     const nextMotion = advanceWorldOrbitStarMotion(
       orbitStarMotion,
       track.sampleDtSec,
+      suns,
     );
 
     expect(nextSuns).toHaveLength(2);
@@ -85,6 +88,45 @@ describe("orbitPatternTracks", () => {
     expect(nextSuns[0]!.pos.x).toBeCloseTo(sampledScaled[0]!.pos.x, 6);
     expect(nextSuns[0]!.pos.y).toBeCloseTo(sampledScaled[0]!.pos.y, 6);
     expect(nextMotion?.elapsedSec).toBeCloseTo(track.sampleDtSec, 6);
+  });
+
+  it("shrinks fixed-pattern distance scale all the way to the center after spawn", () => {
+    const suns = [{ radius: 180 }, { radius: 180 }, { radius: 180 }] as const;
+    const blackHoleSpec = {
+      mass: 1,
+      killRadius: 1,
+      spawnSec: 12,
+      rampSec: 18,
+    };
+    const baseDistanceScale =
+      getOrbitPatternMinimumDistanceScale("equilateral-circle", suns) + 0.9;
+
+    const beforeSpawn = getOrbitPatternDistanceScaleAtElapsedSec(
+      "equilateral-circle",
+      baseDistanceScale,
+      suns,
+      blackHoleSpec.spawnSec - 0.01,
+      blackHoleSpec,
+    );
+    const midway = getOrbitPatternDistanceScaleAtElapsedSec(
+      "equilateral-circle",
+      baseDistanceScale,
+      suns,
+      blackHoleSpec.spawnSec + blackHoleSpec.rampSec / 2,
+      blackHoleSpec,
+    );
+    const fullyCollapsed = getOrbitPatternDistanceScaleAtElapsedSec(
+      "equilateral-circle",
+      baseDistanceScale,
+      suns,
+      blackHoleSpec.spawnSec + blackHoleSpec.rampSec,
+      blackHoleSpec,
+    );
+
+    expect(beforeSpawn).toBeCloseTo(baseDistanceScale, 6);
+    expect(midway).toBeLessThan(baseDistanceScale);
+    expect(midway).toBeGreaterThan(0);
+    expect(fullyCollapsed).toBeCloseTo(0, 6);
   });
 
   it("builds a stable equilateral circle track", () => {

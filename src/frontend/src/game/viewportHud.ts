@@ -2,7 +2,6 @@ import {
   BLACK_HOLE_SPEC,
   BOOST_SPEC,
   CURRENT_GAME_TUNING,
-  FORESIGHT_SPEC,
   len,
   type BotDifficulty,
   type AbilitySpec,
@@ -26,7 +25,6 @@ export const DEFAULT_PLANET_AURA_SCALE = DEFAULT_PLANET_VISUALS.auraScale;
 export const DEFAULT_PLANET_AURA_GAP = DEFAULT_PLANET_VISUALS.auraGap;
 export const DEFAULT_CACHE_BADGE_SCALE =
   CURRENT_GAME_TUNING.visuals.caches.badgeScale;
-export const DEFAULT_FORESIGHT_SETTINGS: AbilitySpec = { ...FORESIGHT_SPEC };
 export const DEFAULT_SHIELD_SETTINGS: AbilitySpec = {
   cooldownSec: SHIELD_SPEC.cooldownSec,
   durationSec: SHIELD_SPEC.durationSec,
@@ -37,7 +35,7 @@ export type HudStatusMode = "ready" | "active" | "cooldown";
 
 export interface GameViewportHudAbility {
   accent: string;
-  id: "foresight" | "shield" | "boost" | "gravityPulse" | "cloak";
+  id: "shield" | "boost" | "gravityPulse";
   keyLabel: string;
   label: string;
   mode: HudStatusMode;
@@ -131,7 +129,6 @@ export interface GameViewportHudState {
   currentPresetId: string;
   damageFlash: number;
   debugItems: GameViewportDebugItem[];
-  foresightSettings: AbilitySpec;
   hudFlicker: number;
   hudOpacity: number;
   killFeed: GameViewportKillFeedEntry[];
@@ -172,10 +169,6 @@ export interface GameViewportController {
     value: BlackHoleSpec[K],
   ) => void;
   setCacheBadgeScale: (value: number) => void;
-  setForesightSetting: <K extends keyof AbilitySpec>(
-    key: K,
-    value: AbilitySpec[K],
-  ) => void;
   setPlanetBodyScale: (value: number) => void;
   setPlanetAuraGap: (value: number) => void;
   setPlanetAuraScale: (value: number) => void;
@@ -347,7 +340,6 @@ export const createInitialHudState = (): GameViewportHudState => {
     currentPresetId: DEFAULT_ORBIT_PRESET.id,
     damageFlash: 0,
     debugItems: [],
-    foresightSettings: { ...DEFAULT_FORESIGHT_SETTINGS },
     hudFlicker: 0,
     hudOpacity: 1,
     killFeed: [],
@@ -457,7 +449,6 @@ export const areHudStatesEqual = (
   current.totalPlayerCount === next.totalPlayerCount &&
   areSettingsEqual(current.blackHoleSettings, next.blackHoleSettings) &&
   areSettingsEqual(current.boostSettings, next.boostSettings) &&
-  areSettingsEqual(current.foresightSettings, next.foresightSettings) &&
   areSettingsEqual(current.shieldSettings, next.shieldSettings) &&
   areObjectsEqual(
     current.abilities,

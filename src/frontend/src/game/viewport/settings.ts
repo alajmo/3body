@@ -1,21 +1,13 @@
 import type { AbilitySpec, BlackHoleSpec, BoostSpec } from "@3body/shared";
-import {
-  BLACK_HOLE_SPEC,
-  BOOST_SPEC,
-  clamp,
-  FORESIGHT_SPEC,
-  SHIELD_SPEC,
-} from "@3body/shared";
+import { BLACK_HOLE_SPEC, BOOST_SPEC, clamp, SHIELD_SPEC } from "@3body/shared";
 import {
   DEFAULT_BOOST_SETTINGS,
   DEFAULT_CACHE_BADGE_SCALE,
-  DEFAULT_FORESIGHT_SETTINGS,
   DEFAULT_SHIELD_SETTINGS,
 } from "../viewportHud";
 
 const ORBIT_PRESET_STORAGE_KEY = "3body.orbitPresetId";
 const BLACK_HOLE_SETTINGS_STORAGE_KEY = "3body.blackHoleSettings";
-const FORESIGHT_SETTINGS_STORAGE_KEY = "3body.foresightSettings";
 const SHIELD_SETTINGS_STORAGE_KEY = "3body.shieldSettings";
 const BOOST_SETTINGS_STORAGE_KEY = "3body.boostSettings";
 const CACHE_BADGE_SCALE_STORAGE_KEY = "3body.cacheBadgeScale";
@@ -48,7 +40,6 @@ interface LoadedViewportSettings {
   blackHoleSettings: BlackHoleSpec;
   boostSettings: BoostSpec;
   cacheBadgeScale: number;
-  foresightSettings: AbilitySpec;
   orbitPresetId: string | null;
   profilingEnabled: boolean;
   shieldSettings: AbilitySpec;
@@ -182,24 +173,6 @@ export const loadViewportSettings = (
       return { ...BLACK_HOLE_SPEC };
     }
   })();
-  const foresightSettings = (() => {
-    const storedValue = readStorageItem(
-      storage,
-      FORESIGHT_SETTINGS_STORAGE_KEY,
-    );
-    if (storedValue === null) {
-      return { ...DEFAULT_FORESIGHT_SETTINGS };
-    }
-
-    try {
-      return sanitizeAbilitySettings(
-        JSON.parse(storedValue) as Partial<AbilitySpec>,
-        DEFAULT_FORESIGHT_SETTINGS,
-      );
-    } catch {
-      return { ...DEFAULT_FORESIGHT_SETTINGS };
-    }
-  })();
   const shieldSettings = (() => {
     const storedValue = readStorageItem(storage, SHIELD_SETTINGS_STORAGE_KEY);
     if (storedValue === null) {
@@ -236,7 +209,6 @@ export const loadViewportSettings = (
     cacheBadgeScale: sanitizeCacheBadgeScale(
       Number(readStorageItem(storage, CACHE_BADGE_SCALE_STORAGE_KEY)),
     ),
-    foresightSettings,
     orbitPresetId,
     profilingEnabled: (() => {
       const storedValue = readStorageItem(
@@ -269,16 +241,6 @@ export const persistBlackHoleSettings = (
   persistStorageItem(
     storage,
     BLACK_HOLE_SETTINGS_STORAGE_KEY,
-    JSON.stringify(value),
-  );
-
-export const persistForesightSettings = (
-  storage: Storage | null,
-  value: AbilitySpec,
-) =>
-  persistStorageItem(
-    storage,
-    FORESIGHT_SETTINGS_STORAGE_KEY,
     JSON.stringify(value),
   );
 
@@ -319,12 +281,9 @@ export const persistProfilingEnabled = (
   );
 
 export const applyAbilitySettingsToSpecs = (
-  foresightSettings: AbilitySpec,
   shieldSettings: AbilitySpec,
   boostSettings: BoostSpec,
 ) => {
-  FORESIGHT_SPEC.cooldownSec = foresightSettings.cooldownSec;
-  FORESIGHT_SPEC.durationSec = foresightSettings.durationSec;
   SHIELD_SPEC.cooldownSec = shieldSettings.cooldownSec;
   SHIELD_SPEC.durationSec = shieldSettings.durationSec;
   BOOST_SPEC.charges = boostSettings.charges;

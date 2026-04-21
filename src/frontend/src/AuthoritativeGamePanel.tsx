@@ -14,6 +14,7 @@ import {
 } from "@3body/shared";
 import { startTransition, useEffect, useRef, useState } from "react";
 import { CombatHud } from "./CombatHud";
+import { formatAuthoritativeWinnerLabel } from "./authoritativeMatchLabels";
 import {
   applyDeltaSnapshotToWorld,
   createInitialAuthoritativeMatchRuntimeState,
@@ -52,6 +53,7 @@ interface MatchPanelUiState {
   phase: AuthoritativeMatchRuntimeState["phase"];
   pickState: AuthoritativeMatchRuntimeState["pickState"];
   playerId: AuthoritativeMatchRuntimeState["playerId"];
+  rematchState: AuthoritativeMatchRuntimeState["rematchState"];
   roomId: string | null;
   roomRoster: AuthoritativeMatchRuntimeState["roomRoster"];
 }
@@ -68,6 +70,11 @@ const buildSocketUrl = (windowTarget: Window): string => {
 const readStoredPlayerName = (storage: Storage | null): string =>
   storage?.getItem(PLAYER_NAME_STORAGE_KEY)?.trim() || "Pilot";
 
+const clearStoredRoomSession = (storage: Storage | null): void => {
+  storage?.removeItem(RESUME_TOKEN_STORAGE_KEY);
+  storage?.removeItem(ROOM_ID_STORAGE_KEY);
+};
+
 const snapshotUiState = (
   runtime: AuthoritativeMatchRuntimeState,
 ): MatchPanelUiState => ({
@@ -79,6 +86,7 @@ const snapshotUiState = (
   phase: runtime.phase,
   pickState: runtime.pickState,
   playerId: runtime.playerId,
+  rematchState: runtime.rematchState,
   roomId: runtime.roomId,
   roomRoster: [...runtime.roomRoster],
 });
@@ -151,7 +159,10 @@ const describePhase = (uiState: MatchPanelUiState, nowMs: number) => {
         body:
           uiState.matchEnd === null
             ? "Match finished."
-            : `Winner: ${uiState.matchEnd.winnerId ?? "Mutual kill"}.`,
+            : `Winner: ${formatAuthoritativeWinnerLabel(
+                uiState.matchEnd.winnerId,
+                uiState.roomRoster,
+              )}.`,
         eyebrow: "Match End",
         title: uiState.roomId ?? "Public Room",
       };
@@ -181,6 +192,7 @@ export function AuthoritativeGamePanel({
   const controllerRef = useRef<GameViewportController | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const runtimeRef = useRef(createInitialAuthoritativeMatchRuntimeState());
+  const [connectionSessionVersion, setConnectionSessionVersion] = useState(0);
   const [hudState, setHudState] = useState(() => ({
     ...createInitialHudState(),
     profilingEnabled: initialProfilingEnabledRef.current ?? false,
@@ -189,6 +201,16 @@ export function AuthoritativeGamePanel({
     snapshotUiState(runtimeRef.current),
   );
   const [nowMs, setNowMs] = useState(() => Date.now());
+
+  const dispatchRuntimeMessage = (message: ClientMsg): boolean => {
+    const socket = socketRef.current;
+    if (socket?.readyState !== WebSocket.OPEN) {
+      return false;
+    }
+
+    socket.send(JSON.stringify(message));
+    return true;
+  };
 
   const resetAuthoritativeProfiling = () => {
     authoritativePerformanceStateRef.current.resetToken += 1;
@@ -225,7 +247,6 @@ export function AuthoritativeGamePanel({
       setBoostSetting: () => {},
       setBlackHoleSetting: () => {},
       setCacheBadgeScale: () => {},
-      setForesightSetting: () => {},
       setPlanetBodyScale: () => {},
       setPlanetAuraGap: () => {},
       setPlanetAuraScale: () => {},
@@ -259,12 +280,7 @@ export function AuthoritativeGamePanel({
     }
 
     return createAuthoritativeViewport(viewportElement, {
-      dispatchMessage: (message: ClientMsg) => {
-        const socket = socketRef.current;
-        if (socket?.readyState === WebSocket.OPEN) {
-          socket.send(JSON.stringify(message));
-        }
-      },
+      dispatchMessage: dispatchRuntimeMessage,
       getPerformanceState: () => authoritativePerformanceStateRef.current,
       getRuntimeState: () => runtimeRef.current,
       onHudStateChange: (nextHudState) => {
@@ -290,11 +306,6 @@ export function AuthoritativeGamePanel({
       startTransition(() => {
         setUiState(snapshot);
       });
-    };
-
-    const clearSession = () => {
-      storage.removeItem(RESUME_TOKEN_STORAGE_KEY);
-      storage.removeItem(ROOM_ID_STORAGE_KEY);
     };
 
     const pruneEvents = (currentAtMs: number) => {
@@ -569,7 +580,7 @@ export function AuthoritativeGamePanel({
               message.code === "bad_resume_token" ||
               message.code === "invalid_room"
             ) {
-              clearSession();
+              clearStoredRoomSession(storage);
               runtimeRef.current.roomId = null;
               runtimeRef.current.phase = "reconnecting";
               socket.close();
@@ -613,9 +624,38 @@ export function AuthoritativeGamePanel({
       socketRef.current?.close();
       socketRef.current = null;
     };
-  }, []);
+  }, [connectionSessionVersion]);
+
+  const queueFreshMatch = () => {
+    clearStoredRoomSession(window.localStorage);
+    runtimeRef.current = createInitialAuthoritativeMatchRuntimeState();
+    startTransition(() => {
+      setUiState(snapshotUiState(runtimeRef.current));
+      setHudState((current) => ({
+        ...createInitialHudState(),
+        profilingEnabled: current.profilingEnabled,
+      }));
+    });
+    setConnectionSessionVersion((current) => current + 1);
+  };
+
+  const requestRematch = () => {
+    if (
+      !dispatchRuntimeMessage({
+        type: "voteRematch",
+        yes: true,
+      })
+    ) {
+      queueFreshMatch();
+    }
+  };
 
   const phaseCopy = describePhase(uiState, nowMs);
+  const rematchVotePending =
+    uiState.phase === "ended" &&
+    uiState.rematchState !== null &&
+    uiState.playerId !== null &&
+    uiState.rematchState.yesPlayerIds.includes(uiState.playerId);
 
   return (
     <div className={className}>
@@ -637,6 +677,24 @@ export function AuthoritativeGamePanel({
             {uiState.connectionError ? (
               <div className="edit-status edit-status--error">
                 {uiState.connectionError}
+              </div>
+            ) : null}
+            {uiState.phase === "ended" ? (
+              <div className="edit-panel__actions">
+                <button
+                  type="button"
+                  className="edit-action-button"
+                  onClick={requestRematch}
+                >
+                  {rematchVotePending ? "Vote Sent" : "Play Again"}
+                </button>
+                <button
+                  type="button"
+                  className="edit-action-button"
+                  onClick={queueFreshMatch}
+                >
+                  New Match
+                </button>
               </div>
             ) : null}
           </section>

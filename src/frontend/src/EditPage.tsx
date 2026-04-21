@@ -63,11 +63,9 @@ type EditorItemId =
   | "rocketLight"
   | "rocketHeavy"
   | "rocketSeeker"
-  | "foresight"
   | "shield"
   | "boost"
   | "gravityPulse"
-  | "cloak"
   | "cache";
 
 type EditorItemMeta = {
@@ -80,6 +78,11 @@ const EDITOR_ITEM_QUERY_PARAM = "item";
 
 const EDITOR_VIEW_ITEMS = [
   { id: "overview", label: "Overview", note: "Showcase + HUD" },
+  {
+    id: "background",
+    label: "Gameplay",
+    note: "Backdrop, hazards, and starfield",
+  },
   { id: "hud", label: "HUD", note: "HUD only" },
   { id: "orbits", label: "Orbits", note: "Orbit seed tuning" },
   { id: "aiGameplay", label: "AI Gameplay", note: "Local bot battle" },
@@ -89,7 +92,6 @@ const EDITOR_GROUPS = [
   {
     label: "World",
     items: [
-      { id: "background", label: "Background", note: "Backdrop and starfield" },
       { id: "planets", label: "Planets", note: "Scale and archetype colors" },
       { id: "suns", label: "Suns", note: "Per-sun size and glow" },
       {
@@ -113,7 +115,6 @@ const EDITOR_GROUPS = [
   {
     label: "Abilities",
     items: [
-      { id: "foresight", label: "Foresight", note: "Path style and timing" },
       { id: "shield", label: "Shield", note: "Arc and active tint" },
       { id: "boost", label: "Boost", note: "Charges and impulse" },
       {
@@ -121,7 +122,6 @@ const EDITOR_GROUPS = [
         label: "Gravity Pulse",
         note: "Wildcard shockwave",
       },
-      { id: "cloak", label: "Cloak", note: "Wildcard concealment" },
     ],
   },
 ] as const satisfies readonly {
@@ -161,19 +161,10 @@ const CACHE_EFFECT_COPY: Record<
     title: "Shield Ext",
     description: "Extends the next shield to double capacity.",
   },
-  foresightExt: {
-    title: "Foresight Max",
-    description:
-      "Refills foresight to full and doubles the next foresight use.",
-  },
   wildcardGravityPulse: {
     title: "Gravity Pulse",
     description:
       "Wildcard cache. Press G to emit a pulse that blasts planets, rockets, and caches within its blast radius away from your planet. Force falls off linearly with distance.",
-  },
-  wildcardCloak: {
-    title: "Cloak",
-    description: "Wildcard cache. Press C to hide your trail for 5 seconds.",
   },
 };
 
@@ -182,11 +173,6 @@ const WILDCARD_ABILITY_COPY = {
     description:
       "Press G to emit a pulse that shoves planets, rockets, and caches within its blast radius away from you. Force falls off linearly with distance.",
     title: "Gravity Pulse",
-  },
-  cloak: {
-    description:
-      "Press C to cloak your planet for 5 seconds, hiding its trail while the effect lasts.",
-    title: "Cloak",
   },
 } as const;
 
@@ -289,6 +275,7 @@ const ORBIT_BOUNDARY_DEBRIS_THICKNESS_MIN = 24;
 const ORBIT_BOUNDARY_DEBRIS_THICKNESS_STEP = 2;
 const ARENA_ASTEROID_DAMAGE_STEP = 0.1;
 const ARENA_ASTEROID_RANDOMIZATION_STEP = 0.01;
+const ARENA_ASTEROID_SPAWN_RATE_STEP = 0.05;
 const ORBIT_SUN_DISTANCE_SCALE_MIN = 0.5;
 const ORBIT_SUN_DISTANCE_SCALE_STEP = 0.05;
 const ORBIT_PATTERN_DISTANCE_SCALE_MIN = 0.5;
@@ -748,11 +735,9 @@ const EDITOR_ITEM_QUERY_VALUES = {
   rocketLight: "light",
   rocketHeavy: "heavy",
   rocketSeeker: "seeker",
-  foresight: "foresight",
   shield: "shield",
   boost: "boost",
   gravityPulse: "gravity-pulse",
-  cloak: "cloak",
   cache: "cache",
 } as const satisfies Record<EditorItemId, string>;
 
@@ -890,8 +875,7 @@ const resetObjectFields = <T extends object, K extends keyof T>(
   }
 };
 
-const canResetItem = (itemId: EditorItemId): boolean =>
-  itemId !== "aiGameplay" && itemId !== "cloak";
+const canResetItem = (itemId: EditorItemId): boolean => itemId !== "aiGameplay";
 const canRestartPreview = (itemId: EditorItemId): boolean =>
   itemId === "orbits";
 
@@ -944,13 +928,6 @@ const resetItemToDefaults = (
       draft.visuals.rockets[rocketKind] = defaults.visuals.rockets[rocketKind];
       return;
     }
-    case "foresight":
-      draft.gameplay.abilities.foresight =
-        defaults.gameplay.abilities.foresight;
-      draft.visuals.abilities.foresight = defaults.visuals.abilities.foresight;
-      draft.visuals.abilities.foresightColor =
-        defaults.visuals.abilities.foresightColor;
-      return;
     case "shield":
       draft.gameplay.abilities.shield = defaults.gameplay.abilities.shield;
       draft.visuals.abilities.shieldColor =
@@ -964,8 +941,6 @@ const resetItemToDefaults = (
     case "gravityPulse":
       draft.gameplay.abilities.gravityPulse =
         defaults.gameplay.abilities.gravityPulse;
-      return;
-    case "cloak":
       return;
     case "cache":
       draft.gameplay.cache = defaults.gameplay.cache;
@@ -1074,17 +1049,12 @@ const getPreviewMode = (
       return {
         showHud: false,
       };
-    case "foresight":
-      return {
-        showHud: false,
-      };
     case "shield":
       return {
         showHud: false,
       };
     case "boost":
     case "gravityPulse":
-    case "cloak":
       return {
         showHud: false,
       };
@@ -1293,6 +1263,16 @@ function EditorItemPreview({
       const bodyOpacity = background.distantBodiesEnabled
         ? 0.16 + background.distantBodiesOpacity * 0.5
         : 0;
+      const eventOpacity = background.eventsEnabled
+        ? Math.max(
+            0.16,
+            Math.min(0.92, 0.22 + background.eventsIntensity * 0.48),
+          )
+        : 0;
+      const eventPulseDurationSec = Math.max(
+        1.2,
+        4.6 - background.eventsFrequency * 1.05,
+      );
       return (
         <div
           className="edit-object-preview edit-object-preview--background"
@@ -1314,6 +1294,25 @@ function EditorItemPreview({
               opacity: bodyOpacity,
             }}
           />
+          {background.eventsEnabled ? (
+            <>
+              <span
+                className="edit-object-preview__background-event edit-object-preview__background-event--a"
+                style={{
+                  animationDuration: `${eventPulseDurationSec.toFixed(2)}s`,
+                  opacity: eventOpacity,
+                }}
+              />
+              <span
+                className="edit-object-preview__background-event edit-object-preview__background-event--b"
+                style={{
+                  animationDelay: `-${(eventPulseDurationSec * 0.42).toFixed(2)}s`,
+                  animationDuration: `${(eventPulseDurationSec * 1.14).toFixed(2)}s`,
+                  opacity: eventOpacity * 0.82,
+                }}
+              />
+            </>
+          ) : null}
           <span
             className="edit-object-preview__background-star edit-object-preview__background-star--a"
             style={{
@@ -1445,15 +1444,6 @@ function EditorItemPreview({
         </div>
       );
     }
-    case "foresight":
-      return (
-        <div
-          className="edit-object-preview edit-object-preview--ability"
-          style={{
-            background: documentValue.visuals.abilities.foresight.dotColor,
-          }}
-        />
-      );
     case "shield":
       return (
         <div
@@ -1483,17 +1473,6 @@ function EditorItemPreview({
           <span className="edit-object-preview__gravity-core" />
           <span className="edit-object-preview__gravity-ring" />
           <span className="edit-object-preview__gravity-ring edit-object-preview__gravity-ring--outer" />
-        </div>
-      );
-    case "cloak":
-      return (
-        <div
-          className="edit-object-preview edit-object-preview--cloak"
-          style={{ color: documentValue.visuals.abilities.wildcardColor }}
-        >
-          <span className="edit-object-preview__cloak-core" />
-          <span className="edit-object-preview__cloak-halo" />
-          <span className="edit-object-preview__cloak-sheen" />
         </div>
       );
     case "cache":
@@ -4287,7 +4266,7 @@ export function EditPage() {
             </InspectorSection>
             <InspectorSection
               title="Asteroid Field"
-              note="Some boundary debris breaks off the ring, drifts inward, and explodes on impact. Randomization 0 keeps that tier locked to the ring; 1 allows the strongest inward drift behavior."
+              note="Some boundary debris breaks off the ring, drifts inward, and explodes on impact. Falls per second controls how often each tier spawns; inward drift randomization controls how aggressively that tier bends toward the center, and 0 disables inward fallout for that tier."
               resetDisabled={sectionResetDisabled}
               onReset={() =>
                 resetInspectorSection((draft, defaults) => {
@@ -4334,6 +4313,27 @@ export function EditPage() {
                 }
               />
               <NumberField
+                label="Micro falls per second"
+                min={0}
+                step={ARENA_ASTEROID_SPAWN_RATE_STEP}
+                value={
+                  documentValue.gameplay.arena.asteroidField.micro
+                    .spawnRatePerSec
+                }
+                onPreviewChange={(value) =>
+                  applyPreviewChange((draft) => {
+                    draft.gameplay.arena.asteroidField.micro.spawnRatePerSec =
+                      value;
+                  })
+                }
+                onCommit={(value) =>
+                  commitChange((draft) => {
+                    draft.gameplay.arena.asteroidField.micro.spawnRatePerSec =
+                      value;
+                  })
+                }
+              />
+              <NumberField
                 label="Small asteroid damage"
                 min={0}
                 step={ARENA_ASTEROID_DAMAGE_STEP}
@@ -4371,6 +4371,27 @@ export function EditPage() {
                 }
               />
               <NumberField
+                label="Small falls per second"
+                min={0}
+                step={ARENA_ASTEROID_SPAWN_RATE_STEP}
+                value={
+                  documentValue.gameplay.arena.asteroidField.small
+                    .spawnRatePerSec
+                }
+                onPreviewChange={(value) =>
+                  applyPreviewChange((draft) => {
+                    draft.gameplay.arena.asteroidField.small.spawnRatePerSec =
+                      value;
+                  })
+                }
+                onCommit={(value) =>
+                  commitChange((draft) => {
+                    draft.gameplay.arena.asteroidField.small.spawnRatePerSec =
+                      value;
+                  })
+                }
+              />
+              <NumberField
                 label="Large asteroid damage"
                 min={0}
                 step={ARENA_ASTEROID_DAMAGE_STEP}
@@ -4403,6 +4424,27 @@ export function EditPage() {
                 onCommit={(value) =>
                   commitChange((draft) => {
                     draft.gameplay.arena.asteroidField.large.randomization =
+                      value;
+                  })
+                }
+              />
+              <NumberField
+                label="Large falls per second"
+                min={0}
+                step={ARENA_ASTEROID_SPAWN_RATE_STEP}
+                value={
+                  documentValue.gameplay.arena.asteroidField.large
+                    .spawnRatePerSec
+                }
+                onPreviewChange={(value) =>
+                  applyPreviewChange((draft) => {
+                    draft.gameplay.arena.asteroidField.large.spawnRatePerSec =
+                      value;
+                  })
+                }
+                onCommit={(value) =>
+                  commitChange((draft) => {
+                    draft.gameplay.arena.asteroidField.large.spawnRatePerSec =
                       value;
                   })
                 }
@@ -5012,278 +5054,6 @@ export function EditPage() {
         return renderRocketInspector("heavy");
       case "rocketSeeker":
         return renderRocketInspector("seeker");
-      case "foresight":
-        return (
-          <>
-            <InspectorSection
-              title="Gameplay"
-              note="Prediction cadence"
-              resetDisabled={sectionResetDisabled}
-              onReset={() =>
-                resetInspectorSection((draft, defaults) => {
-                  draft.gameplay.abilities.foresight =
-                    defaults.gameplay.abilities.foresight;
-                })
-              }
-            >
-              <NumberField
-                label="Cooldown"
-                min={0}
-                max={300}
-                step={0.05}
-                value={documentValue.gameplay.abilities.foresight.cooldownSec}
-                onPreviewChange={(value) =>
-                  applyPreviewChange((draft) => {
-                    draft.gameplay.abilities.foresight.cooldownSec = value;
-                  })
-                }
-                onCommit={(value) =>
-                  commitChange((draft) => {
-                    draft.gameplay.abilities.foresight.cooldownSec = value;
-                  })
-                }
-              />
-              <NumberField
-                label="Duration"
-                min={0.05}
-                max={120}
-                step={0.05}
-                value={documentValue.gameplay.abilities.foresight.durationSec}
-                onPreviewChange={(value) =>
-                  applyPreviewChange((draft) => {
-                    draft.gameplay.abilities.foresight.durationSec = value;
-                  })
-                }
-                onCommit={(value) =>
-                  commitChange((draft) => {
-                    draft.gameplay.abilities.foresight.durationSec = value;
-                  })
-                }
-              />
-            </InspectorSection>
-            <InspectorSection
-              title="Path Style"
-              note="Live forecast rendering"
-              resetDisabled={sectionResetDisabled}
-              onReset={() =>
-                resetInspectorSection((draft, defaults) => {
-                  resetObjectFields(
-                    draft.visuals.abilities.foresight,
-                    defaults.visuals.abilities.foresight,
-                    [
-                      "showDots",
-                      "showLine",
-                      "pointSize",
-                      "dotOpacity",
-                      "lineOpacity",
-                      "leadGap",
-                      "nearStride",
-                      "midStride",
-                      "farStride",
-                    ],
-                  );
-                })
-              }
-            >
-              <ToggleField
-                label="Show dots"
-                value={documentValue.visuals.abilities.foresight.showDots}
-                onCommit={(value) =>
-                  commitChange((draft) => {
-                    draft.visuals.abilities.foresight.showDots = value;
-                  })
-                }
-              />
-              <ToggleField
-                label="Show line"
-                value={documentValue.visuals.abilities.foresight.showLine}
-                onCommit={(value) =>
-                  commitChange((draft) => {
-                    draft.visuals.abilities.foresight.showLine = value;
-                  })
-                }
-              />
-              <NumberField
-                label="Dot size"
-                min={1}
-                max={64}
-                step={0.5}
-                value={documentValue.visuals.abilities.foresight.pointSize}
-                onPreviewChange={(value) =>
-                  applyPreviewChange((draft) => {
-                    draft.visuals.abilities.foresight.pointSize = value;
-                  })
-                }
-                onCommit={(value) =>
-                  commitChange((draft) => {
-                    draft.visuals.abilities.foresight.pointSize = value;
-                  })
-                }
-              />
-              <NumberField
-                label="Dot opacity"
-                min={0}
-                max={1}
-                step={0.01}
-                value={documentValue.visuals.abilities.foresight.dotOpacity}
-                onPreviewChange={(value) =>
-                  applyPreviewChange((draft) => {
-                    draft.visuals.abilities.foresight.dotOpacity = value;
-                  })
-                }
-                onCommit={(value) =>
-                  commitChange((draft) => {
-                    draft.visuals.abilities.foresight.dotOpacity = value;
-                  })
-                }
-              />
-              <NumberField
-                label="Line opacity"
-                min={0}
-                max={1}
-                step={0.01}
-                value={documentValue.visuals.abilities.foresight.lineOpacity}
-                onPreviewChange={(value) =>
-                  applyPreviewChange((draft) => {
-                    draft.visuals.abilities.foresight.lineOpacity = value;
-                  })
-                }
-                onCommit={(value) =>
-                  commitChange((draft) => {
-                    draft.visuals.abilities.foresight.lineOpacity = value;
-                  })
-                }
-              />
-              <NumberField
-                label="Lead gap"
-                min={0}
-                max={120}
-                step={1}
-                value={documentValue.visuals.abilities.foresight.leadGap}
-                onPreviewChange={(value) =>
-                  applyPreviewChange((draft) => {
-                    draft.visuals.abilities.foresight.leadGap = value;
-                  })
-                }
-                onCommit={(value) =>
-                  commitChange((draft) => {
-                    draft.visuals.abilities.foresight.leadGap = value;
-                  })
-                }
-              />
-              <NumberField
-                label="Near step"
-                min={1}
-                max={12}
-                step={1}
-                value={documentValue.visuals.abilities.foresight.nearStride}
-                onPreviewChange={(value) =>
-                  applyPreviewChange((draft) => {
-                    draft.visuals.abilities.foresight.nearStride = value;
-                  })
-                }
-                onCommit={(value) =>
-                  commitChange((draft) => {
-                    draft.visuals.abilities.foresight.nearStride = value;
-                  })
-                }
-              />
-              <NumberField
-                label="Mid step"
-                min={1}
-                max={12}
-                step={1}
-                value={documentValue.visuals.abilities.foresight.midStride}
-                onPreviewChange={(value) =>
-                  applyPreviewChange((draft) => {
-                    draft.visuals.abilities.foresight.midStride = value;
-                  })
-                }
-                onCommit={(value) =>
-                  commitChange((draft) => {
-                    draft.visuals.abilities.foresight.midStride = value;
-                  })
-                }
-              />
-              <NumberField
-                label="Far step"
-                min={1}
-                max={12}
-                step={1}
-                value={documentValue.visuals.abilities.foresight.farStride}
-                onPreviewChange={(value) =>
-                  applyPreviewChange((draft) => {
-                    draft.visuals.abilities.foresight.farStride = value;
-                  })
-                }
-                onCommit={(value) =>
-                  commitChange((draft) => {
-                    draft.visuals.abilities.foresight.farStride = value;
-                  })
-                }
-              />
-            </InspectorSection>
-            <InspectorSection
-              title="Colors"
-              note="HUD accent and path colors"
-              resetDisabled={sectionResetDisabled}
-              onReset={() =>
-                resetInspectorSection((draft, defaults) => {
-                  draft.visuals.abilities.foresightColor =
-                    defaults.visuals.abilities.foresightColor;
-                  resetObjectFields(
-                    draft.visuals.abilities.foresight,
-                    defaults.visuals.abilities.foresight,
-                    ["dotColor", "lineColor"],
-                  );
-                })
-              }
-            >
-              <ColorField
-                label="HUD accent"
-                value={documentValue.visuals.abilities.foresightColor}
-                onPreviewChange={(value) =>
-                  applyPreviewChange((draft) => {
-                    draft.visuals.abilities.foresightColor = value;
-                  })
-                }
-                onCommit={(value) =>
-                  commitChange((draft) => {
-                    draft.visuals.abilities.foresightColor = value;
-                  })
-                }
-              />
-              <ColorField
-                label="Dot color"
-                value={documentValue.visuals.abilities.foresight.dotColor}
-                onPreviewChange={(value) =>
-                  applyPreviewChange((draft) => {
-                    draft.visuals.abilities.foresight.dotColor = value;
-                  })
-                }
-                onCommit={(value) =>
-                  commitChange((draft) => {
-                    draft.visuals.abilities.foresight.dotColor = value;
-                  })
-                }
-              />
-              <ColorField
-                label="Line color"
-                value={documentValue.visuals.abilities.foresight.lineColor}
-                onPreviewChange={(value) =>
-                  applyPreviewChange((draft) => {
-                    draft.visuals.abilities.foresight.lineColor = value;
-                  })
-                }
-                onCommit={(value) =>
-                  commitChange((draft) => {
-                    draft.visuals.abilities.foresight.lineColor = value;
-                  })
-                }
-              />
-            </InspectorSection>
-          </>
-        );
       case "shield":
         return (
           <>
@@ -5530,17 +5300,6 @@ export function EditPage() {
               </div>
             </InspectorSection>
           </>
-        );
-      case "cloak":
-        return (
-          <InspectorSection title="Ability">
-            <div className="edit-inspector__note-stack">
-              <article className="edit-inspector__note-card">
-                <strong>{WILDCARD_ABILITY_COPY.cloak.title}</strong>
-                <span>{WILDCARD_ABILITY_COPY.cloak.description}</span>
-              </article>
-            </div>
-          </InspectorSection>
         );
       case "cache":
         return (

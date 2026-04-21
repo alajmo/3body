@@ -28,7 +28,7 @@ Supported env vars:
 - `ROOM_IDLE_TIMEOUT_MS` default `60000`
 - `RECLAIM_GRACE_MS` default `30000`
 - `SHUTDOWN_GRACE_MS` default `10000`
-- `ALLOWED_ORIGINS` default local Vite origins
+- `ALLOWED_ORIGINS` default local Vite origins (`1337` and legacy `5173`)
 - `WS_MAX_MSG_BYTES` default `65536`
 - `MAX_SOCKETS_PER_IP` default `8`
 - `HANDSHAKES_PER_IP_PER_MIN` default `30`

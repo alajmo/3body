@@ -53,7 +53,7 @@ export interface BlackHoleSpec {
 }
 
 export interface BlackHoleConsumable extends Pick<EntityBase, "radius"> {
-  kind: "planet" | "sun";
+  kind: "planet" | "sun" | "neutronStar";
   mass?: number;
 }
 
@@ -102,10 +102,6 @@ export const ROCKET_SPECS = {
   heavy: { ...initialGameplay.rockets.heavy },
   seeker: { ...initialGameplay.rockets.seeker },
 } satisfies Record<RocketKind, RocketSpec>;
-
-export const FORESIGHT_SPEC: AbilitySpec = {
-  ...initialGameplay.abilities.foresight,
-};
 
 export const SHIELD_SPEC: AbilitySpec & { arcDeg: number } = {
   ...initialGameplay.abilities.shield,
@@ -157,15 +153,27 @@ export const getBlackHoleMassAtElapsedSec = (
   spec: BlackHoleSpec = BLACK_HOLE_SPEC,
 ): number => spec.mass * getBlackHoleCollapseAlpha(elapsedSec, spec);
 
+export const getBlackHoleKillRadiusAtElapsedSec = (
+  elapsedSec: number,
+  spec: BlackHoleSpec = BLACK_HOLE_SPEC,
+): number => spec.killRadius * getBlackHoleCollapseAlpha(elapsedSec, spec);
+
 export const getBlackHoleMassAtTick = (
   tick: number,
   tickHz: number,
   spec: BlackHoleSpec = BLACK_HOLE_SPEC,
 ): number => getBlackHoleMassAtElapsedSec(tick / tickHz, spec);
 
+export const getBlackHoleKillRadiusAtTick = (
+  tick: number,
+  tickHz: number,
+  spec: BlackHoleSpec = BLACK_HOLE_SPEC,
+): number => getBlackHoleKillRadiusAtElapsedSec(tick / tickHz, spec);
+
 export const getBlackHoleConsumptionMassGain = (
   body: BlackHoleConsumable,
-): number => (body.kind === "sun" ? Math.max(0, body.mass ?? 0) : PLANET_MASS);
+): number =>
+  body.kind === "planet" ? PLANET_MASS : Math.max(0, body.mass ?? 0);
 
 export const getBlackHoleKillRadiusAfterConsumption = (
   currentKillRadius: number,
@@ -219,7 +227,6 @@ export const getOuterRingMax = (arenaRadius = ARENA_RADIUS): number =>
 
 export const REPAIR_AMOUNT = 40;
 export const SHIELD_EXT_MULTIPLIER = 2;
-export const FORESIGHT_EXT_MULTIPLIER = 2;
 
 export let GRAVITY_PULSE_RADIUS = GRAVITY_PULSE_SPEC.radius;
 export let GRAVITY_PULSE_IMPULSE = GRAVITY_PULSE_SPEC.force;
@@ -229,10 +236,7 @@ export const DEBRIS_TTL_SEC = 1.35;
 export const getSeekerLockTicks = (): number =>
   Math.max(0, Math.round(ROCKET_SPECS.seeker.lockSec / FIXED_STEP_SEC));
 
-export const WILDCARD_KINDS = [
-  "gravityPulse",
-  "cloak",
-] as const satisfies readonly WildcardKind[];
+export const WILDCARD_KINDS = ["gravityPulse"] as const satisfies readonly WildcardKind[];
 
 export const applyGameplayTuning = (gameplay: GameplayTuning) => {
   applyCombatAiTuning(gameplay.ai);
@@ -253,7 +257,6 @@ export const applyGameplayTuning = (gameplay: GameplayTuning) => {
     ARENA_ASTEROID_FIELD_SPEC.large,
     gameplay.arena.asteroidField.large,
   );
-  Object.assign(FORESIGHT_SPEC, gameplay.abilities.foresight);
   Object.assign(SHIELD_SPEC, gameplay.abilities.shield);
   Object.assign(BOOST_SPEC, gameplay.abilities.boost);
   Object.assign(GRAVITY_PULSE_SPEC, gameplay.abilities.gravityPulse);

@@ -1,8 +1,6 @@
 import {
   BLACK_HOLE_SPEC,
   BOOST_SPEC,
-  FIXED_STEP_SEC,
-  FORESIGHT_SPEC,
   getShieldLoadCapacity,
   len,
   type AbilitySpec,
@@ -68,7 +66,6 @@ const createHudParams = (controlsEnabled: boolean) => {
     cacheBadgeScale: 1,
     colors: {
       boost: "#ff8d4a",
-      foresight: "#7cf2ff",
       shield: "#7ab8ff",
       weapon: {
         heavy: { accent: "#ff7043" },
@@ -84,10 +81,6 @@ const createHudParams = (controlsEnabled: boolean) => {
     currentSsaaLevel: 1,
     currentState,
     debug,
-    foresightActiveRemainingSec: 0,
-    foresightCooldownRemainingSec: 0,
-    foresightMode: "ready",
-    foresightSettings: FORESIGHT_SPEC,
     fullViewEnabled: false,
     killFeed: [],
     planetAuraGap: 0.3,
@@ -130,7 +123,6 @@ describe("buildLocalSandboxHudState", () => {
 
     expect(hud.connection.label).toBe("Local");
     expect(hud.abilities.map((ability) => ability.id)).toEqual([
-      "foresight",
       "shield",
       "boost",
     ]);
@@ -140,7 +132,6 @@ describe("buildLocalSandboxHudState", () => {
       ),
     ).toEqual({
       boost: "W",
-      foresight: "E",
       shield: "Q",
     });
     expect(hud.weapons.map((weapon) => weapon.kind)).toEqual([
@@ -214,71 +205,11 @@ describe("buildLocalSandboxHudState", () => {
     );
   });
 
-  it("keeps the remaining foresight charge when toggled off", () => {
-    const params = createHudParams(true);
-    const extendedDurationTicks = Math.round(
-      (FORESIGHT_SPEC.durationSec * 2) / FIXED_STEP_SEC,
-    );
-    const fullRechargeTicks = Math.max(
-      0,
-      Math.round(FORESIGHT_SPEC.cooldownSec / FIXED_STEP_SEC) -
-        extendedDurationTicks,
-    );
-    const cooldownStartTick = 840;
-    const cooldownUntilTick =
-      cooldownStartTick + Math.round(fullRechargeTicks / 4);
-
-    params.currentState.tick = cooldownStartTick;
-    params.currentState.elapsedSec = cooldownStartTick * FIXED_STEP_SEC;
-    params.currentState.player.foresightActiveUntilTick = cooldownStartTick;
-    params.currentState.player.foresightCooldownUntilTick = cooldownUntilTick;
-    params.currentState.player.foresightDurationTicks = extendedDurationTicks;
-    const cooldownHud = buildLocalSandboxHudState({
-      ...params,
-      currentState: params.currentState,
-      debug: getSandboxDebugSnapshot(params.currentState),
-      foresightCooldownRemainingSec:
-        (cooldownUntilTick - params.currentState.tick) * FIXED_STEP_SEC,
-      foresightActiveRemainingSec: 0,
-      foresightMode: "cooldown",
-    });
-
-    expect(
-      cooldownHud.abilities.find((ability) => ability.id === "foresight"),
-    ).toEqual(
-      expect.objectContaining({
-        progress: 0.75,
-      }),
-    );
-
-    params.currentState.tick =
-      cooldownStartTick + Math.round(fullRechargeTicks / 8);
-    params.currentState.elapsedSec = params.currentState.tick * FIXED_STEP_SEC;
-    const rechargingHud = buildLocalSandboxHudState({
-      ...params,
-      currentState: params.currentState,
-      debug: getSandboxDebugSnapshot(params.currentState),
-      foresightActiveRemainingSec: 0,
-      foresightCooldownRemainingSec:
-        (cooldownUntilTick - params.currentState.tick) * FIXED_STEP_SEC,
-      foresightMode: "cooldown",
-    });
-
-    expect(
-      rechargingHud.abilities.find((ability) => ability.id === "foresight"),
-    ).toEqual(
-      expect.objectContaining({
-        progress: 0.875,
-      }),
-    );
-  });
-
-  it("shows gravity pulse and cloak as separate held sandbox abilities", () => {
+  it("shows gravity pulse as a held sandbox ability", () => {
     const params = createHudParams(true);
     params.debug = {
       ...params.debug,
       gravityPulseHeld: true,
-      cloakHeld: true,
     };
 
     const hud = buildLocalSandboxHudState(params);
@@ -290,13 +221,6 @@ describe("buildLocalSandboxHudState", () => {
         keyLabel: "G",
         label: "Gravity Pulse",
         statusText: "Gravity Pulse",
-      }),
-    );
-    expect(hud.abilities.find((ability) => ability.id === "cloak")).toEqual(
-      expect.objectContaining({
-        keyLabel: "C",
-        label: "Cloak",
-        statusText: "Cloak",
       }),
     );
   });

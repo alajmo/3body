@@ -24,7 +24,7 @@ export type RoomId = string;
 export type RoomKind = "private" | "public";
 export type PlayerRole = "host" | "player" | "spectator";
 export type BotDifficulty = "easy" | "normal" | "hard";
-export type AbilitySlot = "q" | "w" | "e" | "g" | "c";
+export type AbilitySlot = "q" | "w" | "g";
 export type ErrorCode =
   | "invalid_room"
   | "room_full"

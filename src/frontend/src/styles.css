@@ -452,6 +452,8 @@ body {
 .edit-object-preview__sun-halo,
 .edit-object-preview__background-haze,
 .edit-object-preview__background-body,
+.edit-object-preview__background-event,
+.edit-object-preview__background-neutron-star,
 .edit-object-preview__background-star,
 .edit-object-preview__all-planet,
 .edit-object-preview__all-sun,
@@ -604,6 +606,7 @@ body {
   left: 26px;
 }
 
+.edit-object-preview__background-event,
 .edit-object-preview__background-neutron-star {
   width: 18px;
   height: 18px;
@@ -618,16 +621,68 @@ body {
   box-shadow:
     0 0 10px rgba(116, 218, 255, 0.88),
     0 0 22px rgba(54, 145, 255, 0.44);
+  animation: edit-background-event-pulse 3.8s ease-in-out infinite;
+  will-change: opacity, transform;
 }
 
+.edit-object-preview__background-event::before,
+.edit-object-preview__background-event::after,
+.edit-object-preview__background-neutron-star::before,
+.edit-object-preview__background-neutron-star::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  pointer-events: none;
+}
+
+.edit-object-preview__background-event::before,
+.edit-object-preview__background-neutron-star::before {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(
+    circle,
+    rgba(214, 244, 255, 0.18),
+    rgba(118, 187, 255, 0.12) 46%,
+    rgba(41, 87, 196, 0) 74%
+  );
+  filter: blur(2px);
+}
+
+.edit-object-preview__background-event::after,
+.edit-object-preview__background-neutron-star::after {
+  width: 34px;
+  height: 4px;
+  transform: translate(-50%, -50%) rotate(20deg);
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(216, 246, 255, 0.9) 24%,
+    rgba(95, 196, 255, 0.62) 50%,
+    rgba(36, 103, 235, 0.16) 76%,
+    transparent
+  );
+  filter: blur(0.8px);
+}
+
+.edit-object-preview__background-event--a,
 .edit-object-preview__background-neutron-star--a {
   top: 14px;
   left: 48px;
 }
 
+.edit-object-preview__background-event--b,
 .edit-object-preview__background-neutron-star--b {
   right: 30px;
   bottom: 14px;
+}
+
+.edit-object-preview__background-event--b::after,
+.edit-object-preview__background-neutron-star--b::after {
+  transform: translate(-50%, -50%) rotate(-18deg);
 }
 
 .edit-object-preview__neutron-star-halo,
@@ -943,17 +998,13 @@ body {
   filter: blur(2px);
 }
 
-.edit-object-preview--gravity-pulse,
-.edit-object-preview--cloak {
+.edit-object-preview--gravity-pulse {
   width: 28px;
   height: 28px;
 }
 
 .edit-object-preview__gravity-core,
-.edit-object-preview__gravity-ring,
-.edit-object-preview__cloak-core,
-.edit-object-preview__cloak-halo,
-.edit-object-preview__cloak-sheen {
+.edit-object-preview__gravity-ring {
   inset: 0;
   border-radius: 999px;
 }
@@ -979,40 +1030,6 @@ body {
 .edit-object-preview__gravity-ring--outer {
   transform: scale(1.22);
   opacity: 0.36;
-}
-
-.edit-object-preview__cloak-core {
-  inset: 6px;
-  background: radial-gradient(
-    circle,
-    color-mix(in srgb, currentColor 18%, #071019),
-    transparent 78%
-  );
-  filter: blur(1px);
-}
-
-.edit-object-preview__cloak-halo {
-  background: radial-gradient(
-    circle,
-    color-mix(in srgb, currentColor 18%, transparent) 42%,
-    color-mix(in srgb, currentColor 52%, white) 72%,
-    transparent 100%
-  );
-  opacity: 0.56;
-  filter: blur(2px);
-}
-
-.edit-object-preview__cloak-sheen {
-  inset: 4px 10px;
-  background: linear-gradient(
-    180deg,
-    transparent,
-    color-mix(in srgb, currentColor 68%, white),
-    transparent
-  );
-  opacity: 0.42;
-  filter: blur(1.4px);
-  transform: rotate(18deg);
 }
 
 .edit-object-preview__cache-badge {
@@ -1159,25 +1176,10 @@ body {
 
 .editor-preview-black-hole,
 .editor-preview-cannon,
-.editor-preview-foresight,
 .editor-preview-shield,
 .editor-preview-boost {
   position: absolute;
   inset: 0;
-}
-
-.editor-preview-foresight {
-  background:
-    radial-gradient(
-      circle at 29% 70%,
-      rgba(88, 152, 214, 0.12),
-      transparent 26%
-    ),
-    radial-gradient(
-      circle at 78% 44%,
-      rgba(128, 215, 255, 0.08),
-      transparent 18%
-    );
 }
 
 .editor-preview-black-hole > div {
@@ -1307,7 +1309,6 @@ body {
   transform: translate(-50%, -50%);
 }
 
-.editor-preview-foresight__origin,
 .editor-preview-shield__planet,
 .editor-preview-boost__planet {
   position: absolute;
@@ -1319,54 +1320,6 @@ body {
   border-radius: 999px;
   background: radial-gradient(circle at 30% 30%, #6fc7ff, #1a3550 70%);
   box-shadow: 0 0 48px rgba(111, 199, 255, 0.16);
-}
-
-.editor-preview-foresight__origin {
-  left: var(--foresight-origin-x, 29%);
-  top: var(--foresight-origin-y, 70%);
-  width: var(--foresight-origin-size, 21%);
-  height: var(--foresight-origin-size, 21%);
-}
-
-.editor-preview-foresight__path {
-  position: absolute;
-  inset: 0;
-  overflow: visible;
-  filter: drop-shadow(
-    0 0 7px color-mix(in srgb, var(--preview-accent) 24%, transparent)
-  );
-  pointer-events: none;
-}
-
-.editor-preview-foresight__dot,
-.editor-preview-foresight__target {
-  position: absolute;
-  transform: translate(-50%, -50%);
-  border-radius: 999px;
-  background: radial-gradient(
-    circle,
-    color-mix(in srgb, white 34%, var(--preview-accent)) 0 26%,
-    var(--preview-accent) 58%,
-    color-mix(in srgb, var(--preview-accent) 42%, transparent) 100%
-  );
-  box-shadow: 0 0 8px color-mix(in srgb, var(--preview-accent) 36%, transparent);
-}
-
-.editor-preview-foresight__target {
-  left: var(--foresight-target-x, 78%);
-  top: var(--foresight-target-y, 44%);
-  width: var(--foresight-target-size, 13%);
-  height: var(--foresight-target-size, 13%);
-  background: transparent;
-  border: 2px solid var(--preview-target, var(--preview-accent));
-  box-shadow:
-    0 0 18px
-    color-mix(
-      in srgb,
-      var(--preview-target, var(--preview-accent)) 35%,
-      transparent
-    ),
-    inset 0 0 16px rgba(255, 255, 255, 0.05);
 }
 
 .editor-preview-shield__arc {
@@ -1455,6 +1408,24 @@ body {
 
   to {
     transform: translate(-50%, -50%) rotate(360deg);
+  }
+}
+
+@keyframes edit-background-event-pulse {
+  0%,
+  100% {
+    transform: scale(0.86);
+    filter: saturate(0.92);
+  }
+
+  45% {
+    transform: scale(1.08);
+    filter: saturate(1.12);
+  }
+
+  60% {
+    transform: scale(0.92);
+    filter: saturate(1);
   }
 }
 
@@ -1714,6 +1685,29 @@ body {
 .hud-root {
   z-index: 1;
   pointer-events: none;
+}
+
+.hud-root--inside-crt {
+  inset: clamp(12px, 1.8vw, 22px) clamp(26px, 4vw, 58px)
+    clamp(18px, 2.8vw, 34px);
+  overflow: hidden;
+  border-radius: 44px / 26px;
+}
+
+.hud-root--inside-crt .combat-hud {
+  clip-path: inset(0 round 44px / 26px);
+}
+
+@media (max-width: 900px) {
+  .hud-root--inside-crt {
+    inset: clamp(10px, 1.4vw, 16px) clamp(18px, 3vw, 30px)
+      clamp(14px, 2vw, 24px);
+    border-radius: 32px / 20px;
+  }
+
+  .hud-root--inside-crt .combat-hud {
+    clip-path: inset(0 round 32px / 20px);
+  }
 }
 
 .page-overlay {

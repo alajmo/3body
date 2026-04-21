@@ -1,4 +1,4 @@
-import type { Vec2 } from "@3body/shared";
+import type { NeutronStar, Vec2 } from "@3body/shared";
 import { cloneCacheContents, lerp } from "@3body/shared";
 import type {
   CombatSandboxCache,
@@ -9,10 +9,12 @@ import type {
   CombatSandboxSun,
 } from "./combatSandbox";
 
-export interface CombatSandboxInterpolationCache {
+interface CombatSandboxInterpolationCache {
   previousCacheMap: Map<number, CombatSandboxCache>;
   previousDebrisMap: Map<number, CombatSandboxDebris>;
+  previousNeutronStarMap: Map<number, NeutronStar>;
   previousRocketMap: Map<number, CombatSandboxRocket>;
+  previousSunMap: Map<number, CombatSandboxSun>;
 }
 
 const cloneVec2 = (value: Vec2): Vec2 => ({ x: value.x, y: value.y });
@@ -21,6 +23,12 @@ const cloneSun = (sun: CombatSandboxSun): CombatSandboxSun => ({
   ...sun,
   pos: cloneVec2(sun.pos),
   vel: cloneVec2(sun.vel),
+});
+
+const cloneNeutronStar = (neutronStar: NeutronStar): NeutronStar => ({
+  ...neutronStar,
+  pos: cloneVec2(neutronStar.pos),
+  vel: cloneVec2(neutronStar.vel),
 });
 
 const clonePlanet = (planet: CombatSandboxPlanet): CombatSandboxPlanet => ({
@@ -56,12 +64,15 @@ export const createSandboxInterpolationCache =
     previousRocketMap: new Map<number, CombatSandboxRocket>(),
     previousCacheMap: new Map<number, CombatSandboxCache>(),
     previousDebrisMap: new Map<number, CombatSandboxDebris>(),
+    previousNeutronStarMap: new Map<number, NeutronStar>(),
+    previousSunMap: new Map<number, CombatSandboxSun>(),
   });
 
 export const createInterpolatedSandboxState = (
   state: CombatSandboxState,
 ): CombatSandboxState => ({
   ...state,
+  neutronStars: state.neutronStars.slice(),
   suns: state.suns.slice(),
   planets: state.planets.slice(),
   rockets: state.rockets.slice(),
@@ -110,7 +121,7 @@ const syncPlanetDebuffs = (
 
 const syncSunInto = (
   target: CombatSandboxSun,
-  previous: CombatSandboxSun,
+  previous: CombatSandboxSun | undefined,
   current: CombatSandboxSun,
   alpha: number,
 ) => {
@@ -119,8 +130,22 @@ const syncSunInto = (
   target.mass = current.mass;
   target.radius = current.radius;
   target.swallowedAtSec = current.swallowedAtSec;
-  syncLerpedVec2(target.pos, previous.pos, current.pos, alpha);
-  syncLerpedVec2(target.vel, previous.vel, current.vel, alpha);
+  syncLerpedVec2(target.pos, previous?.pos, current.pos, alpha);
+  syncLerpedVec2(target.vel, previous?.vel, current.vel, alpha);
+};
+
+const syncNeutronStarInto = (
+  target: NeutronStar,
+  previous: NeutronStar | undefined,
+  current: NeutronStar,
+  alpha: number,
+) => {
+  target.id = current.id;
+  target.kind = current.kind;
+  target.mass = current.mass;
+  target.radius = current.radius;
+  syncLerpedVec2(target.pos, previous?.pos, current.pos, alpha);
+  syncLerpedVec2(target.vel, previous?.vel, current.vel, alpha);
 };
 
 const syncPlanetInto = (
@@ -147,7 +172,6 @@ const syncPlanetInto = (
   target.shieldActive = current.shieldActive;
   target.shieldLoad = current.shieldLoad;
   target.shieldMaxLoad = current.shieldMaxLoad;
-  target.hideTrailUntilTick = current.hideTrailUntilTick;
   syncPlanetDebuffs(target.debuffs, current.debuffs);
   syncLerpedVec2(
     target.pos,
@@ -263,6 +287,8 @@ export const syncInterpolatedSandboxState = (
   fillEntityMap(cache.previousRocketMap, previousState.rockets);
   fillEntityMap(cache.previousCacheMap, previousState.caches);
   fillEntityMap(cache.previousDebrisMap, previousState.debris);
+  fillEntityMap(cache.previousNeutronStarMap, previousState.neutronStars);
+  fillEntityMap(cache.previousSunMap, previousState.suns);
 
   targetState.tick = currentState.tick;
   targetState.elapsedSec = lerp(
@@ -272,41 +298,33 @@ export const syncInterpolatedSandboxState = (
   );
   targetState.preset = currentState.preset;
   targetState.starMotion = currentState.starMotion;
-  targetState.neutronStars = currentState.neutronStars.map((star) => ({
-    ...star,
-    pos: { ...star.pos },
-    vel: { ...star.vel },
-  }));
   targetState.cacheRespawnAtTicks = currentState.cacheRespawnAtTicks;
   targetState.impactBursts = currentState.impactBursts;
   targetState.launchBursts = currentState.launchBursts;
   targetState.blackHole = currentState.blackHole;
   targetState.player = currentState.player;
   targetState.playerBot = currentState.playerBot;
-  targetState.playerLossResetsEnabled = currentState.playerLossResetsEnabled;
   targetState.bots = currentState.bots;
   targetState.nextEntityId = currentState.nextEntityId;
-  targetState.playerLostAtSec = currentState.playerLostAtSec;
   targetState.rng = currentState.rng;
 
-  for (let index = 0; index < currentState.suns.length; index += 1) {
-    const currentSun = currentState.suns[index]!;
-    const previousSun = previousState.suns[index]!;
-    let targetSun = targetState.suns[index];
+  syncInterpolatedEntityArray(
+    targetState.suns,
+    currentState.suns,
+    (id) => cache.previousSunMap.get(id),
+    cloneSun,
+    syncSunInto,
+    alpha,
+  );
 
-    if (
-      targetSun === undefined ||
-      targetSun.id !== currentSun.id ||
-      targetSun === currentSun ||
-      targetSun === previousSun
-    ) {
-      targetSun = cloneSun(currentSun);
-      targetState.suns[index] = targetSun;
-    }
-
-    syncSunInto(targetSun, previousSun, currentSun, alpha);
-  }
-  targetState.suns.length = currentState.suns.length;
+  syncInterpolatedEntityArray(
+    targetState.neutronStars,
+    currentState.neutronStars,
+    (id) => cache.previousNeutronStarMap.get(id),
+    cloneNeutronStar,
+    syncNeutronStarInto,
+    alpha,
+  );
 
   for (let index = 0; index < currentState.planets.length; index += 1) {
     const currentPlanet = currentState.planets[index]!;

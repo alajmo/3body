@@ -66,11 +66,16 @@ vi.mock("./EditGameViewportPanel", () => ({
 
 describe("EditPage", () => {
   const FIRST_SUN_LABEL = "Auric";
+  const GAMEPLAY_VIEW_BUTTON_NAME = /^GameplayBackdrop, hazards, and starfield$/i;
   const fetchMock = vi.fn();
   const getLastEditorPreviewStageProps = () =>
     editorPreviewStageMock.mock.lastCall?.[0] as
       | EditorPreviewStageProps
       | undefined;
+  const getGameplayViewButton = () =>
+    screen.getByRole("button", {
+      name: GAMEPLAY_VIEW_BUTTON_NAME,
+    });
 
   const mockTuningFetch = (
     initialDocument: typeof CURRENT_GAME_TUNING = CURRENT_GAME_TUNING,
@@ -102,6 +107,46 @@ describe("EditPage", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("renders background event markers in the background card preview", async () => {
+    mockTuningFetch();
+
+    render(<EditPage />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+    });
+
+    const backgroundButton = getGameplayViewButton();
+
+    expect(
+      backgroundButton.querySelectorAll(
+        ".edit-object-preview__background-event",
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("does not render background event markers when events are disabled", async () => {
+    const customDocument = structuredClone(CURRENT_GAME_TUNING);
+    customDocument.visuals.background.eventsEnabled = false;
+    mockTuningFetch(customDocument);
+
+    render(<EditPage />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+    });
+
+    const backgroundButton = getGameplayViewButton();
+
+    await waitFor(() => {
+      expect(
+        backgroundButton.querySelectorAll(
+          ".edit-object-preview__background-event",
+        ),
+      ).toHaveLength(0);
+    });
   });
 
   it("renders turret controls and saves cannon tuning changes", async () => {
@@ -192,7 +237,7 @@ describe("EditPage", () => {
     );
 
     fireEvent.change(screen.getByLabelText("Display mode"), {
-      target: { value: "vectorAsteroids" },
+      target: { value: "vhs" },
     });
 
     await waitFor(() => {
@@ -201,7 +246,7 @@ describe("EditPage", () => {
 
     expect(screen.getByTestId("editor-preview-stage")).toHaveAttribute(
       "data-overview-display-mode",
-      "vectorAsteroids",
+      "vhs",
     );
     const saveCall = fetchMock.mock.calls[1];
     expect(saveCall?.[0]).toBe("/api/editor/tuning");
@@ -212,7 +257,7 @@ describe("EditPage", () => {
       JSON.parse(String((saveCall?.[1] as RequestInit | undefined)?.body)),
     ).toMatchObject({
       visuals: {
-        displayMode: "vectorAsteroids",
+        displayMode: "vhs",
       },
     });
   });
@@ -535,7 +580,7 @@ describe("EditPage", () => {
     const cacheButton = screen.getByRole("button", { name: /Caches/i });
     expect(
       cacheButton.querySelectorAll(".edit-object-preview__cache-chip"),
-    ).toHaveLength(7);
+    ).toHaveLength(5);
   });
 
   it("explains cache effects in the cache inspector", async () => {
@@ -553,9 +598,6 @@ describe("EditPage", () => {
       await screen.findByText(
         /Press G to emit a pulse that blasts planets, rockets, and caches within its blast radius away from your planet\./i,
       ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/Press C to hide your trail for 5 seconds\./i),
     ).toBeInTheDocument();
   });
 
@@ -628,7 +670,7 @@ describe("EditPage", () => {
     expect(body.visuals.caches.badgeScale).toBe(1);
   });
 
-  it("renders gravity pulse and cloak in the abilities editor group", async () => {
+  it("renders gravity pulse in the abilities editor group", async () => {
     mockTuningFetch();
 
     render(<EditPage />);
@@ -652,16 +694,6 @@ describe("EditPage", () => {
     expect(
       screen.getByText(/within its blast radius away from you/i),
     ).toBeInTheDocument();
-
-    fireEvent.click(
-      screen.getByRole("button", { name: /CloakWildcard concealment/i }),
-    );
-
-    expect(screen.getByTestId("editor-preview-stage")).toHaveAttribute(
-      "data-item-id",
-      "cloak",
-    );
-    expect(await screen.findByText(/hiding its trail/i)).toBeInTheDocument();
   });
 
   it("renders background controls and saves backdrop tuning changes", async () => {
@@ -673,7 +705,7 @@ describe("EditPage", () => {
       expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /Background/i }));
+    fireEvent.click(getGameplayViewButton());
 
     const baseColorInput = await screen.findByLabelText("Base color");
     expect(baseColorInput).toHaveValue(
@@ -720,7 +752,7 @@ describe("EditPage", () => {
       expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /Background/i }));
+    fireEvent.click(getGameplayViewButton());
 
     const microDamageInput = await screen.findByLabelText(
       "Micro asteroid damage",
@@ -728,14 +760,17 @@ describe("EditPage", () => {
     const microRandomizationInput = screen.getByLabelText(
       "Micro inward drift randomization",
     );
+    const microSpawnRateInput = screen.getByLabelText("Micro falls per second");
     const smallDamageInput = screen.getByLabelText("Small asteroid damage");
     const smallRandomizationInput = screen.getByLabelText(
       "Small inward drift randomization",
     );
+    const smallSpawnRateInput = screen.getByLabelText("Small falls per second");
     const largeDamageInput = screen.getByLabelText("Large asteroid damage");
     const largeRandomizationInput = screen.getByLabelText(
       "Large inward drift randomization",
     );
+    const largeSpawnRateInput = screen.getByLabelText("Large falls per second");
 
     expect(microDamageInput).toHaveValue(
       CURRENT_GAME_TUNING.gameplay.arena.asteroidField.micro.damage,
@@ -743,11 +778,17 @@ describe("EditPage", () => {
     expect(microRandomizationInput).toHaveValue(
       CURRENT_GAME_TUNING.gameplay.arena.asteroidField.micro.randomization,
     );
+    expect(microSpawnRateInput).toHaveValue(
+      CURRENT_GAME_TUNING.gameplay.arena.asteroidField.micro.spawnRatePerSec,
+    );
     expect(smallDamageInput).toHaveValue(
       CURRENT_GAME_TUNING.gameplay.arena.asteroidField.small.damage,
     );
     expect(smallRandomizationInput).toHaveValue(
       CURRENT_GAME_TUNING.gameplay.arena.asteroidField.small.randomization,
+    );
+    expect(smallSpawnRateInput).toHaveValue(
+      CURRENT_GAME_TUNING.gameplay.arena.asteroidField.small.spawnRatePerSec,
     );
     expect(largeDamageInput).toHaveValue(
       CURRENT_GAME_TUNING.gameplay.arena.asteroidField.large.damage,
@@ -755,22 +796,31 @@ describe("EditPage", () => {
     expect(largeRandomizationInput).toHaveValue(
       CURRENT_GAME_TUNING.gameplay.arena.asteroidField.large.randomization,
     );
+    expect(largeSpawnRateInput).toHaveValue(
+      CURRENT_GAME_TUNING.gameplay.arena.asteroidField.large.spawnRatePerSec,
+    );
 
     fireEvent.change(microDamageInput, { target: { value: "0.75" } });
     fireEvent.blur(microDamageInput);
     fireEvent.change(microRandomizationInput, { target: { value: "0.15" } });
     fireEvent.blur(microRandomizationInput);
+    fireEvent.change(microSpawnRateInput, { target: { value: "4.25" } });
+    fireEvent.blur(microSpawnRateInput);
     fireEvent.change(smallDamageInput, { target: { value: "2.25" } });
     fireEvent.blur(smallDamageInput);
     fireEvent.change(smallRandomizationInput, { target: { value: "0.35" } });
     fireEvent.blur(smallRandomizationInput);
+    fireEvent.change(smallSpawnRateInput, { target: { value: "1.4" } });
+    fireEvent.blur(smallSpawnRateInput);
     fireEvent.change(largeDamageInput, { target: { value: "9.5" } });
     fireEvent.blur(largeDamageInput);
     fireEvent.change(largeRandomizationInput, { target: { value: "0.92" } });
     fireEvent.blur(largeRandomizationInput);
+    fireEvent.change(largeSpawnRateInput, { target: { value: "0.6" } });
+    fireEvent.blur(largeSpawnRateInput);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(7);
+      expect(fetchMock).toHaveBeenCalledTimes(10);
     });
 
     const saveCall = fetchMock.mock.calls.at(-1);
@@ -782,13 +832,22 @@ describe("EditPage", () => {
     expect(savedDocument.gameplay.arena.asteroidField.micro.randomization).toBe(
       0.15,
     );
+    expect(savedDocument.gameplay.arena.asteroidField.micro.spawnRatePerSec).toBe(
+      4.25,
+    );
     expect(savedDocument.gameplay.arena.asteroidField.small.damage).toBe(2.25);
     expect(savedDocument.gameplay.arena.asteroidField.small.randomization).toBe(
       0.35,
     );
+    expect(savedDocument.gameplay.arena.asteroidField.small.spawnRatePerSec).toBe(
+      1.4,
+    );
     expect(savedDocument.gameplay.arena.asteroidField.large.damage).toBe(9.5);
     expect(savedDocument.gameplay.arena.asteroidField.large.randomization).toBe(
       0.92,
+    );
+    expect(savedDocument.gameplay.arena.asteroidField.large.spawnRatePerSec).toBe(
+      0.6,
     );
   });
 
@@ -801,7 +860,7 @@ describe("EditPage", () => {
       expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /Background/i }));
+    fireEvent.click(getGameplayViewButton());
 
     const starDensityInput = await screen.findByLabelText("Star density");
 
@@ -818,7 +877,7 @@ describe("EditPage", () => {
       expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /Background/i }));
+    fireEvent.click(getGameplayViewButton());
 
     const baseColorInput = await screen.findByLabelText("Base color");
     fireEvent.change(baseColorInput, { target: { value: "#112233" } });
@@ -848,7 +907,7 @@ describe("EditPage", () => {
       expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /Background/i }));
+    fireEvent.click(getGameplayViewButton());
 
     const starBrightnessInput = await screen.findByLabelText("Star brightness");
 
@@ -901,7 +960,7 @@ describe("EditPage", () => {
       expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /Background/i }));
+    fireEvent.click(getGameplayViewButton());
 
     expect(await screen.findByLabelText("Star density")).toHaveValue(2.35);
     expect(screen.getByLabelText("Enable twinkle")).not.toBeChecked();
@@ -1101,7 +1160,7 @@ describe("EditPage", () => {
       expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /Background/i }));
+    fireEvent.click(getGameplayViewButton());
 
     expect(await screen.findByLabelText("Base color")).toHaveValue("#112233");
     expect(screen.getByLabelText("Enable stars")).not.toBeChecked();
@@ -1184,7 +1243,9 @@ describe("EditPage", () => {
   });
 
   it("renders orbit controls and saves orbit tuning changes", async () => {
-    mockTuningFetch();
+    const physicsSeedDocument = structuredClone(CURRENT_GAME_TUNING);
+    physicsSeedDocument.gameplay.orbits.starMotion.mode = "physicsSeed";
+    mockTuningFetch(physicsSeedDocument);
 
     render(<EditPage />);
 
@@ -1200,10 +1261,10 @@ describe("EditPage", () => {
     const sunFields = within(sunSection.closest("details")!);
     const massInput = sunFields.getByLabelText("Mass");
     expect(massInput).toHaveValue(
-      CURRENT_GAME_TUNING.gameplay.orbits.suns[0]!.mass,
+      physicsSeedDocument.gameplay.orbits.suns[0]!.mass,
     );
     expect(sunFields.getByLabelText("Start X")).toHaveValue(
-      CURRENT_GAME_TUNING.gameplay.orbits.suns[0]!.pos.x,
+      physicsSeedDocument.gameplay.orbits.suns[0]!.pos.x,
     );
 
     fireEvent.change(massInput, { target: { value: "160000" } });
@@ -1253,7 +1314,9 @@ describe("EditPage", () => {
   });
 
   it("saves uncapped orbit sun start distance scale", async () => {
-    mockTuningFetch();
+    const physicsSeedDocument = structuredClone(CURRENT_GAME_TUNING);
+    physicsSeedDocument.gameplay.orbits.starMotion.mode = "physicsSeed";
+    mockTuningFetch(physicsSeedDocument);
 
     render(<EditPage />);
 
@@ -1269,7 +1332,7 @@ describe("EditPage", () => {
       "Start distance scale",
     );
     expect(distanceScaleInput).toHaveValue(
-      CURRENT_GAME_TUNING.gameplay.orbits.sunStartDistanceScale,
+      physicsSeedDocument.gameplay.orbits.sunStartDistanceScale,
     );
     expect(distanceScaleInput).not.toHaveAttribute("max");
     expect(
@@ -1715,44 +1778,6 @@ describe("EditPage", () => {
     expect(savedDocument.visuals.suns.profiles[0]!.coreBrightness).toBe(1.75);
   });
 
-  it("renders foresight path controls and saves foresight visual changes", async () => {
-    mockTuningFetch();
-
-    render(<EditPage />);
-
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: /Foresight/i }));
-
-    const showLineInput = await screen.findByLabelText("Show line");
-    expect(showLineInput).not.toBeChecked();
-    expect(screen.getByLabelText("Show dots")).toBeChecked();
-    expect(screen.getByLabelText("Dot size")).toHaveValue(
-      CURRENT_GAME_TUNING.visuals.abilities.foresight.pointSize,
-    );
-
-    fireEvent.click(showLineInput);
-
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-    });
-
-    const saveCall = fetchMock.mock.calls[1];
-    expect(
-      JSON.parse(String((saveCall?.[1] as RequestInit | undefined)?.body)),
-    ).toMatchObject({
-      visuals: {
-        abilities: {
-          foresight: {
-            showLine: true,
-          },
-        },
-      },
-    });
-  });
-
   it("renders seeker lock controls and saves seeker lock seconds", async () => {
     mockTuningFetch();
 
@@ -1922,14 +1947,14 @@ describe("EditPage", () => {
       "orbits",
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /Foresight/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Shield/i }));
     expect(screen.getByTestId("editor-preview-stage")).toHaveAttribute(
       "data-show-hud",
       "false",
     );
     expect(screen.getByTestId("editor-preview-stage")).toHaveAttribute(
       "data-item-id",
-      "foresight",
+      "shield",
     );
 
     fireEvent.click(screen.getByRole("button", { name: /HUDHUD only/i }));

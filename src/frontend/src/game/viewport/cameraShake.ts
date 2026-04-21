@@ -23,6 +23,9 @@ const ROCKET_IMPACT_HUD_FLICKER_BY_KIND = {
   light: 0.52,
   seeker: 0.6,
 } as const satisfies Record<RocketKind, number>;
+const BOUNDARY_ASTEROID_IMPACT_CAMERA_SHAKE = 0.34;
+const BOUNDARY_ASTEROID_IMPACT_SCREEN_FLASH = 0.3;
+const BOUNDARY_ASTEROID_IMPACT_HUD_FLICKER = 0.28;
 
 export const getRocketImpactCameraShake = ({
   absorbedByShield,
@@ -59,6 +62,33 @@ export const getRocketImpactHudFlicker = ({
 
   return absorbedByShield ? baseFlicker * 0.78 : baseFlicker;
 };
+
+export const getBoundaryAsteroidImpactCameraShake = ({
+  absorbedByShield,
+}: {
+  absorbedByShield: boolean;
+}): number =>
+  absorbedByShield
+    ? BOUNDARY_ASTEROID_IMPACT_CAMERA_SHAKE * 0.72
+    : BOUNDARY_ASTEROID_IMPACT_CAMERA_SHAKE;
+
+export const getBoundaryAsteroidImpactScreenFlash = ({
+  absorbedByShield,
+}: {
+  absorbedByShield: boolean;
+}): number =>
+  absorbedByShield
+    ? BOUNDARY_ASTEROID_IMPACT_SCREEN_FLASH * 0.76
+    : BOUNDARY_ASTEROID_IMPACT_SCREEN_FLASH;
+
+export const getBoundaryAsteroidImpactHudFlicker = ({
+  absorbedByShield,
+}: {
+  absorbedByShield: boolean;
+}): number =>
+  absorbedByShield
+    ? BOUNDARY_ASTEROID_IMPACT_HUD_FLICKER * 0.78
+    : BOUNDARY_ASTEROID_IMPACT_HUD_FLICKER;
 
 export const getViewportCameraShakeOffsets = ({
   cameraShake,

@@ -1,48 +1,50 @@
 import type { Vec2 } from "@3body/shared";
 import {
+  absorbSunsIntoNeutronStars,
+  clamp,
   FIXED_STEP_SEC,
   GRAVITY_PULSE_RADIUS,
-  PLANET_HP,
-  ROOM_CAPACITY,
-  clamp,
+  getSunVisualProfile,
   getSeekerLockTicks,
   normalize as normalizeVec2,
+  PLANET_HP,
+  ROOM_CAPACITY,
   stepBody,
+  stepNeutronStars,
   stepSuns,
 } from "@3body/shared";
 import type {
-  CombatSandboxSun,
   CombatPlanetDeathReason,
   CombatSandboxPlanet,
   CombatSandboxState,
+  CombatSandboxSun,
 } from "../combatSandbox";
 import {
   createInterpolatedSandboxState,
   createSandboxInterpolationCache,
   getActiveCombatSuns,
-  getSandboxResetReason,
   stepSandbox,
   syncInterpolatedSandboxState,
 } from "../combatSandbox";
 import { sampleRuntimeFixedPatternSunSeeds } from "../runtimeOrbitPreset";
 import {
-  FORESIGHT_STEP_SEC,
-  FORESIGHT_TARGET_DISTANCE,
-  FORESIGHT_WINDOW_SEC,
-  MAX_FORESIGHT_SAMPLES,
-  resampleForesightPath,
-  trimForesightPathToDistance,
-} from "./foresightShared";
-import type { GameViewportInputRuntimeState } from "./localInput";
-import {
   CAMERA_SHAKE_DURATION_SEC,
+  getBoundaryAsteroidImpactCameraShake,
+  getBoundaryAsteroidImpactHudFlicker,
+  getBoundaryAsteroidImpactScreenFlash,
   getRocketImpactCameraShake,
   getRocketImpactHudFlicker,
   getRocketImpactScreenFlash,
   ROCKET_IMPACT_HUD_FLICKER_DURATION_SEC,
 } from "./cameraShake";
+import {
+  findAbsorbingNeutronStar,
+  getNeutronStarAbsorptionExplosionRadius,
+} from "../neutronStarAbsorption";
+import type { GameViewportInputRuntimeState } from "./localInput";
 import { createViewportPerformanceProfiler } from "./performanceProfiler";
 import { createRuntimeStatsTracker } from "./runtimeStats";
+import { getRuntimeTuningDocument } from "../runtimeTuning";
 
 const MAX_FRAME_DELTA_SEC = 0.1;
 const MAX_STEPS_PER_FRAME = 12;
@@ -153,103 +155,6 @@ const syncLocalSandboxEntityLookups = (
   }
 };
 
-type PredictedForesightBody = Pick<
-  CombatSandboxPlanet,
-  "id" | "pos" | "radius" | "vel"
->;
-
-const computeForesightPathsByEntityId = (
-  state: CombatSandboxState,
-): ReadonlyMap<number, readonly Vec2[]> => {
-  if (state.tick >= state.player.foresightActiveUntilTick) {
-    return new Map();
-  }
-
-  const pathsByEntityId = new Map<number, Vec2[]>();
-  const activeSunIds = new Set(
-    getActiveCombatSuns(state.suns).map((sun) => sun.id),
-  );
-  let predictedSuns = getActiveCombatSuns(state.suns).map<CombatSandboxSun>(
-    (sun) => ({
-      ...sun,
-      pos: { x: sun.pos.x, y: sun.pos.y },
-      vel: { x: sun.vel.x, y: sun.vel.y },
-    }),
-  );
-  let predictedPlanets = state.planets
-    .filter((planet) => planet.alive)
-    .map<PredictedForesightBody>((planet) => ({
-      id: planet.id,
-      pos: { x: planet.pos.x, y: planet.pos.y },
-      radius: planet.radius,
-      vel: { x: planet.vel.x, y: planet.vel.y },
-    }));
-  const stepCount = Math.ceil(FORESIGHT_WINDOW_SEC / FORESIGHT_STEP_SEC);
-
-  for (const sun of predictedSuns) {
-    pathsByEntityId.set(sun.id, [{ x: sun.pos.x, y: sun.pos.y }]);
-  }
-  for (const planet of predictedPlanets) {
-    pathsByEntityId.set(planet.id, [{ x: planet.pos.x, y: planet.pos.y }]);
-  }
-
-  for (let step = 0; step < stepCount; step += 1) {
-    predictedSuns =
-      state.starMotion.mode === "fixedPattern"
-        ? sampleRuntimeFixedPatternSunSeeds(
-            state.starMotion,
-            state.elapsedSec + FORESIGHT_STEP_SEC * (step + 1),
-          )
-            .filter((sun) => activeSunIds.has(sun.id))
-            .map((sun) => ({
-              id: sun.id,
-              kind: "sun" as const,
-              mass: sun.mass,
-              radius: sun.radius,
-              pos: { x: sun.pos.x, y: sun.pos.y },
-              vel: { x: sun.vel.x, y: sun.vel.y },
-              swallowedAtSec: null,
-            }))
-        : stepSuns(
-            predictedSuns,
-            FORESIGHT_STEP_SEC,
-            state.blackHole ?? undefined,
-          ).map((sun) => ({
-            ...sun,
-            swallowedAtSec: null,
-          }));
-
-    predictedPlanets = predictedPlanets.map((planet) =>
-      stepBody(
-        planet,
-        predictedSuns,
-        FORESIGHT_STEP_SEC,
-        state.blackHole ?? undefined,
-        state.neutronStars,
-      ),
-    );
-
-    for (const sun of predictedSuns) {
-      pathsByEntityId.get(sun.id)?.push({ x: sun.pos.x, y: sun.pos.y });
-    }
-    for (const planet of predictedPlanets) {
-      pathsByEntityId
-        .get(planet.id)
-        ?.push({ x: planet.pos.x, y: planet.pos.y });
-    }
-  }
-
-  return new Map(
-    Array.from(pathsByEntityId, ([entityId, path]) => [
-      entityId,
-      resampleForesightPath(
-        trimForesightPathToDistance(path, FORESIGHT_TARGET_DISTANCE),
-        MAX_FORESIGHT_SAMPLES,
-      ),
-    ]),
-  );
-};
-
 export const createLocalSandboxSimulationState = (
   initialState: CombatSandboxState,
 ) => {
@@ -259,7 +164,6 @@ export const createLocalSandboxSimulationState = (
     activeGravityPulse: null as LocalSandboxGravityPulseState | null,
     cameraShake: 0,
     currentState: initialState,
-    foresightPathsByEntityId: new Map<number, readonly Vec2[]>(),
     killFeedEntries: [] as LocalSandboxKillFeedEntry[],
     lastBoostVisualTickByPlayerId: createBoostVisualTickMap(initialState),
     nextHudUpdateSec: 0,
@@ -319,7 +223,6 @@ export const resetLocalSandboxSimulationState = ({
   simulationState.renderState = createInterpolatedSandboxState(nextState);
   simulationState.accumulatorSec = 0;
   simulationState.previousFrameTimeSec = null;
-  simulationState.foresightPathsByEntityId.clear();
   simulationState.lastBoostVisualTickByPlayerId =
     createBoostVisualTickMap(nextState);
   simulationState.activeBoostBursts.length = 0;
@@ -409,7 +312,6 @@ export const runLocalSandboxSimulationFrame = ({
   inputRuntime,
   nowSec,
   onPlanetExplosionRequested,
-  onSandboxResetRequested,
   onViewportFocusChanged: _onViewportFocusChanged,
   profilingEnabled,
   resetAccumulator,
@@ -422,16 +324,30 @@ export const runLocalSandboxSimulationFrame = ({
         clearPendingGameplayRequests: () => void;
         clearStepScopedRequests: () => void;
         consumeShotRequest: () => boolean;
+        updateKeyboardAim: (playerPos: Vec2, deltaSec: number) => void;
       }
     | null
     | undefined;
   inputRuntime: GameViewportInputRuntimeState;
   nowSec: number;
   onPlanetExplosionRequested?: (
-    planet: CombatSandboxPlanet,
+    source: {
+      color: string;
+      deathReason?:
+        | "boundaryAsteroid"
+        | "boundary"
+        | "blackHole"
+        | "neutronStar"
+        | "planetCollision"
+        | "rocket"
+        | "sunCollision";
+      id: number;
+      pos: Vec2;
+      radius: number;
+      vel: Vec2;
+    },
     startedAtSec: number,
   ) => void;
-  onSandboxResetRequested?: () => void;
   onViewportFocusChanged?: (state: CombatSandboxState) => void;
   profilingEnabled: boolean;
   resetAccumulator: boolean;
@@ -457,6 +373,13 @@ export const runLocalSandboxSimulationFrame = ({
     simulationState.runtimeStatsTracker.sample(frameDeltaSec);
   simulationState.runtimeStats.fps = sampledRuntimeStats.fps;
   simulationState.runtimeStats.frameTimeMs = sampledRuntimeStats.frameTimeMs;
+  const playerPlanet =
+    simulationState.currentState.planets.find(
+      (planet) => planet.id === simulationState.currentState.player.planetId,
+    ) ?? null;
+  if (playerPlanet !== null) {
+    inputController?.updateKeyboardAim(playerPlanet.pos, frameDeltaSec);
+  }
 
   if (sandboxPaused) {
     simulationState.accumulatorSec = 0;
@@ -474,10 +397,8 @@ export const runLocalSandboxSimulationFrame = ({
   ) {
     const previousGravityPulseHeld =
       simulationState.currentState.player.gravityPulseHeld;
-    const previousCloakHeld = simulationState.currentState.player.cloakHeld;
     const gravityPulseRequestedThisStep =
       inputRuntime.pendingAbilityRequests.gravityPulse;
-    const cloakRequestedThisStep = inputRuntime.pendingAbilityRequests.cloak;
     const fireRequestedThisStep =
       inputController?.consumeShotRequest() ?? false;
     const nextState = stepSandbox(
@@ -485,9 +406,7 @@ export const runLocalSandboxSimulationFrame = ({
       {
         aimWorld: inputRuntime.inputState.aimWorld,
         boostRequested: inputRuntime.pendingAbilityRequests.boost,
-        cloakRequested: inputRuntime.pendingAbilityRequests.cloak,
         fireRequested: fireRequestedThisStep,
-        foresightRequested: inputRuntime.pendingAbilityRequests.foresight,
         gravityPulseRequested: inputRuntime.pendingAbilityRequests.gravityPulse,
         selectedRocketKind: inputRuntime.inputState.selectedRocketKind,
         shieldRequested: inputRuntime.pendingAbilityRequests.shield,
@@ -495,9 +414,57 @@ export const runLocalSandboxSimulationFrame = ({
       blackHoleSettings,
     );
     inputController?.clearStepScopedRequests();
-    const resetReason = getSandboxResetReason(nextState);
     simulationState.previousState = simulationState.currentState;
     simulationState.currentState = nextState;
+    const currentSunIds = new Set(
+      simulationState.currentState.suns.map((sun) => sun.id),
+    );
+    const previousNeutronStarsById = new Map(
+      simulationState.previousState.neutronStars.map((neutronStar) => [
+        neutronStar.id,
+        neutronStar,
+      ]),
+    );
+
+    for (
+      let index = 0;
+      index < simulationState.previousState.suns.length;
+      index += 1
+    ) {
+      const previousSun = simulationState.previousState.suns[index]!;
+      if (currentSunIds.has(previousSun.id)) {
+        continue;
+      }
+
+      const absorbingNeutronStar = findAbsorbingNeutronStar({
+        currentNeutronStars: simulationState.currentState.neutronStars,
+        previousNeutronStarsById,
+        sun: previousSun,
+      });
+      if (absorbingNeutronStar === null) {
+        continue;
+      }
+
+      const sunProfile = getSunVisualProfile(
+        getRuntimeTuningDocument().visuals.suns,
+        index,
+      );
+      simulationState.cameraShake = Math.max(simulationState.cameraShake, 0.58);
+      onPlanetExplosionRequested?.(
+        {
+          color: sunProfile.glowColor,
+          deathReason: "sunCollision",
+          id: previousSun.id,
+          pos: { x: previousSun.pos.x, y: previousSun.pos.y },
+          radius: getNeutronStarAbsorptionExplosionRadius({
+            neutronStarRadius: absorbingNeutronStar.radius,
+            sunRadius: previousSun.radius,
+          }),
+          vel: { x: previousSun.vel.x, y: previousSun.vel.y },
+        },
+        nextState.elapsedSec,
+      );
+    }
 
     for (
       let index = 0;
@@ -556,31 +523,52 @@ export const runLocalSandboxSimulationFrame = ({
     for (const burst of simulationState.currentState.impactBursts) {
       if (
         burst.startedAtTick !== simulationState.currentState.tick ||
-        burst.planetId !== simulationState.currentState.player.planetId ||
-        burst.sourceKind !== "rocket"
+        burst.planetId !== simulationState.currentState.player.planetId
       ) {
+        continue;
+      }
+
+      if (burst.sourceKind === "rocket") {
+        simulationState.cameraShake = Math.max(
+          simulationState.cameraShake,
+          getRocketImpactCameraShake({
+            absorbedByShield: burst.absorbedByShield,
+            rocketKind: burst.rocketKind,
+          }),
+        );
+        simulationState.playerDamageFlash = Math.max(
+          simulationState.playerDamageFlash,
+          getRocketImpactScreenFlash({
+            absorbedByShield: burst.absorbedByShield,
+            rocketKind: burst.rocketKind,
+          }),
+        );
+        simulationState.playerHudFlicker = Math.max(
+          simulationState.playerHudFlicker,
+          getRocketImpactHudFlicker({
+            absorbedByShield: burst.absorbedByShield,
+            rocketKind: burst.rocketKind,
+          }),
+        );
         continue;
       }
 
       simulationState.cameraShake = Math.max(
         simulationState.cameraShake,
-        getRocketImpactCameraShake({
+        getBoundaryAsteroidImpactCameraShake({
           absorbedByShield: burst.absorbedByShield,
-          rocketKind: burst.rocketKind,
         }),
       );
       simulationState.playerDamageFlash = Math.max(
         simulationState.playerDamageFlash,
-        getRocketImpactScreenFlash({
+        getBoundaryAsteroidImpactScreenFlash({
           absorbedByShield: burst.absorbedByShield,
-          rocketKind: burst.rocketKind,
         }),
       );
       simulationState.playerHudFlicker = Math.max(
         simulationState.playerHudFlicker,
-        getRocketImpactHudFlicker({
+        getBoundaryAsteroidImpactHudFlicker({
           absorbedByShield: burst.absorbedByShield,
-          rocketKind: burst.rocketKind,
         }),
       );
     }
@@ -627,10 +615,6 @@ export const runLocalSandboxSimulationFrame = ({
       gravityPulseRequestedThisStep &&
       previousGravityPulseHeld &&
       !simulationState.currentState.player.gravityPulseHeld;
-    const consumedCloak =
-      cloakRequestedThisStep &&
-      previousCloakHeld &&
-      !simulationState.currentState.player.cloakHeld;
 
     if (consumedGravityPulse) {
       const pulsingPlanet =
@@ -652,17 +636,8 @@ export const runLocalSandboxSimulationFrame = ({
       }
     }
 
-    if (consumedCloak) {
-      simulationState.cameraShake = Math.max(simulationState.cameraShake, 0.12);
-    }
-
     simulationState.accumulatorSec -= FIXED_STEP_SEC;
     stepCount += 1;
-
-    if (resetReason !== null) {
-      onSandboxResetRequested?.();
-      break;
-    }
   }
 
   if (stepCount === MAX_STEPS_PER_FRAME) {
@@ -681,11 +656,6 @@ export const runLocalSandboxSimulationFrame = ({
     simulationState.previousState,
     simulationState.currentState,
     clamp(simulationState.accumulatorSec / FIXED_STEP_SEC, 0, 1),
-  );
-  // Rebuild foresight from the interpolated render state so the preview
-  // moves continuously with boosts and orbital motion instead of stepping.
-  simulationState.foresightPathsByEntityId = new Map(
-    computeForesightPathsByEntityId(simulationState.renderState),
   );
   syncLocalSandboxEntityLookups(
     simulationState.renderPlanetsById,

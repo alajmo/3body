@@ -7,7 +7,6 @@ import {
   getSunVisualProfile,
   lerp,
   mulberry32,
-  predictPath,
   type GameTuningDocument,
   type PlanetArchetypeVisualSpec,
   type RocketKind,
@@ -87,23 +86,16 @@ import {
   createBlackHoleLensMaterial,
   createBlackHoleRingMaterial,
   createBoostWakeMaterial,
-  createForesightVisual,
   createNeutronStarCoreMaterial,
   createNeutronStarHaloMaterial,
   createNeutronStarJetMaterial,
   createNeutronStarLensMaterial,
 } from "./viewport/localViewportVisualFactories";
-import { CLOAK_PLANET_TARGET_OPACITY } from "./viewport/cloakVisual";
 import { createCompatibleScenePass } from "./viewport/postProcessingCompat";
 import {
-  clipForesightPathAtDistance,
-  FORESIGHT_STEP_SEC,
-  FORESIGHT_TARGET_DISTANCE,
-  FORESIGHT_WINDOW_SEC,
-  MAX_FORESIGHT_SAMPLES,
-  resampleForesightPath,
-  trimForesightPathToDistance,
-} from "./viewport/foresightShared";
+  createAmbientBoundaryDebrisVisual,
+  updateAmbientBoundaryDebrisVisual,
+} from "./viewport/ambientBoundaryDebris";
 import { createShieldVisual } from "./shieldVisuals";
 import {
   disposeViewportRendererSession,
@@ -173,7 +165,6 @@ const PLANET_LABEL_SCREEN_BORDER_SCALE = 0.03;
 const PLANET_LABEL_MIN_WORLD_GAP = 4;
 const PLANET_LABEL_MAX_WORLD_GAP = 7;
 const PLANET_LABEL_WORLD_GAP_RATIO = 0.22;
-const FORESIGHT_CARD_SPAN = 40;
 const BOOST_PREVIEW_ACTIVE_SEC = 0.48;
 const BOOST_PREVIEW_IDLE_SEC = 0.9;
 const BOOST_PREVIEW_CYCLE_SEC =
@@ -199,11 +190,9 @@ export type EditorPreviewViewportItemId =
   | "rocketLight"
   | "rocketHeavy"
   | "rocketSeeker"
-  | "foresight"
   | "shield"
   | "boost"
   | "gravityPulse"
-  | "cloak"
   | "cache";
 
 interface EditorItemPreviewViewportOptions {
@@ -268,12 +257,10 @@ const getRocketKindFromItemId = (
 
 const isAbilityPreviewItem = (
   itemId: EditorPreviewViewportItemId,
-): itemId is "foresight" | "shield" | "boost" | "gravityPulse" | "cloak" =>
-  itemId === "foresight" ||
+): itemId is "shield" | "boost" | "gravityPulse" =>
   itemId === "shield" ||
   itemId === "boost" ||
-  itemId === "gravityPulse" ||
-  itemId === "cloak";
+  itemId === "gravityPulse";
 
 const usesPlayerCameraStageView = (itemId: EditorPreviewViewportItemId) =>
   isAbilityPreviewItem(itemId) ||
@@ -356,11 +343,9 @@ const getCameraHalfHeight = ({
       return 168;
     case "cannon":
       return 185;
-    case "foresight":
     case "shield":
     case "boost":
     case "gravityPulse":
-    case "cloak":
       return 170;
     case "hud":
       return 160;
@@ -1186,7 +1171,7 @@ const createPreviewRocket = ({
 const createPreviewCache = ({
   hostElement,
   hostScene,
-  iconKey = "foresightExt",
+  iconKey = "shieldExt",
   presentation,
 }: {
   hostElement: HTMLDivElement;
@@ -1245,93 +1230,6 @@ const createBoostBurstMaterial = (colorHex: string) => {
     material,
     opacityUniform,
   };
-};
-
-const createPreviewForesightPath = ({
-  targetSpan,
-}: {
-  targetSpan?: number;
-} = {}): { path: readonly Vec2[]; scale: number } => {
-  const sourcePlanet = DEFAULT_ORBIT_PRESET.planets[0]!;
-  const sourceSuns: Sun[] = DEFAULT_ORBIT_PRESET.suns.map((sun) => ({
-    ...sun,
-    kind: "sun",
-  }));
-  const steps = Math.ceil(FORESIGHT_WINDOW_SEC / FORESIGHT_STEP_SEC);
-  const worldPath = predictPath(
-    sourcePlanet.pos,
-    sourcePlanet.vel,
-    sourceSuns,
-    steps,
-    FORESIGHT_STEP_SEC,
-  );
-  const trimmedWorldPath = trimForesightPathToDistance(
-    worldPath,
-    FORESIGHT_TARGET_DISTANCE,
-  );
-  const displayPath = resampleForesightPath(
-    trimmedWorldPath,
-    MAX_FORESIGHT_SAMPLES,
-  );
-  const start = displayPath[0]!;
-  const relativePath = displayPath.map((point) => ({
-    x: point.x - start.x,
-    y: point.y - start.y,
-  }));
-
-  if (targetSpan === undefined) {
-    return {
-      path: relativePath,
-      scale: 1,
-    };
-  }
-
-  const minX = Math.min(...displayPath.map((point) => point.x));
-  const maxX = Math.max(...displayPath.map((point) => point.x));
-  const minY = Math.min(...displayPath.map((point) => point.y));
-  const maxY = Math.max(...displayPath.map((point) => point.y));
-  const span = Math.max(maxX - minX, maxY - minY, 1);
-  const scale = targetSpan / span;
-
-  return {
-    path: relativePath.map((point) => ({
-      x: point.x * scale,
-      y: point.y * scale,
-    })),
-    scale,
-  };
-};
-
-const updatePreviewForesightVisual = (
-  foresightVisual: ReturnType<typeof createForesightVisual>,
-  pathPoints: readonly Vec2[],
-) => {
-  const tuning = getRuntimeTuningDocument().visuals.abilities.foresight;
-  foresightVisual.lineMaterial.color.set(tuning.lineColor);
-  foresightVisual.lineMaterial.opacity = tuning.lineOpacity;
-  foresightVisual.pointColorUniform.value.set(tuning.dotColor);
-  foresightVisual.pointOpacityUniform.value = 0;
-  foresightVisual.pointMaterial.size = tuning.pointSize;
-
-  const lineArray = foresightVisual.linePositionAttribute.array as Float32Array;
-  const pointCount = Math.min(
-    pathPoints.length,
-    foresightVisual.linePositionAttribute.count,
-  );
-
-  for (let index = 0; index < pointCount; index += 1) {
-    const point = pathPoints[index]!;
-    const offset = index * 3;
-    lineArray[offset] = point.x;
-    lineArray[offset + 1] = point.y;
-    lineArray[offset + 2] = 0;
-  }
-
-  foresightVisual.lineGeometry.setDrawRange(0, pointCount);
-  foresightVisual.pointGeometry.setDrawRange(0, 0);
-  foresightVisual.linePositionAttribute.needsUpdate = true;
-  foresightVisual.line.visible = tuning.lineOpacity > 0.01 && pointCount > 1;
-  foresightVisual.points.visible = false;
 };
 
 export function createEditorItemPreviewViewport(
@@ -1469,6 +1367,22 @@ export function createEditorItemPreviewViewport(
             registerDisposables(disposables, layer.geometry, layer.material);
             return layer;
           });
+          const ambientBoundaryDebris = createAmbientBoundaryDebrisVisual({
+            renderOrder: -11,
+            z: -5,
+          });
+          scene.add(
+            ambientBoundaryDebris.bandGroup,
+            ambientBoundaryDebris.fallingGroup,
+            ambientBoundaryDebris.points,
+          );
+          registerDisposables(
+            disposables,
+            ...ambientBoundaryDebris.bandGeometries,
+            ...ambientBoundaryDebris.bandMaterials,
+            ambientBoundaryDebris.geometry,
+            ambientBoundaryDebris.points.material as { dispose: () => void },
+          );
 
           const sphereGeometry = new SphereGeometry(1, 96, 96);
           const circleGeometry = new CircleGeometry(1, 72);
@@ -1659,6 +1573,21 @@ export function createEditorItemPreviewViewport(
             const previewRadiusScale = presentation === "stage" ? 0.12 : 0.085;
             const orbitRadius =
               (presentation === "stage" ? 28 : 16) * focusScale;
+            const boundaryInnerRadius =
+              orbitRadius * (presentation === "stage" ? 1.5 : 1.65);
+            const boundaryOuterRadius =
+              boundaryInnerRadius +
+              (presentation === "stage" ? 7.5 : 4.2) * focusScale;
+            const boundaryCameraPadding =
+              (presentation === "stage" ? 10 : 5) * focusScale;
+            requiredCameraHalfWidth = Math.max(
+              requiredCameraHalfWidth,
+              boundaryOuterRadius + boundaryCameraPadding,
+            );
+            requiredCameraHalfHeight = Math.max(
+              requiredCameraHalfHeight,
+              boundaryOuterRadius + boundaryCameraPadding,
+            );
             const neutronStars = Array.from(
               { length: previewCount },
               (_, index) => {
@@ -1693,6 +1622,7 @@ export function createEditorItemPreviewViewport(
                     x: Math.cos(angle) * distance,
                     y: Math.sin(angle) * distance * 0.68,
                   },
+                  visualRadius: radius,
                   visual: createPreviewNeutronStar({
                     hostScene: scene,
                     jetGeometry: planeGeometry,
@@ -1711,6 +1641,16 @@ export function createEditorItemPreviewViewport(
               ...neutronStars.map((entry) => entry.visual),
             );
             updates.push((nowSec) => {
+              updateAmbientBoundaryDebrisVisual({
+                innerRadius: boundaryInnerRadius,
+                nowSec,
+                neutronStarBodies: neutronStars.map((entry) => ({
+                  pos: entry.position,
+                  radius: entry.visualRadius,
+                })),
+                outerRadius: boundaryOuterRadius,
+                visual: ambientBoundaryDebris,
+              });
               for (const neutronStar of neutronStars) {
                 neutronStar.visual.update(nowSec, neutronStar.position);
               }
@@ -1998,7 +1938,7 @@ export function createEditorItemPreviewViewport(
               0.22,
             );
             const centerMaterial = createHudPanelMaterial(
-              tuning.visuals.abilities.foresightColor,
+              tuning.visuals.abilities.boostColor,
               0.18,
             );
             const rightMaterial = createHudPanelMaterial(
@@ -2045,7 +1985,7 @@ export function createEditorItemPreviewViewport(
                 : BLACK_HOLE_STAGE_RADIUS;
             const blackHoleScale =
               blackHoleRadiusTarget /
-              Math.max(tuning.visuals.blackHole.lensRadius, 1);
+              Math.max(tuning.visuals.blackHole.coreRadius, 1);
             const blackHoleGroup = new Group();
             blackHoleGroup.position.set(0, 0, 4);
             const lens = new Mesh(
@@ -2217,43 +2157,6 @@ export function createEditorItemPreviewViewport(
               const flashRadius =
                 layout.flashRadiusWorld * (0.74 + pulse * 0.36);
               flashMesh.scale.set(flashRadius, flashRadius, flashRadius);
-            });
-          }
-
-          if (options.itemId === "foresight") {
-            const planet = createPreviewPlanet({
-              hostScene: scene,
-              planetGeometry: sphereGeometry,
-              position: { x: 0, y: 0 },
-              radius: terraPlanetRadius,
-              ringGeometry,
-              seed: 1,
-              visuals: terraVisuals,
-            });
-            registerDisposables(disposables, planet);
-            const foresightVisual = createForesightVisual();
-            scene.add(foresightVisual.line, foresightVisual.points);
-            registerDisposables(
-              disposables,
-              foresightVisual.lineGeometry,
-              foresightVisual.line.material as { dispose: () => void },
-              foresightVisual.pointGeometry,
-              foresightVisual.points.material as { dispose: () => void },
-            );
-            const { path: basePath, scale: pathScale } =
-              createPreviewForesightPath(
-                presentation === "card"
-                  ? { targetSpan: FORESIGHT_CARD_SPAN }
-                  : undefined,
-              );
-            const visiblePath = clipForesightPathAtDistance(
-              basePath,
-              terraPlanetRadius +
-                tuning.visuals.abilities.foresight.leadGap * pathScale,
-            );
-            updatePreviewForesightVisual(foresightVisual, visiblePath);
-            updates.push((nowSec) => {
-              planet.update(nowSec);
             });
           }
 
@@ -2547,97 +2450,6 @@ export function createEditorItemPreviewViewport(
                   1,
                 );
               }
-            });
-          }
-
-          if (options.itemId === "cloak") {
-            const planet = createPreviewPlanet({
-              hostScene: scene,
-              planetGeometry: sphereGeometry,
-              position: { x: 0, y: 0 },
-              radius: terraPlanetRadius,
-              ringGeometry,
-              seed: 1,
-              visuals: terraVisuals,
-            });
-            registerDisposables(disposables, planet);
-            const wildcardColor = tuning.visuals.abilities.wildcardColor;
-            const cloakVeilGeometry = new CircleGeometry(1, 64);
-            const cloakVeilMaterial = new MeshBasicMaterial({
-              blending: AdditiveBlending,
-              color: tintColor(wildcardColor, -0.18, 0.04, 0.1),
-              depthWrite: false,
-              opacity: 0.18,
-              transparent: true,
-            });
-            const cloakVeilMesh = new Mesh(
-              cloakVeilGeometry,
-              cloakVeilMaterial,
-            );
-            cloakVeilMesh.position.z = 1.92;
-            scene.add(cloakVeilMesh);
-            const cloakRingGeometry = new RingGeometry(0.84, 1, 80);
-            const cloakRingMaterial = new MeshBasicMaterial({
-              blending: AdditiveBlending,
-              color: tintColor(wildcardColor, 0.02, 0.14, 0.06),
-              depthWrite: false,
-              opacity: 0.28,
-              transparent: true,
-            });
-            const cloakRingMesh = new Mesh(
-              cloakRingGeometry,
-              cloakRingMaterial,
-            );
-            cloakRingMesh.position.z = 2.04;
-            scene.add(cloakRingMesh);
-            const cloakSheenMaterial = new MeshBasicMaterial({
-              blending: AdditiveBlending,
-              color: tintColor(wildcardColor, 0.12, 0.22, -0.02),
-              depthWrite: false,
-              opacity: 0.18,
-              transparent: true,
-            });
-            const cloakSheenMesh = new Mesh(
-              cloakVeilGeometry,
-              cloakSheenMaterial,
-            );
-            cloakSheenMesh.position.z = 2.14;
-            scene.add(cloakSheenMesh);
-            registerDisposables(
-              disposables,
-              cloakVeilGeometry,
-              cloakVeilMaterial,
-              cloakRingGeometry,
-              cloakRingMaterial,
-              cloakSheenMaterial,
-            );
-            updates.push((nowSec) => {
-              planet.update(nowSec);
-              planet.setOpacity(CLOAK_PLANET_TARGET_OPACITY);
-              const shimmer = 0.5 + Math.sin(nowSec * 2.6) * 0.5;
-              const driftX = Math.sin(nowSec * 1.3) * terraPlanetRadius * 0.08;
-              const driftY = Math.cos(nowSec * 1.7) * terraPlanetRadius * 0.05;
-              cloakVeilMesh.scale.set(
-                terraPlanetRadius * lerp(1.18, 1.28, shimmer),
-                terraPlanetRadius * lerp(1.18, 1.28, shimmer),
-                1,
-              );
-              cloakVeilMaterial.opacity = 0.12 + shimmer * 0.1;
-              cloakRingMesh.scale.set(
-                terraPlanetRadius * lerp(1.2, 1.34, shimmer),
-                terraPlanetRadius * lerp(1.2, 1.34, shimmer),
-                1,
-              );
-              cloakRingMesh.rotation.z = nowSec * 0.42;
-              cloakRingMaterial.opacity = 0.2 + Math.sin(nowSec * 4.8) * 0.06;
-              cloakSheenMesh.position.set(driftX, driftY, 2.14);
-              cloakSheenMesh.scale.set(
-                terraPlanetRadius * 1.02,
-                terraPlanetRadius * lerp(1.18, 1.36, shimmer),
-                1,
-              );
-              cloakSheenMesh.rotation.z = nowSec * -0.54;
-              cloakSheenMaterial.opacity = 0.08 + shimmer * 0.1;
             });
           }
 

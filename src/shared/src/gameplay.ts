@@ -2,6 +2,7 @@ import { ARCHETYPES } from "./archetypes";
 import {
   ARENA_ASTEROID_FIELD_SPEC,
   CACHE_SPEC,
+  DEFAULT_ARENA_RADIUS,
   PLANET_HP,
   ROCKET_SPECS,
   SHIELD_EXT_MULTIPLIER,
@@ -12,19 +13,25 @@ import type {
   ArchetypeId,
   AsteroidTier,
   CacheContents,
+  EntityBase,
   PlanetPrivateAmmo,
   WildcardKind,
 } from "./entities";
 import type { ArenaAsteroidFieldTuning } from "./tuning";
-import type { Vec2 } from "./vec2";
+import {
+  clamp,
+  dot,
+  fromAngle,
+  len,
+  lerpVec2,
+  normalize,
+  rot,
+  scale,
+  type Vec2,
+} from "./vec2";
 
 const SHIELD_LOAD_REFERENCE_DURATION_SEC = 4;
 const TAU = Math.PI * 2;
-const ARENA_ASTEROID_SPAWN_RATE_PER_SEC = {
-  large: 0.12,
-  micro: 2.8,
-  small: 0.55,
-} as const;
 const ARENA_ASTEROID_SPEED = {
   large: 132,
   micro: 248,
@@ -40,6 +47,8 @@ const ARENA_ASTEROID_TTL_SEC = {
   micro: 4.5,
   small: 6.25,
 } as const;
+const ARENA_ASTEROID_EXIT_DISTANCE_MULTIPLIER = 2.6;
+const ARENA_ASTEROID_EXIT_MARGIN = 64;
 const ARENA_ASTEROID_MAX_ANGLE_DEVIATION_RAD = {
   large: 0.18,
   micro: 0.42,
@@ -60,6 +69,12 @@ const ARENA_ASTEROID_EXPLOSION_SPEED_VARIANCE = {
   micro: 74,
   small: 82,
 } as const;
+const ARENA_ASTEROID_IMPACT_RADIUS_MULTIPLIER = {
+  large: 2.15,
+  micro: 1.1,
+  small: 1.45,
+} as const satisfies Record<AsteroidTier, number>;
+const MIN_BOUNDARY_ASTEROID_DAMAGE = 1;
 
 export interface BoundaryAsteroidSpawnBudgetOptions {
   dtSec: number;
@@ -119,7 +134,6 @@ const SIMPLE_CACHE_KINDS: readonly CacheContents[] = [
   { kind: "seekerPack" },
   { kind: "repair" },
   { kind: "shieldExt" },
-  { kind: "foresightExt" },
 ];
 
 export const rollCacheContents = (rng: () => number): CacheContents => {
@@ -138,7 +152,12 @@ export const rollCacheContents = (rng: () => number): CacheContents => {
 export const getBoundaryAsteroidDamage = (
   tier: AsteroidTier,
   tuning: ArenaAsteroidFieldTuning = ARENA_ASTEROID_FIELD_SPEC,
-): number => tuning[tier].damage;
+): number => Math.max(MIN_BOUNDARY_ASTEROID_DAMAGE, tuning[tier].damage);
+
+export const getBoundaryAsteroidImpactRadius = (
+  tier: AsteroidTier,
+  radius: number = ARENA_ASTEROID_RADIUS[tier],
+): number => radius * ARENA_ASTEROID_IMPACT_RADIUS_MULTIPLIER[tier];
 
 export const getBoundaryAsteroidExplosionPieces = (
   tier: AsteroidTier,
@@ -158,9 +177,14 @@ export const sampleBoundaryAsteroidSpawnCount = ({
   tier,
   tuning = ARENA_ASTEROID_FIELD_SPEC,
 }: BoundaryAsteroidSpawnBudgetOptions): number => {
-  const expectedSpawnCount =
-    Math.max(0, ARENA_ASTEROID_SPAWN_RATE_PER_SEC[tier] * dtSec) *
-    tuning[tier].randomization;
+  if (tuning[tier].randomization <= 0) {
+    return 0;
+  }
+
+  const expectedSpawnCount = Math.max(
+    0,
+    tuning[tier].spawnRatePerSec * dtSec,
+  );
   if (expectedSpawnCount <= 0) {
     return 0;
   }
@@ -170,6 +194,43 @@ export const sampleBoundaryAsteroidSpawnCount = ({
   return wholeSpawns + (rng() < fractionalSpawnChance ? 1 : 0);
 };
 
+const getBoundaryAsteroidSpeed = (
+  arenaRadius: number,
+  tier: AsteroidTier,
+  rng: () => number,
+): number => {
+  const radiusScale =
+    Math.max(arenaRadius, 1) / Math.max(DEFAULT_ARENA_RADIUS, 1);
+
+  return ARENA_ASTEROID_SPEED[tier] * radiusScale * (0.82 + rng() * 0.36);
+};
+
+const getBoundaryAsteroidTtlSec = ({
+  arenaRadius,
+  speed,
+  tier,
+}: {
+  arenaRadius: number;
+  speed: number;
+  tier: AsteroidTier;
+}): number =>
+  Math.max(
+    ARENA_ASTEROID_TTL_SEC[tier],
+    ((arenaRadius + ARENA_ASTEROID_RADIUS[tier] + ARENA_ASTEROID_EXIT_MARGIN) *
+      ARENA_ASTEROID_EXIT_DISTANCE_MULTIPLIER) /
+      Math.max(speed, 1e-6),
+  );
+
+export const shouldDespawnBoundaryAsteroid = (
+  piece: Pick<EntityBase, "pos" | "radius" | "vel"> & {
+    asteroidTier?: AsteroidTier;
+  },
+  arenaRadius: number,
+): boolean =>
+  piece.asteroidTier !== undefined &&
+  len(piece.pos) > arenaRadius + piece.radius + ARENA_ASTEROID_EXIT_MARGIN &&
+  dot(piece.pos, piece.vel) > 0;
+
 export const createBoundaryAsteroidSpawn = ({
   arenaRadius,
   rng,
@@ -178,14 +239,32 @@ export const createBoundaryAsteroidSpawn = ({
 }: BoundaryAsteroidSpawnOptions): BoundaryAsteroidSpawn => {
   const angle = rng() * TAU;
   const spawnRadius = arenaRadius + ARENA_ASTEROID_RADIUS[tier] + rng() * 12;
-  const inwardAngle = angle + Math.PI;
+  const driftStrength = clamp(tuning[tier].randomization, 0, 1);
+  const outwardDir = fromAngle(angle);
+  const inwardDir = scale(outwardDir, -1);
+  const driftSample = rng();
+  const tangentDir =
+    driftSample < 0.5
+      ? {
+          x: outwardDir.y,
+          y: -outwardDir.x,
+        }
+      : {
+          x: -outwardDir.y,
+          y: outwardDir.x,
+        };
+  const baseTravelDir = normalize(
+    lerpVec2(tangentDir, inwardDir, driftStrength),
+  );
+  const deviationSample =
+    driftSample < 0.5 ? driftSample * 2 : (driftSample - 0.5) * 2;
   const deviation =
-    (rng() - 0.5) *
+    (deviationSample - 0.5) *
     2 *
     ARENA_ASTEROID_MAX_ANGLE_DEVIATION_RAD[tier] *
-    tuning[tier].randomization;
-  const travelAngle = inwardAngle + deviation;
-  const speed = ARENA_ASTEROID_SPEED[tier] * (0.82 + rng() * 0.36);
+    (1 - driftStrength * 0.8);
+  const travelDir = rot(baseTravelDir, deviation);
+  const speed = getBoundaryAsteroidSpeed(arenaRadius, tier, rng);
 
   return {
     asteroidTier: tier,
@@ -194,10 +273,14 @@ export const createBoundaryAsteroidSpawn = ({
       y: Math.sin(angle) * spawnRadius,
     },
     radius: ARENA_ASTEROID_RADIUS[tier],
-    ttlSec: ARENA_ASTEROID_TTL_SEC[tier],
+    ttlSec: getBoundaryAsteroidTtlSec({
+      arenaRadius,
+      speed,
+      tier,
+    }),
     vel: {
-      x: Math.cos(travelAngle) * speed,
-      y: Math.sin(travelAngle) * speed,
+      x: travelDir.x * speed,
+      y: travelDir.y * speed,
     },
   };
 };

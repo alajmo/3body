@@ -66,14 +66,14 @@ describe("EditorPreviewStage", () => {
       <EditorPreviewStage
         documentValue={CURRENT_GAME_TUNING}
         hudTuning={CURRENT_GAME_TUNING.visuals.hud}
-        itemId="foresight"
+        itemId="shield"
         showHud={false}
       />,
     );
 
     expect(screen.getByTestId("editor-item-viewport")).toHaveAttribute(
       "data-item-id",
-      "foresight",
+      "shield",
     );
     expect(screen.getByTestId("editor-item-viewport")).toHaveAttribute(
       "data-presentation",

@@ -4,10 +4,11 @@ import {
   getOrbitGameplayPlanet,
   getOrbitGameplaySun,
   getOrbitPatternTrack,
+  type BlackHoleSpec,
   getOrbitPlanetCircleRadius,
   type OrbitPatternTrack,
   resolveEditorFixedOrbitPatternId,
-  sampleOrbitPatternTrack,
+  sampleOrbitPatternTrackWithDynamicDistanceScale,
 } from "@3body/shared";
 import { DEFAULT_ORBIT_PRESET, type OrbitPreset } from "./orbitPresets";
 import { getRuntimeTuningDocument } from "./runtimeTuning";
@@ -20,12 +21,13 @@ export type RuntimeOrbitStarMotion =
       mode: "fixedPattern";
       patternId: string;
       speed: number;
+      baseDistanceScale: number;
       distanceScale: number;
       suns: OrbitPreset["suns"];
       track: OrbitPatternTrack;
     };
 
-export interface ResolvedRuntimeOrbitPreset {
+interface ResolvedRuntimeOrbitPreset {
   preset: OrbitPreset;
   starMotion: RuntimeOrbitStarMotion;
 }
@@ -98,12 +100,15 @@ const createScaledSunSeeds = (
 export const sampleRuntimeFixedPatternSunSeeds = (
   starMotion: Extract<RuntimeOrbitStarMotion, { mode: "fixedPattern" }>,
   elapsedSec: number,
+  blackHoleSpec?: BlackHoleSpec,
 ): OrbitPreset["suns"] => {
-  const sampledSuns = sampleOrbitPatternTrack(
+  const sampledSuns = sampleOrbitPatternTrackWithDynamicDistanceScale(
     starMotion.track,
     elapsedSec,
     starMotion.speed,
-    starMotion.distanceScale,
+    starMotion.baseDistanceScale,
+    starMotion.suns,
+    blackHoleSpec,
   );
 
   return starMotion.suns.map((sun, index) => ({
@@ -147,6 +152,7 @@ const createFixedPatternSunMotion = (
     mode: "fixedPattern",
     patternId,
     speed: orbitTuning.starMotion.speed,
+    baseDistanceScale: distanceScale,
     distanceScale,
     suns,
     track: getOrbitPatternTrack(patternId),

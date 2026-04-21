@@ -4,7 +4,6 @@ import { DEFAULT_ORBIT_PRESET } from "./orbitPresets";
 import {
   DEFAULT_BOOST_SETTINGS,
   DEFAULT_CACHE_BADGE_SCALE,
-  DEFAULT_FORESIGHT_SETTINGS,
   DEFAULT_PLANET_AURA_GAP,
   DEFAULT_PLANET_AURA_SCALE,
   DEFAULT_PLANET_BODY_SCALE,
@@ -19,7 +18,6 @@ describe("createInitialHudState", () => {
 
     expect(first.currentPresetId).toBe(DEFAULT_ORBIT_PRESET.id);
     expect(first.blackHoleSettings).toEqual(BLACK_HOLE_SPEC);
-    expect(first.foresightSettings).toEqual(DEFAULT_FORESIGHT_SETTINGS);
     expect(first.shieldSettings).toEqual(DEFAULT_SHIELD_SETTINGS);
     expect(first.boostSettings).toEqual(DEFAULT_BOOST_SETTINGS);
     expect(first.botsEnabled).toBe(true);
@@ -45,23 +43,18 @@ describe("createInitialHudState", () => {
     });
 
     expect(first.blackHoleSettings).not.toBe(second.blackHoleSettings);
-    expect(first.foresightSettings).not.toBe(second.foresightSettings);
     expect(first.shieldSettings).not.toBe(second.shieldSettings);
     expect(first.boostSettings).not.toBe(second.boostSettings);
     expect(first.connection).not.toBe(second.connection);
     expect(first.minimap).not.toBe(second.minimap);
 
     first.blackHoleSettings.spawnSec = 1;
-    first.foresightSettings.durationSec = 99;
     first.shieldSettings.cooldownSec = 99;
     first.boostSettings.magnitude = 99;
     first.connection.label = "Mutated";
     first.minimap.arenaRadius = 10;
 
     expect(second.blackHoleSettings.spawnSec).toBe(BLACK_HOLE_SPEC.spawnSec);
-    expect(second.foresightSettings.durationSec).toBe(
-      DEFAULT_FORESIGHT_SETTINGS.durationSec,
-    );
     expect(second.shieldSettings.cooldownSec).toBe(
       DEFAULT_SHIELD_SETTINGS.cooldownSec,
     );

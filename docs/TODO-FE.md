@@ -106,10 +106,10 @@ Still single-player and local-sim. Build the loop, then network it.
 - [x] Drone destroyed on rocket hit; cargo drops at death position for anyone to collect.
 - [x] Render Cache destruction on rocket / planet / sun / Black Hole contact and remove it cleanly from the scene until respawn.
 - [x] Implement each Cache effect on delivery: Heavy ammo +1, Seeker pack +2, Repair, Boost charge +1, Shield extender, Foresight extender.
-- [x] Implement **Wildcard ability** roll (~10%): adds a fourth ability slot bound to `R` until used. Variants: gravity-pulse, cloak, teleport-swap. `cloak` must follow authoritative public `planet.hideTrailUntilTick`: clear that planet's current trail on activation and stop appending trail samples until the flag expires.
+- [x] Implement **Gravity Pulse** wildcard roll (~10%): grants a one-shot extra ability bound to `G` until used. It pushes nearby planets, rockets, and caches away from the player on activation.
 - [x] Drone cooldown: 8s between launches.
 
-**Done when:** you can fly a drone out, grab a Cache, deliver it, and the effect applies. Wildcards trigger on R.
+**Done when:** you can fly a drone out, grab a Cache, deliver it, and the effect applies. Gravity Pulse triggers on G.
 
 ---
 
@@ -129,7 +129,7 @@ DOM-layered over the canvas. Use React over the Three.js canvas. Can bind to loc
 - [x] **Combat tray** (bottom-left): own HP, selected weapon, clip ammo, Heavy/Seeker reserves, ability cooldowns/charges, drone readiness/cargo, and wildcard status when occupied.
 - [x] **Mini-HP bars** floating above other planets in world space (project from world to screen).
 - [x] Selected weapon is emphasized in both the combat tray and the shortcuts dock.
-- [x] **Shortcuts dock** (bottom-right): always-visible compact legend for `1/2/3` rocket swap, `4/F` drone, `Q/W/E` abilities, `R` wildcard when present, `Shift` read mode, and contextual drone-mode actions (`LMB` burst, `RMB/F` recall, `Esc` auto-return camera snap).
+- [x] **Shortcuts dock** (bottom-right): always-visible compact legend for `1/2/3` rocket swap, `4/F` drone, `Q/W/E` abilities, `G` Gravity Pulse when present, `Shift` read mode, and contextual drone-mode actions (`LMB` burst, `RMB/F` recall, `Esc` auto-return camera snap).
 - [x] **Default combat camera:** smooth-follow the locally controlled body and keep it near screen center; Read Mode only widens zoom; free camera is spectator-only.
 - [x] **Read mode** (`Shift` held): smooth camera zoom-out, HUD opacity 0.2, no input changes.
 - [x] **Connection / latency indicator** (top-right): connected/reconnecting state, RTT from app-level `ping`/`pong`, and a degraded marker when snapshot buffering is in extrapolation mode.
@@ -154,7 +154,6 @@ Client-side pieces of networking that can be built against mock data before BE i
 - [ ] Map protocol `ErrorCode` values deterministically in the client: `invalid_room|bad_resume_token|room_full|server_full` route to `room-error`; `name_invalid|not_host|phase_invalid|invalid_action|rate_limited|invalid_message` stay in-place and surface inline feedback.
 - [ ] Handle time-critical one-shot events outside the snapshot buffer: `blackHoleSpawn` switches overtime HUD/VFX immediately, `wildcardRoll` drives grant UI/SFX when a wildcard slot is awarded, and `wildcardUse` drives activation VFX/SFX when `R` resolves successfully.
 - [ ] Receive snapshots at 30 Hz, buffer, and **interpolate** rendered transforms between the two latest server snapshots for smooth render.
-- [ ] Respect public `planet.hideTrailUntilTick` during interpolation/rendering: cloak never removes the planet from snapshots, it only clears/suppresses trail accumulation until the flagged tick passes.
 - [ ] **Client-side prediction** for *firing actions only* is cosmetic: show muzzle flash + a short-lived ghost rocket immediately, then reconcile/discard when the authoritative server rocket arrives.
 - [ ] Immediate local ability feedback is presentation-only: Shield may raise the owner-local arc instantly, Foresight may render instantly from the latest local state, and Boost / Wildcard may play cast VFX/SFX and HUD state immediately. Do **not** locally move planets, apply teleport swaps, or mutate authoritative world state before the matching snapshot / event arrives.
 - [ ] Do **not** predict live planet movement or trust local gameplay state. In networked mode, planets, rockets, drones, caches, HP, cooldowns, and kills render from server snapshots/events only. (Per design: chaos diverges fast.)

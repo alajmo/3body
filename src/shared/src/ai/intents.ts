@@ -166,13 +166,12 @@ export const scoreCombatAiIntents = ({
         scoreRange(primaryTargetFact.distance, 320, 1200) * 24 +
         currentIntentBias("lockSeeker");
 
-  const wildcardHeld = perception.gravityPulseHeld || perception.cloakHeld;
+  const wildcardHeld = perception.gravityPulseHeld;
   const useWildcardScore =
     !wildcardHeld || topThreat === undefined
       ? -Infinity
       : topThreat.urgency * 52 +
         (perception.gravityPulseHeld ? 8 : 0) +
-        (perception.cloakHeld ? 10 : 0) +
         currentIntentBias("useWildcard");
 
   const scores: CombatAiIntentScore[] = [

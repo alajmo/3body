@@ -22,13 +22,11 @@ import type {
   HudStatusMode,
 } from "../viewportHud";
 import { createHudMinimapState, getPlayerMotionHud } from "../viewportHud";
-import { getForesightMeterProgress } from "./foresightMeter";
 import type { ViewportPerformanceSnapshot } from "./performanceProfiler";
 import type { ViewportEffectsQuality } from "./renderQuality";
 
 interface LocalSandboxHudColors {
   boost: string;
-  foresight: string;
   shield: string;
   weapon: Record<RocketKind, { accent: string }>;
   wildcard: string;
@@ -63,10 +61,6 @@ interface BuildLocalSandboxHudStateParams {
     | "tick"
   >;
   debug: CombatSandboxDebugSnapshot;
-  foresightActiveRemainingSec: number;
-  foresightCooldownRemainingSec: number;
-  foresightMode: HudStatusMode;
-  foresightSettings: AbilitySpec;
   fullViewEnabled: boolean;
   killFeed: GameViewportKillFeedEntry[];
   planetAuraGap: number;
@@ -311,20 +305,6 @@ const buildPrimaryShortcuts = (
           label: "Seeker",
         },
         {
-          active: params.foresightMode === "active",
-          detail:
-            params.foresightMode === "ready"
-              ? "ready"
-              : formatSeconds(
-                  params.foresightMode === "active"
-                    ? params.foresightActiveRemainingSec
-                    : params.foresightCooldownRemainingSec,
-                ),
-          id: "foresight",
-          keyLabel: "E",
-          label: "Foresight",
-        },
-        {
           active: params.shieldMode === "active",
           detail: `${Math.round(getShieldLoadRatio(params) * 100)}%`,
           id: "shield",
@@ -351,16 +331,6 @@ const buildPrimaryShortcuts = (
               },
             ]
           : []),
-        ...(params.debug.cloakHeld
-          ? [
-              {
-                active: true,
-                id: "cloak",
-                keyLabel: "C",
-                label: "Cloak",
-              },
-            ]
-          : []),
       ]
     : [];
 
@@ -373,29 +343,6 @@ const buildAbilities = (
 ): GameViewportHudState["abilities"] =>
   params.controlsEnabled
     ? [
-        {
-          accent: params.colors.foresight,
-          id: "foresight",
-          keyLabel: "E",
-          label: "Foresight",
-          mode: params.foresightMode,
-          progress: getForesightMeterProgress({
-            activeUntilTick:
-              params.currentState.player.foresightActiveUntilTick,
-            activeDurationTicks:
-              params.currentState.player.foresightDurationTicks,
-            cooldownUntilTick:
-              params.currentState.player.foresightCooldownUntilTick,
-            currentTick: params.currentState.tick,
-            settings: params.foresightSettings,
-          }),
-          statusText:
-            params.foresightMode === "active"
-              ? `active ${formatSeconds(params.foresightActiveRemainingSec)}`
-              : params.foresightMode === "cooldown"
-                ? `${formatSeconds(params.foresightCooldownRemainingSec)} cd`
-                : "ready",
-        },
         {
           accent: params.colors.shield,
           id: "shield",
@@ -441,20 +388,6 @@ const buildAbilities = (
                 mode: "ready" as const,
                 progress: 1,
                 statusText: "Gravity Pulse",
-                valueText: "armed",
-              },
-            ]
-          : []),
-        ...(params.debug.cloakHeld
-          ? [
-              {
-                accent: params.colors.wildcard,
-                id: "cloak" as const,
-                keyLabel: "C",
-                label: "Cloak",
-                mode: "ready" as const,
-                progress: 1,
-                statusText: "Cloak",
                 valueText: "armed",
               },
             ]
@@ -524,7 +457,6 @@ export const buildLocalSandboxHudState = (
     currentPresetId: params.currentPresetId,
     damageFlash: params.playerDamageFlash,
     debugItems: buildProfilerDebugItems(params),
-    foresightSettings: { ...params.foresightSettings },
     hudFlicker: params.playerHudFlicker,
     hudOpacity: 1,
     killFeed: params.killFeed,

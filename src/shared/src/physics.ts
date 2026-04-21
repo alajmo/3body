@@ -75,7 +75,9 @@ const wrapGravitySources = (
   blackHole?: BlackHole,
   extraSources: readonly GravitySource[] = [],
 ): GravitySource[] =>
-  blackHole ? [...suns, blackHole, ...extraSources] : [...suns, ...extraSources];
+  blackHole
+    ? [...suns, blackHole, ...extraSources]
+    : [...suns, ...extraSources];
 
 export const normalizeAngleDelta = (angleRad: number): number => {
   let normalized = angleRad;
@@ -130,6 +132,20 @@ export const stepSuns = (
     pos: nextSuns[index]!.pos,
     vel: add(sun.vel, scale(add(accel0[index]!, accel1[index]!), 0.5 * dt)),
   }));
+};
+
+export const stepNeutronStars = (
+  neutronStars: readonly NeutronStar[],
+  dt: number,
+  blackHole?: BlackHole,
+): NeutronStar[] => {
+  if (blackHole === undefined) {
+    return neutronStars.slice();
+  }
+
+  return neutronStars.map((neutronStar) =>
+    stepBody(neutronStar, [], dt, blackHole),
+  );
 };
 
 export const stepBody = <T extends EntityBase>(

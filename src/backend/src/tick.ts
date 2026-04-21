@@ -2,6 +2,7 @@ import {
   ARCHETYPES,
   ARENA_BOUNDARY_SPEC,
   type ArchetypeId,
+  absorbSunsIntoNeutronStars,
   add,
   advanceWorldOrbitStarMotion,
   BLACK_HOLE_SPEC,
@@ -21,8 +22,6 @@ import {
   type DeltaSnapshotMsg,
   dist,
   dot,
-  FORESIGHT_EXT_MULTIPLIER,
-  FORESIGHT_SPEC,
   fromAngle,
   GRAVITY_PULSE_IMPULSE,
   GRAVITY_PULSE_RADIUS,
@@ -31,8 +30,11 @@ import {
   getBoundaryAsteroidExplosionBaseSpeed,
   getBoundaryAsteroidExplosionPieces,
   getBoundaryAsteroidExplosionSpeedVariance,
+  getBoundaryAsteroidImpactRadius,
   getBaseShieldLoad,
+  getBlackHoleKillRadiusAtTick,
   getBlackHoleMassAtTick,
+  hasCrossedBlackHoleHorizon,
   getOuterRingMax,
   getOuterRingMin,
   len,
@@ -49,11 +51,13 @@ import {
   SHIELD_EXT_MULTIPLIER,
   SHIELD_SPEC,
   sampleBoundaryAsteroidSpawnCount,
+  shouldDespawnBoundaryAsteroid,
   type SnapshotEvent,
   type Sun,
   scale,
   stepBody,
   stepBodyWithGravityScale,
+  stepNeutronStars,
   stepSeeker,
   stepSunsWithOrbitMotion,
   sub,
@@ -98,61 +102,11 @@ const getAbilityTicks = (durationSec: number, tickHz: number): number =>
 const getBoostChargeCapacity = (archetypeId: ArchetypeId): number =>
   Math.max(1, BOOST_SPEC.charges + ARCHETYPES[archetypeId].boostChargeBonus);
 
-const getForesightDurationTicks = (
-  archetypeId: ArchetypeId,
-  tickHz: number,
-  extended: boolean,
-): number =>
-  Math.max(
-    1,
-    Math.round(
-      FORESIGHT_SPEC.durationSec *
-        tickHz *
-        ARCHETYPES[archetypeId].foresightDurationMultiplier *
-        (extended ? FORESIGHT_EXT_MULTIPLIER : 1),
-    ),
-  );
-
-const getForesightRechargeTicks = (
-  durationTicks: number,
-  tickHz: number,
-): number =>
-  Math.max(
-    0,
-    getAbilityTicks(FORESIGHT_SPEC.cooldownSec, tickHz) - durationTicks,
-  );
-
-const getForesightChargeTicks = ({
-  currentTick,
-  cooldownUntilTick,
-  durationTicks,
-  tickHz,
-}: {
-  currentTick: number;
-  cooldownUntilTick: number;
-  durationTicks: number;
-  tickHz: number;
-}): number => {
-  const rechargeTicks = getForesightRechargeTicks(durationTicks, tickHz);
-  if (currentTick >= cooldownUntilTick || rechargeTicks <= 0) {
-    return durationTicks;
-  }
-
-  return clamp(
-    durationTicks * (1 - (cooldownUntilTick - currentTick) / rechargeTicks),
-    0,
-    durationTicks,
-  );
-};
-
 const getBoostRechargeTicks = (tickHz: number): number =>
   getAbilityTicks(BOOST_SPEC.cooldownSec, tickHz);
 
 const getCacheRespawnTicks = (tickHz: number): number =>
   getAbilityTicks(CACHE_SPEC.respawnSec, tickHz);
-
-const getCloakDurationTicks = (tickHz: number): number =>
-  getAbilityTicks(5, tickHz);
 
 const weaponReloadTicks = (
   rocketKind: RocketKind,
@@ -180,8 +134,15 @@ const getBlackHoleBonusMass = (
   tickHz: number,
 ): number => Math.max(0, blackHole.mass - getBlackHoleMassAtTick(tick, tickHz));
 
-const getBlackHoleBonusKillRadius = (blackHole: BlackHole): number =>
-  Math.max(0, blackHole.killRadius - BLACK_HOLE_SPEC.killRadius);
+const getBlackHoleBonusKillRadius = (
+  blackHole: BlackHole,
+  tick: number,
+  tickHz: number,
+): number =>
+  Math.max(
+    0,
+    blackHole.killRadius - getBlackHoleKillRadiusAtTick(tick, tickHz),
+  );
 
 const lagCompMaxRewindTicks = (tickHz: number): number =>
   Math.max(0, Math.floor((LAG_COMP_MAX_REWIND_MS * tickHz) / 1000));
@@ -206,9 +167,7 @@ const normalizeDir = (dir: Vec2, fallback: Vec2 = DEFAULT_INPUT_DIR): Vec2 => {
 const isInsideBlackHole = (
   body: { pos: Vec2; radius: number },
   blackHole: BlackHole | undefined,
-): boolean =>
-  blackHole !== undefined &&
-  dist(body.pos, blackHole.pos) <= body.radius + blackHole.killRadius;
+): boolean => hasCrossedBlackHoleHorizon(body, blackHole);
 
 const hasActiveShield = (planet: PlanetPublic, _tick: number): boolean =>
   planet.shieldActive && planet.shieldLoad > 0;
@@ -603,8 +562,7 @@ const applyImpulseAwayFromPoint = <T extends { pos: Vec2; vel: Vec2 }>(
 const activateWildcard = (
   room: Room,
   playerId: PlayerId,
-  wildcard: WildcardKind,
-  tickHz: number,
+  _wildcard: WildcardKind,
 ): boolean => {
   if (!room.world) {
     return false;
@@ -617,62 +575,43 @@ const activateWildcard = (
 
   const playerPlanet = room.world.planets[planetIndex]!;
 
-  switch (wildcard) {
-    case "gravityPulse":
-      applyImpulseAwayFromPoint(
-        room.world.planets,
-        playerPlanet.pos,
-        GRAVITY_PULSE_RADIUS,
-        GRAVITY_PULSE_IMPULSE,
-      );
-      applyImpulseAwayFromPoint(
-        room.world.rockets,
-        playerPlanet.pos,
-        GRAVITY_PULSE_RADIUS,
-        GRAVITY_PULSE_IMPULSE * 1.15,
-      );
-      applyImpulseAwayFromPoint(
-        room.world.caches,
-        playerPlanet.pos,
-        GRAVITY_PULSE_RADIUS,
-        GRAVITY_PULSE_IMPULSE * 0.72,
-      );
-      return true;
-
-    case "cloak":
-      room.world.planets[planetIndex] = {
-        ...playerPlanet,
-        hideTrailUntilTick: room.tick + getCloakDurationTicks(tickHz),
-      };
-      return true;
-  }
+  applyImpulseAwayFromPoint(
+    room.world.planets,
+    playerPlanet.pos,
+    GRAVITY_PULSE_RADIUS,
+    GRAVITY_PULSE_IMPULSE,
+  );
+  applyImpulseAwayFromPoint(
+    room.world.rockets,
+    playerPlanet.pos,
+    GRAVITY_PULSE_RADIUS,
+    GRAVITY_PULSE_IMPULSE * 1.15,
+  );
+  applyImpulseAwayFromPoint(
+    room.world.caches,
+    playerPlanet.pos,
+    GRAVITY_PULSE_RADIUS,
+    GRAVITY_PULSE_IMPULSE * 0.72,
+  );
+  return true;
 };
 
 const consumeHeldWildcard = (
   privateState: PlanetPrivateState,
-  wildcard: WildcardKind,
+  _wildcard: WildcardKind,
 ): boolean => {
-  if (wildcard === "gravityPulse") {
-    if (!privateState.gravityPulseHeld) {
-      return false;
-    }
-
-    privateState.gravityPulseHeld = false;
-    return true;
-  }
-
-  if (!privateState.cloakHeld) {
+  if (!privateState.gravityPulseHeld) {
     return false;
   }
 
-  privateState.cloakHeld = false;
+  privateState.gravityPulseHeld = false;
   return true;
 };
 
 const applyAbilityMessage = (
   room: Room,
   playerId: PlayerId,
-  slot: "q" | "w" | "e" | "g" | "c",
+  slot: "q" | "w" | "g",
   aimDir: Vec2 | undefined,
   tickHz: number,
 ): void => {
@@ -699,79 +638,6 @@ const applyAbilityMessage = (
 
   switch (slot) {
     case "q": {
-      const baseDurationTicks = getForesightDurationTicks(
-        planet.archetype,
-        tickHz,
-        false,
-      );
-      const cycleComplete =
-        room.tick >= privateState.cooldowns.foresightActiveUntilTick &&
-        room.tick >= privateState.cooldowns.foresightCooldownUntilTick;
-      const storedDurationTicks = cycleComplete
-        ? baseDurationTicks
-        : Math.max(
-            1,
-            privateState.cooldowns.foresightDurationTicks || baseDurationTicks,
-          );
-
-      if (room.tick < privateState.cooldowns.foresightActiveUntilTick) {
-        const remainingTicks = Math.max(
-          0,
-          privateState.cooldowns.foresightActiveUntilTick - room.tick,
-        );
-        const rechargeTicks = getForesightRechargeTicks(
-          storedDurationTicks,
-          tickHz,
-        );
-        const missingFraction =
-          storedDurationTicks > 0
-            ? Math.max(0, 1 - remainingTicks / storedDurationTicks)
-            : 1;
-        privateState.cooldowns.foresightActiveUntilTick = room.tick;
-        privateState.cooldowns.foresightCooldownUntilTick =
-          room.tick + Math.round(missingFraction * rechargeTicks);
-        return;
-      }
-
-      const activationDurationTicks = Math.max(
-        storedDurationTicks,
-        getForesightDurationTicks(
-          planet.archetype,
-          tickHz,
-          privateState.nextForesightExt,
-        ),
-      );
-      let availableTicks =
-        room.tick < privateState.cooldowns.foresightCooldownUntilTick
-          ? getForesightChargeTicks({
-              currentTick: room.tick,
-              cooldownUntilTick:
-                privateState.cooldowns.foresightCooldownUntilTick,
-              durationTicks: storedDurationTicks,
-              tickHz,
-            })
-          : storedDurationTicks;
-      if (activationDurationTicks > storedDurationTicks) {
-        availableTicks = Math.min(
-          activationDurationTicks,
-          availableTicks + (activationDurationTicks - storedDurationTicks),
-        );
-      }
-      if (availableTicks <= 0) {
-        return;
-      }
-
-      const activeTicks = Math.max(1, Math.round(availableTicks));
-      privateState.cooldowns.foresightDurationTicks = activationDurationTicks;
-      privateState.cooldowns.foresightActiveUntilTick = room.tick + activeTicks;
-      privateState.cooldowns.foresightCooldownUntilTick =
-        privateState.cooldowns.foresightActiveUntilTick +
-        getForesightRechargeTicks(activationDurationTicks, tickHz);
-      privateState.nextForesightExt = false;
-      return;
-    }
-
-    case "w": {
       if (hasActiveShield(planet, room.tick)) {
         room.world.planets[planetIndex] = {
           ...planet,
@@ -803,7 +669,7 @@ const applyAbilityMessage = (
       return;
     }
 
-    case "e": {
+    case "w": {
       const maxBoostCharges = getBoostChargeCapacity(planet.archetype);
       if (privateState.boostCharges <= 0) {
         return;
@@ -842,7 +708,7 @@ const applyAbilityMessage = (
         return;
       }
 
-      if (activateWildcard(room, playerId, "gravityPulse", tickHz)) {
+      if (activateWildcard(room, playerId, "gravityPulse")) {
         room.queueEvent({
           kind: "wildcardUse",
           tick: room.tick,
@@ -851,23 +717,6 @@ const applyAbilityMessage = (
         });
       } else {
         privateState.gravityPulseHeld = true;
-      }
-      return;
-
-    case "c":
-      if (!consumeHeldWildcard(privateState, "cloak")) {
-        return;
-      }
-
-      if (activateWildcard(room, playerId, "cloak", tickHz)) {
-        room.queueEvent({
-          kind: "wildcardUse",
-          tick: room.tick,
-          playerId,
-          wildcard: "cloak",
-        });
-      } else {
-        privateState.cloakHeld = true;
       }
       return;
   }
@@ -880,7 +729,6 @@ const applyCachePickup = (
   privateState: PlanetPrivateState,
   planet: PlanetPublic,
   contents: CacheContents,
-  tickHz: number,
   tick: number,
 ): PlanetPublic => {
   let nextPlanet = planet;
@@ -901,22 +749,8 @@ const applyCachePickup = (
     case "shieldExt":
       privateState.nextShieldExt = true;
       break;
-    case "foresightExt":
-      privateState.nextForesightExt = true;
-      privateState.cooldowns.foresightActiveUntilTick = 0;
-      privateState.cooldowns.foresightCooldownUntilTick = 0;
-      privateState.cooldowns.foresightDurationTicks = getForesightDurationTicks(
-        planet.archetype,
-        tickHz,
-        false,
-      );
-      break;
     case "wildcard":
-      if (contents.wildcard.kind === "gravityPulse") {
-        privateState.gravityPulseHeld = true;
-      } else {
-        privateState.cloakHeld = true;
-      }
+      privateState.gravityPulseHeld = true;
       break;
   }
 
@@ -941,6 +775,7 @@ const syncBlackHole = (room: Room, nextTick: number, tickHz: number): void => {
   }
 
   const mass = getBlackHoleMassAtTick(nextTick, tickHz);
+  const killRadius = getBlackHoleKillRadiusAtTick(nextTick, tickHz);
   const previousBlackHole = room.world.blackHole;
 
   if (!previousBlackHole) {
@@ -949,8 +784,8 @@ const syncBlackHole = (room: Room, nextTick: number, tickHz: number): void => {
       kind: "blackHole",
       pos: { x: 0, y: 0 },
       vel: { x: 0, y: 0 },
-      radius: BLACK_HOLE_SPEC.killRadius,
-      killRadius: BLACK_HOLE_SPEC.killRadius,
+      radius: killRadius,
+      killRadius,
       mass,
     };
     room.world.blackHole = blackHole;
@@ -963,13 +798,17 @@ const syncBlackHole = (room: Room, nextTick: number, tickHz: number): void => {
   }
 
   const bonusMass = getBlackHoleBonusMass(previousBlackHole, room.tick, tickHz);
-  const bonusKillRadius = getBlackHoleBonusKillRadius(previousBlackHole);
+  const bonusKillRadius = getBlackHoleBonusKillRadius(
+    previousBlackHole,
+    room.tick,
+    tickHz,
+  );
 
   room.world.blackHole = {
     ...previousBlackHole,
     mass: mass + bonusMass,
-    radius: BLACK_HOLE_SPEC.killRadius + bonusKillRadius,
-    killRadius: BLACK_HOLE_SPEC.killRadius + bonusKillRadius,
+    radius: killRadius + bonusKillRadius,
+    killRadius: killRadius + bonusKillRadius,
   };
 };
 
@@ -1360,10 +1199,12 @@ const applyBoundaryAsteroidImpacts = ({
     };
   }
 
+  const arenaRadius = room.world.arenaRadius;
   const steppedDebris = [
     ...room.world.debris
       .filter((piece) => piece.ttlUntilTick > nextTick)
-      .map((piece) => stepBody(piece, suns, dtSec, blackHole)),
+      .map((piece) => stepBody(piece, suns, dtSec, blackHole))
+      .filter((piece) => !shouldDespawnBoundaryAsteroid(piece, arenaRadius)),
     ...spawnBoundaryAsteroidDebris(room, nextTick, dtSec),
   ];
   const nextPlanets = planets.slice();
@@ -1383,7 +1224,11 @@ const applyBoundaryAsteroidImpacts = ({
       planetIndex += 1
     ) {
       const planet = nextPlanets[planetIndex]!;
-      if (dist(piece.pos, planet.pos) > piece.radius + planet.radius) {
+      if (
+        dist(piece.pos, planet.pos) >
+        getBoundaryAsteroidImpactRadius(piece.asteroidTier, piece.radius) +
+          planet.radius
+      ) {
         continue;
       }
 
@@ -1777,7 +1622,6 @@ const applyCacheCollisions = (
           privateState,
           planet,
           cache.contents,
-          config.tickHz,
           nextTick,
         );
         queueCacheRespawn(room, nextTick + getCacheRespawnTicks(config.tickHz));
@@ -1832,18 +1676,6 @@ const applyCooldownsAndRegen = (
     }
     if (privateState.cooldowns.seekerReloadUntilTick <= nextTick) {
       privateState.cooldowns.seekerReloadUntilTick = 0;
-    }
-    if (
-      privateState.cooldowns.foresightActiveUntilTick <= nextTick &&
-      privateState.cooldowns.foresightCooldownUntilTick <= nextTick
-    ) {
-      privateState.cooldowns.foresightActiveUntilTick = 0;
-      privateState.cooldowns.foresightCooldownUntilTick = 0;
-      privateState.cooldowns.foresightDurationTicks = getForesightDurationTicks(
-        planet.archetype,
-        config.tickHz,
-        false,
-      );
     }
     if (planet.shieldActive) {
       const shieldLoad = Math.max(
@@ -1938,19 +1770,51 @@ const updateWorld = (room: Room, config: AppConfig): void => {
     blackHole = consumeBlackHoleBodies(blackHole, swallowedSuns);
     room.world.blackHole = blackHole;
   }
+  let neutronStars = stepNeutronStars(
+    room.world.neutronStars,
+    dtSec,
+    blackHole,
+  );
+  const swallowedNeutronStars =
+    blackHole === undefined
+      ? []
+      : neutronStars.filter((neutronStar) =>
+          isInsideBlackHole(neutronStar, blackHole),
+        );
+  if (blackHole !== undefined && swallowedNeutronStars.length > 0) {
+    const swallowedNeutronStarIds = new Set(
+      swallowedNeutronStars.map((neutronStar) => neutronStar.id),
+    );
+    blackHole = consumeBlackHoleBodies(blackHole, swallowedNeutronStars);
+    room.world.blackHole = blackHole;
+    neutronStars = neutronStars.filter(
+      (neutronStar) => !swallowedNeutronStarIds.has(neutronStar.id),
+    );
+  }
+  const sunAbsorptionState = absorbSunsIntoNeutronStars(nextSuns, neutronStars);
+  neutronStars = sunAbsorptionState.neutronStars;
+  const survivingSuns = sunAbsorptionState.suns;
+  room.world.neutronStars = neutronStars;
   room.world.orbitStarMotion = advanceWorldOrbitStarMotion(
     room.world.orbitStarMotion,
     dtSec,
+    survivingSuns,
   );
 
-  let nextPlanets = stepPlanets(room, nextSuns, blackHole, nextTick, config);
+  let nextPlanets = stepPlanets(
+    room,
+    survivingSuns,
+    blackHole,
+    nextTick,
+    config,
+  );
 
   const debris: Debris[] = [];
 
   const planetCollisionState = applyPlanetCollisions(
     room,
     nextPlanets,
-    nextSuns,
+    survivingSuns,
     blackHole,
     nextTick,
     debris,
@@ -1977,18 +1841,18 @@ const updateWorld = (room: Room, config: AppConfig): void => {
   const nextRockets = stepRockets(
     room,
     nextPlanets,
-    nextSuns,
+    survivingSuns,
     blackHole,
     config,
   );
-  const nextCaches = stepCaches(room, nextSuns, blackHole, config);
+  const nextCaches = stepCaches(room, survivingSuns, blackHole, config);
 
   const rocketCollisionState = applyRocketCollisions(
     room,
     nextPlanets,
     nextRockets,
     nextCaches,
-    nextSuns,
+    survivingSuns,
     blackHole,
     nextTick,
     config,
@@ -1999,7 +1863,7 @@ const updateWorld = (room: Room, config: AppConfig): void => {
     room,
     rocketCollisionState.planets,
     rocketCollisionState.caches,
-    nextSuns,
+    survivingSuns,
     blackHole,
     nextTick,
     config,
@@ -2013,7 +1877,7 @@ const updateWorld = (room: Room, config: AppConfig): void => {
     nextTick,
     planets: rocketCollisionState.planets,
     room,
-    suns: nextSuns,
+    suns: survivingSuns,
   });
 
   applyCooldownsAndRegen(room, nextTick, config);
@@ -2021,7 +1885,8 @@ const updateWorld = (room: Room, config: AppConfig): void => {
   room.world = {
     ...room.world,
     blackHole,
-    suns: nextSuns,
+    neutronStars,
+    suns: survivingSuns,
     planets: boundaryAsteroidState.planets,
     rockets: rocketCollisionState.rockets,
     caches: survivingCaches,

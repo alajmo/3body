@@ -1,4 +1,10 @@
-import { FIXED_STEP_SEC, G } from "./constants";
+import {
+  BLACK_HOLE_SPEC,
+  FIXED_STEP_SEC,
+  G,
+  type BlackHoleSpec,
+  getBlackHoleCollapseAlpha,
+} from "./constants";
 import type { BlackHole, Sun, WorldOrbitStarMotion } from "./entities";
 import {
   createOrbitPatternCanonicalSuns,
@@ -9,7 +15,7 @@ import {
 } from "./orbitPatternCatalog";
 import { BAKED_ORBIT_PATTERN_TRACKS } from "./orbitPatternTrackData.generated";
 import { stepSuns } from "./physics";
-import { dot, len, lerpVec2, type Vec2 } from "./vec2";
+import { clamp, dot, len, lerp, lerpVec2, type Vec2 } from "./vec2";
 
 export interface OrbitPatternTrackSunSample {
   pos: Vec2;
@@ -671,6 +677,38 @@ export const clampOrbitPatternDistanceScale = (
 ): number =>
   Math.max(distanceScale, getOrbitPatternMinimumDistanceScale(patternId, suns));
 
+const easeOrbitCollapseAlpha = (alpha: number): number => {
+  const clampedAlpha = clamp(alpha, 0, 1);
+
+  return clampedAlpha * clampedAlpha * (3 - 2 * clampedAlpha);
+};
+
+export const getOrbitPatternDistanceScaleAtElapsedSec = (
+  patternId: string,
+  baseDistanceScale: number,
+  suns: readonly Pick<Sun, "radius">[],
+  elapsedSec: number,
+  blackHoleSpec?: BlackHoleSpec,
+): number => {
+  const safeBaseDistanceScale = clampOrbitPatternDistanceScale(
+    patternId,
+    baseDistanceScale,
+    suns,
+  );
+
+  if (blackHoleSpec === undefined) {
+    return safeBaseDistanceScale;
+  }
+
+  return lerp(
+    safeBaseDistanceScale,
+    0,
+    easeOrbitCollapseAlpha(
+      getBlackHoleCollapseAlpha(elapsedSec, blackHoleSpec),
+    ),
+  );
+};
+
 const wrapPeriodValue = (value: number, period: number): number => {
   if (!(period > 0)) {
     return 0;
@@ -727,6 +765,82 @@ export const sampleOrbitPatternTrack = (
   ];
 };
 
+export const sampleOrbitPatternTrackWithDynamicDistanceScale = (
+  track: OrbitPatternTrack,
+  elapsedSec: number,
+  speed: number,
+  baseDistanceScale: number,
+  suns: readonly Pick<Sun, "radius">[],
+  blackHoleSpec?: BlackHoleSpec,
+  dt = FIXED_STEP_SEC,
+): OrbitPatternTrackFrame["suns"] => {
+  const currentDistanceScale = getOrbitPatternDistanceScaleAtElapsedSec(
+    track.patternId,
+    baseDistanceScale,
+    suns,
+    elapsedSec,
+    blackHoleSpec,
+  );
+  const currentSamples = sampleOrbitPatternTrack(
+    track,
+    elapsedSec,
+    speed,
+    currentDistanceScale,
+  );
+
+  if (!(dt > 0)) {
+    return currentSamples;
+  }
+
+  const nextElapsedSec = elapsedSec + dt;
+  const nextDistanceScale = getOrbitPatternDistanceScaleAtElapsedSec(
+    track.patternId,
+    baseDistanceScale,
+    suns,
+    nextElapsedSec,
+    blackHoleSpec,
+  );
+  const nextSamples = sampleOrbitPatternTrack(
+    track,
+    nextElapsedSec,
+    speed,
+    nextDistanceScale,
+  );
+
+  return [
+    {
+      pos: {
+        x: currentSamples[0]!.pos.x,
+        y: currentSamples[0]!.pos.y,
+      },
+      vel: {
+        x: (nextSamples[0]!.pos.x - currentSamples[0]!.pos.x) / dt,
+        y: (nextSamples[0]!.pos.y - currentSamples[0]!.pos.y) / dt,
+      },
+    },
+    {
+      pos: {
+        x: currentSamples[1]!.pos.x,
+        y: currentSamples[1]!.pos.y,
+      },
+      vel: {
+        x: (nextSamples[1]!.pos.x - currentSamples[1]!.pos.x) / dt,
+        y: (nextSamples[1]!.pos.y - currentSamples[1]!.pos.y) / dt,
+      },
+    },
+    {
+      pos: {
+        x: currentSamples[2]!.pos.x,
+        y: currentSamples[2]!.pos.y,
+      },
+      vel: {
+        x: (nextSamples[2]!.pos.x - currentSamples[2]!.pos.x) / dt,
+        y: (nextSamples[2]!.pos.y - currentSamples[2]!.pos.y) / dt,
+      },
+    },
+  ];
+};
+
 export const stepSunsWithOrbitMotion = (
   suns: readonly Sun[],
   dt: number,
@@ -737,11 +851,14 @@ export const stepSunsWithOrbitMotion = (
     return stepSuns(suns, dt, blackHole);
   }
 
-  const sampledSuns = sampleOrbitPatternTrack(
+  const sampledSuns = sampleOrbitPatternTrackWithDynamicDistanceScale(
     getOrbitPatternTrack(orbitStarMotion.patternId),
     orbitStarMotion.elapsedSec + dt,
     orbitStarMotion.speed,
-    orbitStarMotion.distanceScale,
+    orbitStarMotion.baseDistanceScale,
+    suns,
+    BLACK_HOLE_SPEC,
+    dt,
   );
   const activeSunsById = new Map(suns.map((sun) => [sun.id, sun] as const));
 
@@ -770,10 +887,21 @@ export const stepSunsWithOrbitMotion = (
 export const advanceWorldOrbitStarMotion = (
   orbitStarMotion: WorldOrbitStarMotion | undefined,
   dt: number,
+  suns?: readonly Pick<Sun, "radius">[],
 ): WorldOrbitStarMotion | undefined =>
   orbitStarMotion === undefined
     ? undefined
     : {
         ...orbitStarMotion,
         elapsedSec: orbitStarMotion.elapsedSec + dt,
+        distanceScale:
+          suns === undefined
+            ? orbitStarMotion.distanceScale
+            : getOrbitPatternDistanceScaleAtElapsedSec(
+                orbitStarMotion.patternId,
+                orbitStarMotion.baseDistanceScale,
+                suns,
+                orbitStarMotion.elapsedSec + dt,
+                BLACK_HOLE_SPEC,
+              ),
       };

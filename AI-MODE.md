@@ -269,8 +269,7 @@ The AI must understand:
 - cache contest value
 - drone routing value
 - gravity pulse timing
-- cloak timing
-- foresight setup windows
+- shield and boost setup windows
 
 Resource play should be evaluated against survival and kill windows, not treated as a separate minigame.
 
@@ -389,7 +388,7 @@ Phase 3: add resource and ability play
 - add cache contesting
 - add drone routing
 - add wildcard policy
-- extend foresight usage
+- extend shield and boost timing
 
 Exit gate:
 

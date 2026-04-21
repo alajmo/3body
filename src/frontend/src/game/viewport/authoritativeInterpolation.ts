@@ -14,6 +14,7 @@ import { ARENA_RADIUS, cloneCacheContents, lerp } from "@3body/shared";
 interface AuthoritativeInterpolationCache {
   previousCachesById: Map<number, Cache>;
   previousDebrisById: Map<number, Debris>;
+  previousNeutronStarsById: Map<number, NeutronStar>;
   previousPlanetsById: Map<number, PlanetPublic>;
   previousRocketsById: Map<number, Rocket>;
   previousSunsById: Map<number, Sun>;
@@ -144,13 +145,18 @@ const syncSunInto = (
   syncLerpedVec2(target.vel, previous?.vel, current.vel, alpha);
 };
 
-const syncNeutronStarInto = (target: NeutronStar, current: NeutronStar) => {
+const syncNeutronStarInto = (
+  target: NeutronStar,
+  previous: NeutronStar | undefined,
+  current: NeutronStar,
+  alpha: number,
+) => {
   target.id = current.id;
   target.kind = current.kind;
   target.mass = current.mass;
   target.radius = current.radius;
-  syncVec2(target.pos, current.pos);
-  syncVec2(target.vel, current.vel);
+  syncLerpedVec2(target.pos, previous?.pos, current.pos, alpha);
+  syncLerpedVec2(target.vel, previous?.vel, current.vel, alpha);
 };
 
 const syncPlanetInto = (
@@ -171,7 +177,6 @@ const syncPlanetInto = (
   target.shieldActive = current.shieldActive;
   target.shieldLoad = current.shieldLoad;
   target.shieldMaxLoad = current.shieldMaxLoad;
-  target.hideTrailUntilTick = current.hideTrailUntilTick;
   syncPlanetDebuffs(target.debuffs, current.debuffs);
 };
 
@@ -269,31 +274,11 @@ const syncInterpolatedEntityArray = <T extends { id: number }>(
   targetEntities.length = currentEntities.length;
 };
 
-const syncCopiedEntityArray = <T extends { id: number }>(
-  targetEntities: T[],
-  currentEntities: readonly T[],
-  cloneEntity: (entity: T) => T,
-  syncEntity: (target: T, current: T) => void,
-) => {
-  for (let index = 0; index < currentEntities.length; index += 1) {
-    const currentEntity = currentEntities[index]!;
-    let targetEntity = targetEntities[index];
-
-    if (targetEntity === undefined || targetEntity.id !== currentEntity.id) {
-      targetEntity = cloneEntity(currentEntity);
-      targetEntities[index] = targetEntity;
-    }
-
-    syncEntity(targetEntity, currentEntity);
-  }
-
-  targetEntities.length = currentEntities.length;
-};
-
 export const createAuthoritativeInterpolationCache =
   (): AuthoritativeInterpolationCache => ({
     previousCachesById: new Map<number, Cache>(),
     previousDebrisById: new Map<number, Debris>(),
+    previousNeutronStarsById: new Map<number, NeutronStar>(),
     previousPlanetsById: new Map<number, PlanetPublic>(),
     previousRocketsById: new Map<number, Rocket>(),
     previousSunsById: new Map<number, Sun>(),
@@ -315,6 +300,7 @@ export const syncAuthoritativeInterpolatedWorld = (
   alpha: number,
 ): World => {
   fillEntityMap(cache.previousSunsById, previousWorld.suns);
+  fillEntityMap(cache.previousNeutronStarsById, previousWorld.neutronStars);
   fillEntityMap(cache.previousPlanetsById, previousWorld.planets);
   fillEntityMap(cache.previousRocketsById, previousWorld.rockets);
   fillEntityMap(cache.previousCachesById, previousWorld.caches);
@@ -331,11 +317,13 @@ export const syncAuthoritativeInterpolatedWorld = (
     syncSunInto,
     alpha,
   );
-  syncCopiedEntityArray(
+  syncInterpolatedEntityArray(
     targetWorld.neutronStars,
     currentWorld.neutronStars,
+    (id) => cache.previousNeutronStarsById.get(id),
     cloneNeutronStar,
     syncNeutronStarInto,
+    alpha,
   );
   syncInterpolatedEntityArray(
     targetWorld.planets,

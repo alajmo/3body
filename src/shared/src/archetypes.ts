@@ -10,7 +10,6 @@ export interface ArchetypeStats {
   boostMagnitudeMultiplier: number;
   boostChargeBonus: number;
   seekerTurnRateMultiplier: number;
-  foresightDurationMultiplier: number;
   umbraDrag: boolean;
 }
 
@@ -35,7 +34,6 @@ export const ARCHETYPES = {
     boostMagnitudeMultiplier: 1,
     boostChargeBonus: 0,
     seekerTurnRateMultiplier: 1,
-    foresightDurationMultiplier: 1,
     umbraDrag: false,
   },
   ignis: {
@@ -48,7 +46,6 @@ export const ARCHETYPES = {
     boostMagnitudeMultiplier: 1,
     boostChargeBonus: 0,
     seekerTurnRateMultiplier: 1,
-    foresightDurationMultiplier: 1,
     umbraDrag: false,
   },
   glacius: {
@@ -61,7 +58,6 @@ export const ARCHETYPES = {
     boostMagnitudeMultiplier: 1,
     boostChargeBonus: 0,
     seekerTurnRateMultiplier: 1,
-    foresightDurationMultiplier: 1,
     umbraDrag: false,
   },
   volans: {
@@ -74,7 +70,6 @@ export const ARCHETYPES = {
     boostMagnitudeMultiplier: 1.5,
     boostChargeBonus: 1,
     seekerTurnRateMultiplier: 1,
-    foresightDurationMultiplier: 1,
     umbraDrag: false,
   },
   oculus: {
@@ -87,7 +82,6 @@ export const ARCHETYPES = {
     boostMagnitudeMultiplier: 1,
     boostChargeBonus: 0,
     seekerTurnRateMultiplier: 1.3,
-    foresightDurationMultiplier: 2,
     umbraDrag: false,
   },
   umbra: {
@@ -100,7 +94,6 @@ export const ARCHETYPES = {
     boostMagnitudeMultiplier: 1,
     boostChargeBonus: 0,
     seekerTurnRateMultiplier: 1,
-    foresightDurationMultiplier: 1,
     umbraDrag: true,
   },
   corvus: {
@@ -113,7 +106,6 @@ export const ARCHETYPES = {
     boostMagnitudeMultiplier: 1,
     boostChargeBonus: 0,
     seekerTurnRateMultiplier: 1,
-    foresightDurationMultiplier: 1,
     umbraDrag: false,
   },
 } satisfies Record<ArchetypeId, ArchetypeStats>;

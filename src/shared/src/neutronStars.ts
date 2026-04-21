@@ -1,5 +1,5 @@
 import type { NeutronStarSpec } from "./constants";
-import type { EntityBase, NeutronStar } from "./entities";
+import type { EntityBase, NeutronStar, Sun } from "./entities";
 import { nextFloat, type Rng } from "./rng";
 import { clamp, dist } from "./vec2";
 import type { Vec2 } from "./vec2";
@@ -55,16 +55,99 @@ export const getNeutronStarRadiusForMass = (
   );
 };
 
+const getNeutronStarRadiusAfterAbsorbingSun = (
+  neutronStar: Pick<NeutronStar, "mass" | "radius">,
+  sun: Pick<Sun, "mass" | "radius">,
+): number => {
+  const nextMass = neutronStar.mass + Math.max(0, sun.mass);
+  if (neutronStar.mass <= Number.EPSILON) {
+    return neutronStar.radius;
+  }
+
+  return neutronStar.radius * Math.sqrt(nextMass / neutronStar.mass);
+};
+
+export const absorbSunsIntoNeutronStars = <
+  TSun extends Pick<Sun, "id" | "kind" | "mass" | "pos" | "radius" | "vel">,
+>(
+  suns: readonly TSun[],
+  neutronStars: readonly NeutronStar[],
+): {
+  neutronStars: NeutronStar[];
+  suns: TSun[];
+} => {
+  if (suns.length === 0 || neutronStars.length === 0) {
+    return {
+      neutronStars: neutronStars.slice(),
+      suns: suns.slice(),
+    };
+  }
+
+  const nextNeutronStars = neutronStars.slice();
+  const survivingSuns: TSun[] = [];
+
+  for (const sun of suns) {
+    let absorbingIndex = -1;
+    let closestDistance = Number.POSITIVE_INFINITY;
+
+    for (let index = 0; index < nextNeutronStars.length; index += 1) {
+      const neutronStar = nextNeutronStars[index]!;
+      const centerDistance = dist(sun.pos, neutronStar.pos);
+      if (centerDistance > sun.radius + neutronStar.radius) {
+        continue;
+      }
+
+      if (centerDistance < closestDistance) {
+        closestDistance = centerDistance;
+        absorbingIndex = index;
+      }
+    }
+
+    if (absorbingIndex < 0) {
+      survivingSuns.push(sun);
+      continue;
+    }
+
+    const neutronStar = nextNeutronStars[absorbingIndex]!;
+    const absorbedMass = Math.max(0, sun.mass);
+    const nextMass = neutronStar.mass + absorbedMass;
+    const massWeight = Math.max(nextMass, Number.EPSILON);
+    nextNeutronStars[absorbingIndex] = {
+      ...neutronStar,
+      mass: nextMass,
+      pos: {
+        x:
+          (neutronStar.pos.x * neutronStar.mass + sun.pos.x * absorbedMass) /
+          massWeight,
+        y:
+          (neutronStar.pos.y * neutronStar.mass + sun.pos.y * absorbedMass) /
+          massWeight,
+      },
+      radius: getNeutronStarRadiusAfterAbsorbingSun(neutronStar, sun),
+      vel: {
+        x:
+          (neutronStar.vel.x * neutronStar.mass + sun.vel.x * absorbedMass) /
+          massWeight,
+        y:
+          (neutronStar.vel.y * neutronStar.mass + sun.vel.y * absorbedMass) /
+          massWeight,
+      },
+    };
+  }
+
+  return {
+    neutronStars: nextNeutronStars,
+    suns: survivingSuns,
+  };
+};
+
 const getPlacementGap = (
   candidate: Vec2,
   radius: number,
   body: Pick<EntityBase, "pos" | "radius">,
 ): number => dist(candidate, body.pos) - radius - body.radius;
 
-const samplePositionInsideCircle = (
-  rng: Rng,
-  maxRadius: number,
-): Vec2 => {
+const samplePositionInsideCircle = (rng: Rng, maxRadius: number): Vec2 => {
   const angle = nextFloat(rng, 0, Math.PI * 2);
   const radius = Math.sqrt(rng()) * maxRadius;
 

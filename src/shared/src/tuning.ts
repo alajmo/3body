@@ -227,24 +227,8 @@ export interface RocketVisualTuning {
 
 export interface AbilityVisualTuning {
   boostColor: string;
-  foresight: ForesightPathVisualTuning;
-  foresightColor: string;
   shieldColor: string;
   wildcardColor: string;
-}
-
-export interface ForesightPathVisualTuning {
-  dotColor: string;
-  dotOpacity: number;
-  farStride: number;
-  leadGap: number;
-  lineColor: string;
-  lineOpacity: number;
-  midStride: number;
-  nearStride: number;
-  pointSize: number;
-  showDots: boolean;
-  showLine: boolean;
 }
 
 export interface CacheVisualTuning {
@@ -301,12 +285,7 @@ export interface HudVisualTuning {
   topInset: number;
 }
 
-export const VIEWPORT_DISPLAY_MODES = [
-  "default",
-  "vhs",
-  "pixelArt",
-  "vectorAsteroids",
-] as const;
+export const VIEWPORT_DISPLAY_MODES = ["default", "vhs"] as const;
 
 export type ViewportDisplayMode = (typeof VIEWPORT_DISPLAY_MODES)[number];
 
@@ -344,6 +323,7 @@ export interface GameplayCameraTuning {
 export interface ArenaAsteroidFieldPartTuning {
   damage: number;
   randomization: number;
+  spawnRatePerSec: number;
 }
 
 export interface ArenaAsteroidFieldTuning {
@@ -448,7 +428,6 @@ export interface GameplayTuning {
   ai: GameplayAiTuning;
   abilities: {
     boost: BoostSpec;
-    foresight: AbilitySpec;
     gravityPulse: GravityPulseSpec;
     shield: ShieldSpec;
   };
@@ -1208,30 +1187,6 @@ const sanitizePlanetVariationTuning = (
   };
 };
 
-const sanitizeForesightPathVisualTuning = (
-  value: unknown,
-  fallback: ForesightPathVisualTuning,
-): ForesightPathVisualTuning => {
-  const source =
-    value !== null && typeof value === "object"
-      ? (value as Partial<Record<keyof ForesightPathVisualTuning, unknown>>)
-      : {};
-
-  return {
-    dotColor: sanitizeHexColor(source.dotColor, fallback.dotColor),
-    dotOpacity: sanitizeNumber(source.dotOpacity, fallback.dotOpacity, 0, 1),
-    farStride: sanitizeInteger(source.farStride, fallback.farStride, 1, 12),
-    leadGap: sanitizeNumber(source.leadGap, fallback.leadGap, 0, 120),
-    lineColor: sanitizeHexColor(source.lineColor, fallback.lineColor),
-    lineOpacity: sanitizeNumber(source.lineOpacity, fallback.lineOpacity, 0, 1),
-    midStride: sanitizeInteger(source.midStride, fallback.midStride, 1, 12),
-    nearStride: sanitizeInteger(source.nearStride, fallback.nearStride, 1, 12),
-    pointSize: sanitizeNumber(source.pointSize, fallback.pointSize, 1, 64),
-    showDots: sanitizeBoolean(source.showDots, fallback.showDots),
-    showLine: sanitizeBoolean(source.showLine, fallback.showLine),
-  };
-};
-
 export const DEFAULT_GAME_TUNING: GameTuningDocument = {
   version: 1,
   visuals: {
@@ -1571,20 +1526,6 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
       },
     },
     abilities: {
-      foresightColor: "#80d7ff",
-      foresight: {
-        dotColor: "#80d7ff",
-        dotOpacity: 0.82,
-        farStride: 6,
-        leadGap: 24,
-        lineColor: "#81d7ff",
-        lineOpacity: 0.76,
-        midStride: 4,
-        nearStride: 3,
-        pointSize: 9,
-        showDots: false,
-        showLine: true,
-      },
       shieldColor: "#86ecff",
       boostColor: "#8bc6ff",
       wildcardColor: "#ffd37a",
@@ -1696,14 +1637,17 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
         large: {
           damage: 6.5,
           randomization: 0.85,
+          spawnRatePerSec: 0.12,
         },
         micro: {
           damage: 0.4,
           randomization: 0.2,
+          spawnRatePerSec: 2.8,
         },
         small: {
           damage: 1.6,
           randomization: 0.55,
+          spawnRatePerSec: 0.55,
         },
       },
       instantDeath: true,
@@ -1823,10 +1767,6 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
       },
     },
     abilities: {
-      foresight: {
-        cooldownSec: 12,
-        durationSec: 4,
-      },
       shield: {
         cooldownSec: 15,
         durationSec: 4,
@@ -2159,6 +2099,12 @@ const sanitizeArenaAsteroidFieldPartTuning = (
       fallback.randomization,
       0,
       1,
+    ),
+    spawnRatePerSec: sanitizeNumber(
+      source.spawnRatePerSec,
+      fallback.spawnRatePerSec,
+      0,
+      Number.POSITIVE_INFINITY,
     ),
   };
 };
@@ -2923,14 +2869,6 @@ export const sanitizeGameTuning = (value: unknown): GameTuningDocument => {
           visuals.abilities?.boostColor,
           fallback.visuals.abilities.boostColor,
         ),
-        foresight: sanitizeForesightPathVisualTuning(
-          visuals.abilities?.foresight,
-          fallback.visuals.abilities.foresight,
-        ),
-        foresightColor: sanitizeHexColor(
-          visuals.abilities?.foresightColor,
-          fallback.visuals.abilities.foresightColor,
-        ),
         shieldColor: sanitizeHexColor(
           visuals.abilities?.shieldColor,
           fallback.visuals.abilities.shieldColor,
@@ -3125,10 +3063,6 @@ export const sanitizeGameTuning = (value: unknown): GameTuningDocument => {
         ),
       },
       abilities: {
-        foresight: sanitizeAbilitySpec(
-          gameplay.abilities?.foresight,
-          fallback.gameplay.abilities.foresight,
-        ),
         shield: sanitizeShieldSpec(
           gameplay.abilities?.shield,
           fallback.gameplay.abilities.shield,

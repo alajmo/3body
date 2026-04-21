@@ -11,7 +11,7 @@ export type ArchetypeId =
   | "umbra"
   | "corvus";
 export type RocketKind = "light" | "heavy" | "seeker";
-export type WildcardKind = "gravityPulse" | "cloak";
+export type WildcardKind = "gravityPulse";
 export type AsteroidTier = "micro" | "small" | "large";
 
 export interface EntityBase {
@@ -39,7 +39,6 @@ export type PlanetPublic = EntityBase & {
   shieldActive: boolean;
   shieldLoad: number;
   shieldMaxLoad: number;
-  hideTrailUntilTick: number;
   debuffs: PlanetDebuffs;
 };
 
@@ -53,9 +52,6 @@ export interface PlanetCooldowns {
   lightReloadUntilTick: number;
   heavyReloadUntilTick: number;
   seekerReloadUntilTick: number;
-  foresightActiveUntilTick: number;
-  foresightCooldownUntilTick: number;
-  foresightDurationTicks: number;
   nextBoostChargeAtTick?: number;
 }
 
@@ -65,9 +61,7 @@ export interface PlanetPrivateState {
   cooldowns: PlanetCooldowns;
   boostCharges: number;
   gravityPulseHeld: boolean;
-  cloakHeld: boolean;
   nextShieldExt: boolean;
-  nextForesightExt: boolean;
 }
 
 export type PlanetState = PlanetPublic & PlanetPrivateState;
@@ -85,7 +79,6 @@ export type CacheContents =
   | { kind: "seekerPack" }
   | { kind: "repair" }
   | { kind: "shieldExt" }
-  | { kind: "foresightExt" }
   | {
       kind: "wildcard";
       wildcard: { kind: WildcardKind };
@@ -119,6 +112,7 @@ export interface FixedPatternWorldOrbitStarMotion {
   elapsedSec: number;
   patternId: string;
   speed: number;
+  baseDistanceScale: number;
   distanceScale: number;
   sunIds: [EntityId, EntityId, EntityId];
 }

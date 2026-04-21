@@ -18,7 +18,6 @@ const createControllerMock = (): GameViewportController =>
     setBoostSetting: vi.fn(),
     setBlackHoleSetting: vi.fn(),
     setCacheBadgeScale: vi.fn(),
-    setForesightSetting: vi.fn(),
     setPlanetBodyScale: vi.fn(),
     setPlanetAuraGap: vi.fn(),
     setPlanetAuraScale: vi.fn(),
@@ -443,7 +442,7 @@ describe("CombatHud", () => {
     const { container } = render(
       <CombatHud
         controller={createControllerMock()}
-        displayMode="vectorAsteroids"
+        displayMode="vhs"
         hud={createInitialHudState()}
         hudTuning={HUD_TUNING}
       />,
@@ -451,10 +450,10 @@ describe("CombatHud", () => {
 
     expect(container.querySelector(".combat-hud")).toHaveAttribute(
       "data-display-mode",
-      "vectorAsteroids",
+      "vhs",
     );
     expect(container.querySelector(".combat-hud")).toHaveClass(
-      "combat-hud--mode-vectorAsteroids",
+      "combat-hud--mode-vhs",
     );
   });
 

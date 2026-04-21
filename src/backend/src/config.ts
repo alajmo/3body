@@ -2,6 +2,9 @@ import { resolve } from "node:path";
 import { SIM_HZ, SNAPSHOT_HZ } from "@3body/shared";
 
 const LOCAL_DEV_ALLOWED_ORIGINS = [
+  "http://127.0.0.1:1337",
+  "http://localhost:1337",
+  "http://[::1]:1337",
   "http://127.0.0.1:5173",
   "http://localhost:5173",
   "http://[::1]:5173",

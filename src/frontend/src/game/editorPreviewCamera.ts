@@ -14,11 +14,9 @@ type EditorPreviewCameraItemId =
   | "rocketLight"
   | "rocketHeavy"
   | "rocketSeeker"
-  | "foresight"
   | "shield"
   | "boost"
   | "gravityPulse"
-  | "cloak"
   | "cache";
 
 export const usesPreviewCameraForEditorItem = (

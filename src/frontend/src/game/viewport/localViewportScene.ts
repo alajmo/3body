@@ -1,14 +1,15 @@
-import type { RocketKind, Vec2 } from "@3body/shared";
+import type { AsteroidTier, RocketKind, Vec2 } from "@3body/shared";
 import {
-  BLACK_HOLE_SPEC,
   FIXED_STEP_SEC,
   add,
   clamp,
+  getBoundaryAsteroidImpactRadius,
   getNeutronStarMassAlpha,
   getSunVisualProfile,
   len,
   lerp,
   mulberry32,
+  normalize as normalizeVec2,
   rot,
   scale as scaleVec2,
   sub,
@@ -20,16 +21,17 @@ import {
   type InstancedMesh,
   type Line,
   type LineBasicMaterial,
-  type Matrix4,
+  Matrix4,
   type Mesh,
   type MeshBasicMaterial,
   type MeshBasicNodeMaterial,
   type Points,
   type PointsNodeMaterial,
-  type Quaternion,
+  Quaternion,
   Vector3,
 } from "three/webgpu";
 import type {
+  CombatPlanetDeathReason,
   CombatSandboxCache,
   CombatSandboxDebris,
   CombatSandboxImpactBurst,
@@ -72,23 +74,20 @@ import { getCacheArenaBadgeSize } from "./cacheVisuals";
 import {
   type AmbientBoundaryDebrisVisual,
   getAmbientBoundaryDebrisRadii,
+  resetAmbientBoundaryDebrisVisual,
   updateAmbientBoundaryDebrisVisual,
 } from "./ambientBoundaryDebris";
-import { clipForesightPathAtDistance } from "./foresightShared";
 import { getRenderedShieldOuterRadius } from "../shieldPresentation";
 import type { LocalViewportCameraState } from "./localViewportCamera";
 import { getLocalViewportControlledBody } from "./localViewportCamera";
 import {
-  CLOAK_FADE_TAIL_SEC,
-  getCloakPlanetOpacity,
-  getCloakRemainingSec,
-} from "./cloakVisual";
-import {
-  getForesightBodySurface,
-  getLocalViewportForesightPathTuning,
-  type ForesightVisual,
-  updateForesightVisual,
-} from "./localViewportForesight";
+  clearBlackHoleSwallowEffects,
+  getBlackHoleVisualScale,
+  queueBlackHoleSwallowEffect,
+  updateBlackHoleSwallowEffects,
+  type BlackHoleSwallowState,
+  type BlackHoleSwallowVisual,
+} from "./blackHoleVisuals";
 import {
   getLocalSandboxLockProgress,
   type LocalSandboxGravityPulseState,
@@ -98,6 +97,8 @@ import type { ViewportRenderQualityProfile } from "./renderQuality";
 const ROCKET_TRAIL_DURATION_SEC = 0.18;
 const ROCKET_TRAIL_SAMPLE_DISTANCE = 18;
 const BOOST_BURST_DURATION_SEC = 0.48;
+const BOOST_WAKE_BEND_MIN = 0.22;
+const BOOST_WAKE_BEND_MAX = 1.18;
 const GRAVITY_PULSE_VISUAL_DURATION_SEC = 0.95;
 const PLANET_EXPLOSION_DURATION_SEC = 1.55;
 const PLANET_EXPLOSION_FLASH_DURATION_SEC = 0.34;
@@ -111,6 +112,32 @@ const IMPACT_CORE_BASE = new Color("#fff5dd");
 const CACHED_COLORS = new Map<string, Color>();
 const TINTED_COLORS = new Map<string, Color>();
 const Z_AXIS = new Vector3(0, 0, 1);
+const X_AXIS = new Vector3(1, 0, 0);
+const Y_AXIS = new Vector3(0, 1, 0);
+const BLACK_HOLE_ROCKET_SWALLOW_COLOR = "#ffd7ac";
+const BLACK_HOLE_CACHE_SWALLOW_COLOR = "#fff0bb";
+const debrisMatrix = new Matrix4();
+const debrisPosition = new Vector3();
+const debrisRotation = new Quaternion();
+const debrisRotationTilt = new Quaternion();
+const debrisScale = new Vector3();
+const hiddenDebrisPosition = new Vector3(1e8, 1e8, 1e8);
+const hiddenDebrisRotation = new Quaternion();
+const hiddenDebrisScale = new Vector3(0.001, 0.001, 0.001);
+const BOUNDARY_ASTEROID_RENDER_ORDER = [
+  "large",
+  "small",
+  "micro",
+] as const satisfies readonly AsteroidTier[];
+const EMPTY_BOUNDARY_ASTEROID_COUNTS = {
+  large: 0,
+  micro: 0,
+  small: 0,
+} as const satisfies Record<AsteroidTier, number>;
+const SANDBOX_BOUNDARY_ASTEROID_FALLOUT_TIERS = [
+  "large",
+  "small",
+] as const satisfies readonly AsteroidTier[];
 
 interface TrailSample {
   pos: Vec2;
@@ -204,7 +231,31 @@ interface RocketTrailState {
   samples: TrailSample[];
 }
 
+export interface LocalViewportBlackHoleSwallowTracker {
+  previousCachesById: Map<number, Pick<CombatSandboxCache, "pos" | "radius">>;
+  previousPlanetAliveById: Map<number, boolean>;
+  previousRocketsById: Map<
+    number,
+    Pick<CombatSandboxRocket, "pos" | "radius" | "rocketKind">
+  >;
+  previousSunSwallowedAtById: Map<number, number | null>;
+}
+
+export const createLocalViewportBlackHoleSwallowTracker = (
+  initialState: CombatSandboxState,
+): LocalViewportBlackHoleSwallowTracker => ({
+  previousCachesById: new Map(),
+  previousPlanetAliveById: new Map(
+    initialState.planets.map((planet) => [planet.id, planet.alive] as const),
+  ),
+  previousRocketsById: new Map(),
+  previousSunSwallowedAtById: new Map(
+    initialState.suns.map((sun) => [sun.id, sun.swallowedAtSec] as const),
+  ),
+});
+
 interface DebrisVisual {
+  boundaryAsteroidLayers: Record<AsteroidTier, BoundaryAsteroidLayerVisual>;
   colorAttribute: Float32BufferAttribute;
   geometry: {
     setDrawRange: (start: number, count: number) => void;
@@ -212,6 +263,12 @@ interface DebrisVisual {
   opacityAttribute: Float32BufferAttribute;
   points: Points;
   positionAttribute: Float32BufferAttribute;
+}
+
+interface BoundaryAsteroidLayerVisual {
+  activeCount: number;
+  capacity: number;
+  mesh: InstancedMesh;
 }
 
 interface BoundaryDebrisVisual extends AmbientBoundaryDebrisVisual {}
@@ -234,9 +291,30 @@ interface BoostBurstVisual {
   points: Points;
   positionAttribute: Float32BufferAttribute;
   wakeVisuals: readonly {
+    basePositions: Float32Array;
     material: MeshBasicMaterial;
     mesh: Mesh;
+    positionAttribute: Float32BufferAttribute;
   }[];
+}
+
+interface VisibleBoostWakeBurst {
+  alpha: number;
+  burst: BoostBurstState;
+  direction: Vec2;
+  origin: Vec2;
+  progress: number;
+  radius: number;
+}
+
+interface VisibleBoostWakeBurstAccumulator extends VisibleBoostWakeBurst {
+  directionWeight: number;
+  weightedDirection: Vec2;
+}
+
+interface BoostDirectionOverride {
+  direction: Vec2;
+  planetId: number;
 }
 
 interface GravityPulseVisual {
@@ -252,13 +330,6 @@ interface ImpactBurstVisual {
   coreMesh: Mesh;
   glowMesh: Mesh;
   ringMesh: Mesh;
-}
-
-interface CloakVisual {
-  ringMaterial: MeshBasicMaterial;
-  ringMesh: Mesh;
-  veilMaterial: MeshBasicMaterial;
-  veilMesh: Mesh;
 }
 
 interface PlanetExplosionChunkVisual {
@@ -486,28 +557,271 @@ const getBoostBurstAnchor = (
   };
 };
 
+const getEffectiveBoostBurstDirection = (
+  burst: BoostBurstState,
+  directionOverride: BoostDirectionOverride | null,
+): Vec2 =>
+  directionOverride !== null && directionOverride.planetId === burst.planetId
+    ? directionOverride.direction
+    : burst.direction;
+
+const getSignedBoostTurnAngle = (
+  baseDirection: Vec2,
+  currentDirection: Vec2,
+): number => {
+  if (len(baseDirection) <= 0.001 || len(currentDirection) <= 0.001) {
+    return 0;
+  }
+
+  const cross =
+    baseDirection.x * currentDirection.y - baseDirection.y * currentDirection.x;
+  const dot =
+    baseDirection.x * currentDirection.x + baseDirection.y * currentDirection.y;
+
+  return Math.atan2(cross, dot);
+};
+
+export const getBoostWakeBendAmount = ({
+  baseDirection,
+  currentDirection,
+  progress,
+}: {
+  baseDirection: Vec2;
+  currentDirection: Vec2;
+  progress: number;
+}): number => {
+  const normalizedTurn = clamp(
+    getSignedBoostTurnAngle(baseDirection, currentDirection) / (Math.PI * 0.5),
+    -1,
+    1,
+  );
+
+  return (
+    -normalizedTurn *
+    lerp(BOOST_WAKE_BEND_MIN, BOOST_WAKE_BEND_MAX, clamp(progress, 0, 1))
+  );
+};
+
+const collectBoostWakeDirectionSamples = ({
+  bursts,
+  directionOverride,
+  headDirection,
+  nowSec,
+  planetId,
+}: {
+  bursts: readonly BoostBurstState[];
+  directionOverride: BoostDirectionOverride | null;
+  headDirection: Vec2;
+  nowSec: number;
+  planetId: number;
+}): Vec2[] => {
+  const directionSamples = [headDirection];
+  const visiblePlanetBursts = bursts
+    .filter((burst) => {
+      if (burst.planetId !== planetId) {
+        return false;
+      }
+
+      const ageSec = nowSec - burst.startedAtSec;
+      return ageSec >= 0 && ageSec <= BOOST_BURST_DURATION_SEC;
+    })
+    .sort((left, right) => right.startedAtSec - left.startedAtSec);
+
+  for (const burst of visiblePlanetBursts) {
+    const direction =
+      directionOverride !== null && directionOverride.planetId === planetId
+        ? burst.direction
+        : getEffectiveBoostBurstDirection(burst, directionOverride);
+    if (len(direction) <= 0.001) {
+      continue;
+    }
+
+    const previousDirection =
+      directionSamples[directionSamples.length - 1] ?? headDirection;
+    if (
+      Math.abs(getSignedBoostTurnAngle(previousDirection, direction)) < 0.01
+    ) {
+      continue;
+    }
+
+    directionSamples.push(direction);
+  }
+
+  return directionSamples;
+};
+
+export const getBoostWakeCurveOffset = ({
+  currentDirection,
+  directionSamples,
+  tailProgress,
+  wakeProgress,
+}: {
+  currentDirection: Vec2;
+  directionSamples: readonly Vec2[];
+  tailProgress: number;
+  wakeProgress: number;
+}): number => {
+  const clampedTailProgress = clamp(tailProgress, 0, 1);
+  if (directionSamples.length <= 1 || clampedTailProgress <= 0) {
+    return 0;
+  }
+
+  const scaledIndex = clampedTailProgress * (directionSamples.length - 1);
+  const currentIndex = Math.floor(scaledIndex);
+  const nextIndex = Math.min(directionSamples.length - 1, currentIndex + 1);
+  const blend = scaledIndex - currentIndex;
+  const startDirection = directionSamples[currentIndex]!;
+  const endDirection = directionSamples[nextIndex]!;
+  const sampledDirection = normalizeVec2(
+    add(scaleVec2(startDirection, 1 - blend), scaleVec2(endDirection, blend)),
+  );
+
+  return (
+    getBoostWakeBendAmount({
+      baseDirection: sampledDirection,
+      currentDirection,
+      progress: wakeProgress,
+    }) *
+    clampedTailProgress *
+    clampedTailProgress
+  );
+};
+
+const updateBoostWakeGeometry = ({
+  currentDirection,
+  directionSamples,
+  wakeVisual,
+  wakeProgress,
+}: {
+  currentDirection: Vec2;
+  directionSamples: readonly Vec2[];
+  wakeVisual: BoostBurstVisual["wakeVisuals"][number];
+  wakeProgress: number;
+}) => {
+  const positionArray = wakeVisual.positionAttribute.array as Float32Array;
+
+  for (let index = 0; index < positionArray.length; index += 3) {
+    const baseX = wakeVisual.basePositions[index]!;
+    const baseY = wakeVisual.basePositions[index + 1]!;
+    const curveOffset = getBoostWakeCurveOffset({
+      currentDirection,
+      directionSamples,
+      tailProgress: baseX,
+      wakeProgress,
+    });
+    positionArray[index] = baseX;
+    positionArray[index + 1] = baseY + curveOffset;
+    positionArray[index + 2] = wakeVisual.basePositions[index + 2]!;
+  }
+
+  wakeVisual.positionAttribute.needsUpdate = true;
+};
+
+export const collectVisibleBoostWakeBursts = ({
+  bursts,
+  directionOverride = null,
+  nowSec,
+  planetsById,
+}: {
+  bursts: readonly BoostBurstState[];
+  directionOverride?: BoostDirectionOverride | null;
+  nowSec: number;
+  planetsById: ReadonlyMap<number, CombatSandboxPlanet>;
+}): VisibleBoostWakeBurst[] => {
+  const visibleWakeBurstsByPlanetId = new Map<
+    number,
+    VisibleBoostWakeBurstAccumulator
+  >();
+
+  for (const burst of bursts) {
+    const ageSec = nowSec - burst.startedAtSec;
+    if (ageSec < 0 || ageSec > BOOST_BURST_DURATION_SEC) {
+      continue;
+    }
+
+    const burstAlpha = clamp(1 - ageSec / BOOST_BURST_DURATION_SEC, 0, 1);
+    const burstProgress = clamp(ageSec / BOOST_BURST_DURATION_SEC, 0, 1);
+    const directionWeight = burstAlpha;
+    const direction = getEffectiveBoostBurstDirection(burst, directionOverride);
+    const weightedDirection = scaleVec2(direction, directionWeight);
+    const { origin, radius } = getBoostBurstAnchor(burst, planetsById);
+    const existingWakeBurst = visibleWakeBurstsByPlanetId.get(burst.planetId);
+
+    if (existingWakeBurst === undefined) {
+      visibleWakeBurstsByPlanetId.set(burst.planetId, {
+        alpha: burstAlpha,
+        burst,
+        direction,
+        directionWeight,
+        origin,
+        progress: burstProgress,
+        radius,
+        weightedDirection,
+      });
+      continue;
+    }
+
+    existingWakeBurst.alpha = Math.max(existingWakeBurst.alpha, burstAlpha);
+    existingWakeBurst.directionWeight += directionWeight;
+    existingWakeBurst.progress = Math.max(
+      existingWakeBurst.progress,
+      burstProgress,
+    );
+    existingWakeBurst.weightedDirection = add(
+      existingWakeBurst.weightedDirection,
+      weightedDirection,
+    );
+
+    if (burst.startedAtSec >= existingWakeBurst.burst.startedAtSec) {
+      existingWakeBurst.burst = burst;
+      existingWakeBurst.direction = direction;
+      existingWakeBurst.origin = origin;
+      existingWakeBurst.radius = radius;
+      continue;
+    }
+
+    existingWakeBurst.radius = Math.max(existingWakeBurst.radius, radius);
+  }
+
+  return Array.from(
+    visibleWakeBurstsByPlanetId.values(),
+    ({ directionWeight, weightedDirection, ...wakeBurst }) => {
+      const blendedDirection =
+        directionWeight > Number.EPSILON && len(weightedDirection) > 0.001
+          ? normalizeVec2(weightedDirection)
+          : wakeBurst.direction;
+
+      return {
+        ...wakeBurst,
+        direction: blendedDirection,
+      };
+    },
+  ).sort((left, right) => right.alpha - left.alpha);
+};
+
 const updateBoostBurstVisual = (
   boostVisual: BoostBurstVisual,
   bursts: readonly BoostBurstState[],
   planetsById: ReadonlyMap<number, CombatSandboxPlanet>,
   maxParticlesPerBurst: number,
   nowSec: number,
+  directionOverride: BoostDirectionOverride | null = null,
 ) => {
   const positionArray = boostVisual.positionAttribute.array as Float32Array;
   const opacityArray = boostVisual.opacityAttribute.array as Float32Array;
+  const directionSamplesByPlanetId = new Map<number, Vec2[]>();
   const particleLimit = Math.max(0, maxParticlesPerBurst);
   const maxDrawCount = Math.min(
     boostVisual.positionAttribute.count,
     particleLimit * Math.max(1, bursts.length),
   );
   let drawCount = 0;
-  const visibleWakeBursts: Array<{
-    alpha: number;
-    burst: BoostBurstState;
-    origin: Vec2;
-    progress: number;
-    radius: number;
-  }> = [];
+  const visibleWakeBursts = collectVisibleBoostWakeBursts({
+    bursts,
+    directionOverride,
+    nowSec,
+    planetsById,
+  });
 
   for (const burst of bursts) {
     const ageSec = nowSec - burst.startedAtSec;
@@ -518,15 +832,23 @@ const updateBoostBurstVisual = (
     const burstAlpha = clamp(1 - ageSec / BOOST_BURST_DURATION_SEC, 0, 1);
     const burstProgress = clamp(ageSec / BOOST_BURST_DURATION_SEC, 0, 1);
     const { origin, radius } = getBoostBurstAnchor(burst, planetsById);
-    visibleWakeBursts.push({
-      alpha: burstAlpha,
-      burst,
-      origin,
-      progress: burstProgress,
-      radius,
-    });
+    const direction = getEffectiveBoostBurstDirection(burst, directionOverride);
+    const directionSamples =
+      directionSamplesByPlanetId.get(burst.planetId) ??
+      (() => {
+        const nextDirectionSamples = collectBoostWakeDirectionSamples({
+          bursts,
+          directionOverride,
+          headDirection: direction,
+          nowSec,
+          planetId: burst.planetId,
+        });
+        directionSamplesByPlanetId.set(burst.planetId, nextDirectionSamples);
+        return nextDirectionSamples;
+      })();
 
-    const exhaustDir = scaleVec2(burst.direction, -1);
+    const exhaustDir = scaleVec2(direction, -1);
+    const exhaustTangent = { x: -exhaustDir.y, y: exhaustDir.x };
     const particleOrigin = add(origin, scaleVec2(exhaustDir, radius * 0.38));
 
     for (
@@ -542,11 +864,24 @@ const updateBoostBurstVisual = (
       const travel =
         radius * (0.68 + progress * 1.1) + ageSec * (210 + (index % 5) * 44);
       const forwardDrift = ageSec * 30 * (1 - progress * 0.6);
+      const bendOffset = scaleVec2(
+        exhaustTangent,
+        radius *
+          getBoostWakeCurveOffset({
+            currentDirection: direction,
+            directionSamples,
+            tailProgress: progress,
+            wakeProgress: burstProgress,
+          }),
+      );
       const particlePos = add(
         particleOrigin,
         add(
-          scaleVec2(particleDir, travel),
-          scaleVec2(burst.direction, forwardDrift),
+          add(
+            scaleVec2(particleDir, travel),
+            scaleVec2(direction, forwardDrift),
+          ),
+          bendOffset,
         ),
       );
       const offset = drawCount * 3;
@@ -564,8 +899,6 @@ const updateBoostBurstVisual = (
   boostVisual.opacityAttribute.needsUpdate = true;
   boostVisual.points.visible = drawCount > 0;
 
-  visibleWakeBursts.sort((left, right) => right.alpha - left.alpha);
-
   for (let index = 0; index < boostVisual.wakeVisuals.length; index += 1) {
     const wakeVisual = boostVisual.wakeVisuals[index]!;
     const wakeBurst = visibleWakeBursts[index];
@@ -575,10 +908,32 @@ const updateBoostBurstVisual = (
       continue;
     }
 
-    const exhaustDir = scaleVec2(wakeBurst.burst.direction, -1);
+    const exhaustDir = scaleVec2(wakeBurst.direction, -1);
+    const directionSamples =
+      directionSamplesByPlanetId.get(wakeBurst.burst.planetId) ??
+      (() => {
+        const nextDirectionSamples = collectBoostWakeDirectionSamples({
+          bursts,
+          directionOverride,
+          headDirection: wakeBurst.direction,
+          nowSec,
+          planetId: wakeBurst.burst.planetId,
+        });
+        directionSamplesByPlanetId.set(
+          wakeBurst.burst.planetId,
+          nextDirectionSamples,
+        );
+        return nextDirectionSamples;
+      })();
     const wakeLength = wakeBurst.radius * lerp(2.3, 4.9, wakeBurst.progress);
     const wakeWidth = wakeBurst.radius * lerp(1.5, 0.82, wakeBurst.progress);
     const wakeOffset = wakeBurst.radius * lerp(0.46, 0.72, wakeBurst.progress);
+    updateBoostWakeGeometry({
+      currentDirection: wakeBurst.direction,
+      directionSamples,
+      wakeVisual,
+      wakeProgress: wakeBurst.progress,
+    });
     wakeVisual.mesh.visible = true;
     wakeVisual.mesh.position.set(
       wakeBurst.origin.x + exhaustDir.x * wakeOffset,
@@ -654,61 +1009,6 @@ const updateGravityPulseVisual = (
   visual.coreMaterial.opacity = fade * (0.28 + (1 - progress) * 0.3);
   visual.ringMaterial.opacity = fade * 0.96;
   visual.echoMaterial.opacity = fade * 0.56;
-};
-
-const updateCloakVisuals = (
-  visuals: readonly CloakVisual[],
-  planets: readonly CombatSandboxPlanet[],
-  currentTick: number,
-  nowSec: number,
-) => {
-  for (let index = 0; index < visuals.length; index += 1) {
-    const visual = visuals[index]!;
-    const planet = planets[index];
-    if (planet === undefined || !planet.alive) {
-      visual.veilMesh.visible = false;
-      visual.ringMesh.visible = false;
-      visual.veilMaterial.opacity = 0;
-      visual.ringMaterial.opacity = 0;
-      continue;
-    }
-
-    const remainingSec = getCloakRemainingSec(
-      planet.hideTrailUntilTick,
-      currentTick,
-    );
-    if (planet.hideTrailUntilTick <= 0 || remainingSec <= 0) {
-      visual.veilMesh.visible = false;
-      visual.ringMesh.visible = false;
-      visual.veilMaterial.opacity = 0;
-      visual.ringMaterial.opacity = 0;
-      continue;
-    }
-
-    const fadeTail = clamp(remainingSec / CLOAK_FADE_TAIL_SEC, 0, 1);
-    const pulse = 0.5 + Math.sin(nowSec * 4.4 + planet.id * 0.71) * 0.5;
-    const renderRadius = getRenderedPlanetRadius(planet);
-    const veilOpacity = (0.12 + pulse * 0.08) * fadeTail;
-    const ringOpacity = (0.18 + pulse * 0.12) * fadeTail;
-
-    visual.veilMesh.visible = veilOpacity > 0.01;
-    visual.ringMesh.visible = ringOpacity > 0.01;
-    visual.veilMesh.position.set(planet.pos.x, planet.pos.y, 0.28);
-    visual.ringMesh.position.set(planet.pos.x, planet.pos.y, 0.34);
-    visual.veilMesh.scale.set(
-      renderRadius * (1.26 + pulse * 0.08),
-      renderRadius * (1.26 + pulse * 0.08),
-      1,
-    );
-    visual.ringMesh.scale.set(
-      renderRadius * (1.58 + pulse * 0.12),
-      renderRadius * (1.58 + pulse * 0.12),
-      1,
-    );
-    visual.ringMesh.rotation.z = nowSec * 0.55 + planet.id * 0.17;
-    visual.veilMaterial.opacity = veilOpacity;
-    visual.ringMaterial.opacity = ringOpacity;
-  }
 };
 
 const hideImpactBurstVisual = (visual: ImpactBurstVisual) => {
@@ -949,19 +1249,192 @@ const pruneRocketTrailStates = (
   }
 };
 
+const getBoundaryAsteroidFalloutLayer = (
+  boundaryDebrisVisual: BoundaryDebrisVisual,
+  kind: "primary" | "secondary",
+) =>
+  boundaryDebrisVisual.fallingLayers.find((layer) => layer.kind === kind) ??
+  null;
+
+const getBoundaryAsteroidVisualRadius = (
+  tier: AsteroidTier,
+  radius: number,
+  emphasize = false,
+): number => {
+  const impactRadius = getBoundaryAsteroidImpactRadius(tier, radius);
+  const debrisTuning = getRuntimeTuningDocument().visuals.orbits.boundaryDebris;
+
+  if (tier === "large") {
+    const tuningBoost = Math.max(0, debrisTuning.largeRockScale - 1) * 0.45;
+    const emphasisBoost = emphasize ? 0.35 : 0;
+    return impactRadius * Math.min(2.35, 1 + tuningBoost + emphasisBoost);
+  }
+
+  if (tier === "small") {
+    const tuningBoost = Math.max(0, debrisTuning.smallRockScale - 1) * 0.28;
+    const emphasisBoost = emphasize ? 0.12 : 0;
+    return impactRadius * Math.min(1.7, 1 + tuningBoost + emphasisBoost);
+  }
+
+  return impactRadius;
+};
+
+const updateBoundaryAsteroidFalloutVisual = (
+  boundaryDebrisVisual: BoundaryDebrisVisual,
+  debris: readonly CombatSandboxDebris[],
+  nowSec: number,
+): Record<AsteroidTier, number> => {
+  const highlightedCounts = {
+    large: 0,
+    micro: 0,
+    small: 0,
+  } satisfies Record<AsteroidTier, number>;
+  const highlightedLayers = {
+    large: getBoundaryAsteroidFalloutLayer(boundaryDebrisVisual, "primary"),
+    small: getBoundaryAsteroidFalloutLayer(boundaryDebrisVisual, "secondary"),
+  } as const;
+
+  boundaryDebrisVisual.fallingGroup.visible = false;
+  for (const layer of boundaryDebrisVisual.fallingLayers) {
+    layer.spawnCountdownSec = Number.POSITIVE_INFINITY;
+    layer.shards.length = 0;
+  }
+
+  for (const tier of SANDBOX_BOUNDARY_ASTEROID_FALLOUT_TIERS) {
+    const layer = highlightedLayers[tier];
+    if (layer === null) {
+      continue;
+    }
+
+    let activeCount = 0;
+    for (const piece of debris) {
+      if (piece.asteroidTier !== tier || activeCount >= layer.capacity) {
+        continue;
+      }
+
+      const spinPhase = nowSec * (0.7 + (piece.id % 7) * 0.11);
+      const yaw = Math.atan2(piece.vel.y, piece.vel.x) + (piece.id % 5) * 0.3;
+      const scaleRadius = getBoundaryAsteroidVisualRadius(
+        tier,
+        piece.radius,
+        true,
+      );
+      debrisPosition.set(piece.pos.x, piece.pos.y, 0.08 + activeCount * 1e-4);
+      debrisRotation.setFromAxisAngle(Z_AXIS, yaw);
+      debrisRotationTilt.setFromAxisAngle(
+        X_AXIS,
+        Math.sin(spinPhase + piece.id * 0.17) * 0.36,
+      );
+      debrisRotation.multiply(debrisRotationTilt);
+      debrisRotationTilt.setFromAxisAngle(
+        Y_AXIS,
+        Math.cos(spinPhase * 0.8 + piece.id * 0.13) * 0.28,
+      );
+      debrisRotation.multiply(debrisRotationTilt);
+      debrisRotationTilt.setFromAxisAngle(Z_AXIS, spinPhase * 0.45);
+      debrisRotation.multiply(debrisRotationTilt);
+      debrisScale.set(
+        scaleRadius,
+        scaleRadius * (tier === "large" ? 0.92 : 0.86),
+        Math.max(scaleRadius * (tier === "large" ? 0.84 : 0.76), 1),
+      );
+      debrisMatrix.compose(debrisPosition, debrisRotation, debrisScale);
+      layer.mesh.setMatrixAt(activeCount, debrisMatrix);
+      activeCount += 1;
+    }
+
+    const didHide = hideInstancedMeshRange(
+      layer.mesh,
+      activeCount,
+      layer.mesh.count,
+      debrisMatrix,
+      hiddenDebrisPosition,
+      hiddenDebrisRotation,
+      hiddenDebrisScale,
+    );
+    highlightedCounts[tier] = activeCount;
+    layer.mesh.count = activeCount;
+    layer.mesh.visible = activeCount > 0;
+    if (activeCount > 0 || didHide) {
+      layer.mesh.instanceMatrix.needsUpdate = true;
+    }
+    boundaryDebrisVisual.fallingGroup.visible =
+      boundaryDebrisVisual.fallingGroup.visible || activeCount > 0;
+  }
+
+  return highlightedCounts;
+};
+
 const updateDebrisGeometry = (
   debrisVisual: DebrisVisual,
   debris: readonly CombatSandboxDebris[],
+  highlightedBoundaryAsteroidCounts: Readonly<Record<AsteroidTier, number>>,
   maxSamples: number,
+  nowSec: number,
 ) => {
   const positionArray = debrisVisual.positionAttribute.array as Float32Array;
   const colorArray = debrisVisual.colorAttribute.array as Float32Array;
   const opacityArray = debrisVisual.opacityAttribute.array as Float32Array;
-  const drawCount = Math.min(debris.length, Math.max(0, maxSamples));
+  const sampleBudget = Math.max(0, maxSamples);
+  let drawCount = 0;
+  const boundaryAsteroidCounts = {
+    large: 0,
+    micro: 0,
+    small: 0,
+  } satisfies Record<AsteroidTier, number>;
 
-  for (let index = 0; index < drawCount; index += 1) {
-    const piece = debris[index]!;
-    const offset = index * 3;
+  for (const tier of BOUNDARY_ASTEROID_RENDER_ORDER) {
+    const layer = debrisVisual.boundaryAsteroidLayers[tier];
+    let skippedHighlightedCount = 0;
+    for (const piece of debris) {
+      if (piece.asteroidTier !== tier) {
+        continue;
+      }
+
+      if (skippedHighlightedCount < highlightedBoundaryAsteroidCounts[tier]) {
+        skippedHighlightedCount += 1;
+        continue;
+      }
+
+      const nextIndex = boundaryAsteroidCounts[tier];
+      if (nextIndex < layer.capacity) {
+        const spinPhase = nowSec * (0.7 + (piece.id % 7) * 0.11);
+        const yaw = Math.atan2(piece.vel.y, piece.vel.x) + (piece.id % 5) * 0.3;
+        const scaleRadius = getBoundaryAsteroidVisualRadius(tier, piece.radius);
+        debrisPosition.set(piece.pos.x, piece.pos.y, 2.1 + nextIndex * 1e-4);
+        debrisRotation.setFromAxisAngle(Z_AXIS, yaw);
+        debrisRotationTilt.setFromAxisAngle(
+          X_AXIS,
+          Math.sin(spinPhase + piece.id * 0.17) * 0.36,
+        );
+        debrisRotation.multiply(debrisRotationTilt);
+        debrisRotationTilt.setFromAxisAngle(
+          Y_AXIS,
+          Math.cos(spinPhase * 0.8 + piece.id * 0.13) * 0.28,
+        );
+        debrisRotation.multiply(debrisRotationTilt);
+        debrisRotationTilt.setFromAxisAngle(Z_AXIS, spinPhase * 0.45);
+        debrisRotation.multiply(debrisRotationTilt);
+        debrisScale.set(
+          scaleRadius,
+          scaleRadius * 0.92,
+          Math.max(scaleRadius * 0.84, 1),
+        );
+        debrisMatrix.compose(debrisPosition, debrisRotation, debrisScale);
+        layer.mesh.setMatrixAt(nextIndex, debrisMatrix);
+        boundaryAsteroidCounts[tier] += 1;
+      } else {
+        break;
+      }
+    }
+  }
+
+  for (const piece of debris) {
+    if (piece.asteroidTier !== undefined || drawCount >= sampleBudget) {
+      continue;
+    }
+
+    const offset = drawCount * 3;
     const tint = getCachedColor(piece.color);
 
     positionArray[offset] = piece.pos.x;
@@ -970,13 +1443,36 @@ const updateDebrisGeometry = (
     colorArray[offset] = tint.r;
     colorArray[offset + 1] = tint.g;
     colorArray[offset + 2] = tint.b;
-    opacityArray[index] = 0.9;
+    opacityArray[drawCount] = 0.9;
+    drawCount += 1;
   }
 
   debrisVisual.geometry.setDrawRange(0, drawCount);
   debrisVisual.positionAttribute.needsUpdate = true;
   debrisVisual.colorAttribute.needsUpdate = true;
   debrisVisual.opacityAttribute.needsUpdate = true;
+  debrisVisual.points.visible = drawCount > 0;
+
+  for (const [tier, layer] of Object.entries(
+    debrisVisual.boundaryAsteroidLayers,
+  ) as [AsteroidTier, BoundaryAsteroidLayerVisual][]) {
+    const activeCount = boundaryAsteroidCounts[tier];
+    const didHide = hideInstancedMeshRange(
+      layer.mesh,
+      activeCount,
+      layer.activeCount,
+      debrisMatrix,
+      hiddenDebrisPosition,
+      hiddenDebrisRotation,
+      hiddenDebrisScale,
+    );
+    layer.activeCount = activeCount;
+    layer.mesh.count = activeCount;
+    layer.mesh.visible = activeCount > 0;
+    if (activeCount > 0 || didHide) {
+      layer.mesh.instanceMatrix.needsUpdate = true;
+    }
+  }
 };
 
 const getBudgetedCount = (maxCount: number, budget: number): number =>
@@ -1097,62 +1593,66 @@ const hidePlanetExplosionVisual = (visual: PlanetExplosionVisual) => {
 };
 
 const armPlanetExplosion = ({
-  planet,
+  source,
   startedAtSec,
   visual,
 }: {
-  planet: Pick<
-    CombatSandboxPlanet,
-    "archetype" | "color" | "deathReason" | "id" | "pos" | "radius" | "vel"
-  >;
+  source: {
+    color: string;
+    deathReason?: CombatPlanetDeathReason;
+    id: number;
+    pos: Vec2;
+    radius: number;
+    vel: Vec2;
+  };
   startedAtSec: number;
   visual: PlanetExplosionVisual;
 }): PlanetExplosionState => {
   const rng = mulberry32(
-    (Math.imul(planet.id + 1, 0x9e3779b1) ^ Math.round(startedAtSec * 1000)) >>>
+    (Math.imul(source.id + 1, 0x9e3779b1) ^ Math.round(startedAtSec * 1000)) >>>
       0,
   );
-  const renderRadius = getRenderedPlanetRadius(planet);
+  const renderRadius = source.radius;
   const durationSec =
-    planet.deathReason === "planetCollision"
+    source.deathReason === "planetCollision"
       ? PLANET_EXPLOSION_DURATION_SEC + 0.22
-      : planet.deathReason === "sunCollision" ||
-          planet.deathReason === "neutronStar"
+      : source.deathReason === "sunCollision" ||
+          source.deathReason === "neutronStar"
         ? PLANET_EXPLOSION_DURATION_SEC + 0.12
         : PLANET_EXPLOSION_DURATION_SEC;
   const scatterScale =
-    planet.deathReason === "planetCollision"
+    source.deathReason === "planetCollision"
       ? 1.62
-      : planet.deathReason === "sunCollision" ||
-          planet.deathReason === "neutronStar"
+      : source.deathReason === "sunCollision" ||
+          source.deathReason === "neutronStar"
         ? 1.48
         : 1.34;
   const shockwaveScale =
-    planet.deathReason === "planetCollision"
+    source.deathReason === "planetCollision"
       ? 6.8
-      : planet.deathReason === "sunCollision" ||
-          planet.deathReason === "neutronStar"
+      : source.deathReason === "sunCollision" ||
+          source.deathReason === "neutronStar"
         ? 6.2
         : 5.6;
   visual.glowMaterial.color.copy(
-    getTintedColor(planet.color, -0.04, 0.12, 0.22),
+    getTintedColor(source.color, -0.04, 0.12, 0.22),
   );
   visual.ringMaterial.color.copy(
-    getTintedColor(planet.color, 0.02, 0.16, 0.28),
+    getTintedColor(source.color, 0.02, 0.16, 0.28),
   );
   visual.shockwaveMaterial.color.copy(
-    getTintedColor(planet.color, -0.08, 0.06, 0.38),
+    getTintedColor(source.color, -0.08, 0.06, 0.38),
   );
   visual.coreMaterial.color.copy(
-    new Color("#fff7de").lerp(new Color(planet.color), 0.24),
+    new Color("#fff7de").lerp(new Color(source.color), 0.24),
   );
   visual.chunkMaterials[0].color.copy(
-    getTintedColor(planet.color, -0.02, -0.26, -0.14),
+    getTintedColor(source.color, -0.02, -0.26, -0.14),
   );
   visual.chunkMaterials[1].color.copy(
-    getTintedColor(planet.color, 0.01, -0.08, 0.02),
+    getTintedColor(source.color, 0.01, -0.08, 0.02),
   );
-  visual.group.position.set(planet.pos.x, planet.pos.y, 0);
+  visual.group.position.set(source.pos.x, source.pos.y, 0);
   visual.group.visible = true;
   for (const material of visual.chunkMaterials) {
     material.opacity = 0;
@@ -1198,12 +1698,12 @@ const armPlanetExplosion = ({
 
   return {
     durationSec,
-    origin: { x: planet.pos.x, y: planet.pos.y },
+    origin: { x: source.pos.x, y: source.pos.y },
     radius: renderRadius,
     scatterScale,
     shockwaveScale,
     startedAtSec,
-    velocity: { x: planet.vel.x, y: planet.vel.y },
+    velocity: { x: source.vel.x, y: source.vel.y },
     visual,
   };
 };
@@ -1346,10 +1846,14 @@ export const queueLocalViewportPlanetExplosion = ({
 }: {
   activePlanetExplosions: PlanetExplosionState[];
   inactivePlanetExplosionVisuals: PlanetExplosionVisual[];
-  planet: Pick<
-    CombatSandboxPlanet,
-    "archetype" | "color" | "deathReason" | "id" | "pos" | "radius" | "vel"
-  >;
+  planet: {
+    color: string;
+    deathReason?: CombatPlanetDeathReason;
+    id: number;
+    pos: Vec2;
+    radius: number;
+    vel: Vec2;
+  };
   startedAtSec: number;
 }) => {
   if (
@@ -1369,32 +1873,60 @@ export const queueLocalViewportPlanetExplosion = ({
 
   activePlanetExplosions.push(
     armPlanetExplosion({
-      planet,
+      source: planet,
       startedAtSec,
       visual: explosionVisual,
     }),
   );
 };
 
+export const updateLocalViewportPlanetExplosions = ({
+  activePlanetExplosions,
+  elapsedSec,
+  inactivePlanetExplosionVisuals,
+}: {
+  activePlanetExplosions: PlanetExplosionState[];
+  elapsedSec: number;
+  inactivePlanetExplosionVisuals: PlanetExplosionVisual[];
+}) => {
+  for (let index = activePlanetExplosions.length - 1; index >= 0; index -= 1) {
+    const explosion = activePlanetExplosions[index]!;
+    if (!updatePlanetExplosion(explosion, elapsedSec)) {
+      releasePlanetExplosion(inactivePlanetExplosionVisuals, explosion);
+      activePlanetExplosions.splice(index, 1);
+    }
+  }
+};
+
+const isNearBlackHoleSwallowBand = ({
+  blackHole,
+  margin,
+  pos,
+}: {
+  blackHole: NonNullable<CombatSandboxState["blackHole"]>;
+  margin: number;
+  pos: Vec2;
+}): boolean => len(sub(pos, blackHole.pos)) <= blackHole.killRadius + margin;
+
 export const resetLocalViewportSceneState = ({
+  activeBlackHoleSwallowEffects,
   activeGravityPulse,
   activeBoostBursts,
   boostBurstVisual,
   boundaryDebrisVisual,
   cacheVisuals,
-  cloakVisuals,
   debrisVisual,
   disposeCacheVisual,
-  foresightVisuals,
   gravityPulseVisual,
   hiddenRocketMatrix,
   hiddenRocketPosition,
   hiddenRocketRotation,
   hiddenRocketScale,
-  hiddenTrailUntilByPlanetId,
   hostScene,
   impactBurstVisuals,
+  inactiveBlackHoleSwallowVisuals,
   maxLaunchBurstInstances,
+  blackHoleSwallowTracker,
   renderPlanetsById,
   rocketLaunchBurstPools,
   rocketPools,
@@ -1404,24 +1936,24 @@ export const resetLocalViewportSceneState = ({
   weaponKinds,
   currentState,
 }: {
+  activeBlackHoleSwallowEffects: BlackHoleSwallowState[];
   activeGravityPulse: LocalSandboxGravityPulseState | null;
   activeBoostBursts: BoostBurstState[];
   boostBurstVisual: BoostBurstVisual;
   boundaryDebrisVisual: BoundaryDebrisVisual;
+  blackHoleSwallowTracker: LocalViewportBlackHoleSwallowTracker;
   cacheVisuals: Map<number, CacheVisual>;
-  cloakVisuals: readonly CloakVisual[];
   currentState: CombatSandboxState;
   debrisVisual: DebrisVisual;
   disposeCacheVisual: (visual: CacheVisual) => void;
-  foresightVisuals: ReadonlyMap<number, ForesightVisual>;
   gravityPulseVisual: GravityPulseVisual;
   hiddenRocketMatrix: Matrix4;
   hiddenRocketPosition: Vector3;
   hiddenRocketRotation: Quaternion;
   hiddenRocketScale: Vector3;
-  hiddenTrailUntilByPlanetId: Map<number, number>;
   hostScene: { remove: (object: Group) => void };
   impactBurstVisuals: readonly ImpactBurstVisual[];
+  inactiveBlackHoleSwallowVisuals: BlackHoleSwallowVisual[];
   maxLaunchBurstInstances: Record<RocketKind, number>;
   renderPlanetsById: ReadonlyMap<number, CombatSandboxPlanet>;
   rocketLaunchBurstPools: Record<RocketKind, RocketLaunchBurstPoolVisual>;
@@ -1431,10 +1963,26 @@ export const resetLocalViewportSceneState = ({
   trailVisuals: readonly TrailVisual[];
   weaponKinds: readonly RocketKind[];
 }) => {
-  hiddenTrailUntilByPlanetId.clear();
+  blackHoleSwallowTracker.previousPlanetAliveById.clear();
   for (const planet of currentState.planets) {
-    hiddenTrailUntilByPlanetId.set(planet.id, planet.hideTrailUntilTick);
+    blackHoleSwallowTracker.previousPlanetAliveById.set(
+      planet.id,
+      planet.alive,
+    );
   }
+  blackHoleSwallowTracker.previousRocketsById.clear();
+  blackHoleSwallowTracker.previousCachesById.clear();
+  blackHoleSwallowTracker.previousSunSwallowedAtById.clear();
+  for (const sun of currentState.suns) {
+    blackHoleSwallowTracker.previousSunSwallowedAtById.set(
+      sun.id,
+      sun.swallowedAtSec,
+    );
+  }
+  clearBlackHoleSwallowEffects({
+    activeEffects: activeBlackHoleSwallowEffects,
+    inactiveVisuals: inactiveBlackHoleSwallowVisuals,
+  });
 
   rocketTrailStates.clear();
   for (const trail of trailVisuals) {
@@ -1532,14 +2080,34 @@ export const resetLocalViewportSceneState = ({
     );
   }
 
-  updateDebrisGeometry(debrisVisual, [], 0);
+  updateDebrisGeometry(
+    debrisVisual,
+    [],
+    EMPTY_BOUNDARY_ASTEROID_COUNTS,
+    0,
+    currentState.elapsedSec,
+  );
   debrisVisual.points.visible = false;
-  boundaryDebrisVisual.bandGroup.visible = false;
-  boundaryDebrisVisual.points.visible = false;
-  const foresightPathTuning = getLocalViewportForesightPathTuning();
-  for (const visual of foresightVisuals.values()) {
-    updateForesightVisual(visual, [], foresightPathTuning);
+  for (const layer of Object.values(debrisVisual.boundaryAsteroidLayers)) {
+    const didHide = hideInstancedMeshRange(
+      layer.mesh,
+      0,
+      layer.activeCount,
+      hiddenRocketMatrix,
+      hiddenRocketPosition,
+      hiddenRocketRotation,
+      hiddenRocketScale,
+    );
+    layer.mesh.count = 0;
+    layer.mesh.visible = false;
+    layer.activeCount = 0;
+    if (didHide) {
+      layer.mesh.instanceMatrix.needsUpdate = true;
+    }
   }
+  boundaryDebrisVisual.bandGroup.visible = false;
+  resetAmbientBoundaryDebrisVisual(boundaryDebrisVisual);
+  boundaryDebrisVisual.points.visible = false;
   activeBoostBursts.length = 0;
   updateBoostBurstVisual(
     boostBurstVisual,
@@ -1561,12 +2129,6 @@ export const resetLocalViewportSceneState = ({
     currentState.elapsedSec,
     0,
   );
-  updateCloakVisuals(
-    cloakVisuals,
-    currentState.planets,
-    currentState.tick,
-    currentState.elapsedSec,
-  );
   shieldGroup.visible = false;
   for (const visual of cacheVisuals.values()) {
     hostScene.remove(visual.group);
@@ -1576,11 +2138,13 @@ export const resetLocalViewportSceneState = ({
 };
 
 interface UpdateLocalViewportSceneParams {
+  activeBlackHoleSwallowEffects: BlackHoleSwallowState[];
   activeGravityPulse: LocalSandboxGravityPulseState | null;
   activeBoostBursts: BoostBurstState[];
   activeCacheIds: Set<number>;
   activePlanetExplosions: PlanetExplosionState[];
   activeRocketTrailIds: Set<number>;
+  blackHoleSwallowTracker: LocalViewportBlackHoleSwallowTracker;
   blackHoleGroup: Group;
   blackHoleRing: Mesh;
   boostBurstParticlesPerBurst: number;
@@ -1600,7 +2164,6 @@ interface UpdateLocalViewportSceneParams {
   cannonGroup: Group;
   cannonMuzzleMesh: Mesh;
   cannonStemMesh: Mesh;
-  cloakVisuals: readonly CloakVisual[];
   chromaticAberrationNode: {
     amount: { value: unknown };
     angle: { value: unknown };
@@ -1613,8 +2176,6 @@ interface UpdateLocalViewportSceneParams {
   currentState: CombatSandboxState;
   debrisVisual: DebrisVisual;
   disposeCacheVisual: (visual: CacheVisual) => void;
-  foresightPathsByEntityId: ReadonlyMap<number, readonly Vec2[]>;
-  foresightVisuals: ReadonlyMap<number, ForesightVisual>;
   getCacheIconKey: (contents: CombatSandboxCache["contents"]) => CacheIconKey;
   gravityPulseVisual: GravityPulseVisual;
   hiddenRocketMatrix: Matrix4;
@@ -1623,11 +2184,13 @@ interface UpdateLocalViewportSceneParams {
   hiddenRocketScale: Vector3;
   hostElement: HTMLDivElement;
   impactBurstVisuals: readonly ImpactBurstVisual[];
+  inactiveBlackHoleSwallowVisuals: BlackHoleSwallowVisual[];
   inactivePlanetExplosionVisuals: PlanetExplosionVisual[];
   inputState: {
     aimWorld: Vec2;
     selectedRocketKind: RocketKind;
   };
+  playerBoostHeld: boolean;
   launchBurstsByKind: Record<RocketKind, CombatSandboxRocketLaunchBurst[]>;
   lockRingLockedUniform: { value: unknown };
   lockRingMesh: Mesh;
@@ -1682,11 +2245,13 @@ interface UpdateLocalViewportSceneParams {
 }
 
 export const updateLocalViewportScene = ({
+  activeBlackHoleSwallowEffects,
   activeGravityPulse,
   activeBoostBursts,
   activeCacheIds,
   activePlanetExplosions,
   activeRocketTrailIds,
+  blackHoleSwallowTracker,
   blackHoleGroup,
   blackHoleRing,
   boostBurstParticlesPerBurst,
@@ -1706,15 +2271,12 @@ export const updateLocalViewportScene = ({
   cannonGroup,
   cannonMuzzleMesh,
   cannonStemMesh,
-  cloakVisuals,
   chromaticAberrationNode,
   controlsEnabled,
   createCacheVisual,
   currentState,
   debrisVisual,
   disposeCacheVisual,
-  foresightPathsByEntityId,
-  foresightVisuals,
   getCacheIconKey,
   gravityPulseVisual,
   hiddenRocketMatrix,
@@ -1723,8 +2285,10 @@ export const updateLocalViewportScene = ({
   hiddenRocketScale,
   hostElement,
   impactBurstVisuals,
+  inactiveBlackHoleSwallowVisuals,
   inactivePlanetExplosionVisuals,
   inputState,
+  playerBoostHeld,
   launchBurstsByKind,
   lockRingLockedUniform,
   lockRingMesh,
@@ -1774,10 +2338,22 @@ export const updateLocalViewportScene = ({
     );
   }
 
+  const blackHole = renderState.blackHole;
+
   for (let index = 0; index < sunVisuals.length; index += 1) {
     const visual = sunVisuals[index]!;
-    const sun = renderState.suns[index]!;
+    const sun = renderState.suns[index];
+
+    if (sun === undefined) {
+      visual.coreMesh.visible = false;
+      visual.glowMesh.visible = false;
+      visual.warpMesh.visible = false;
+      continue;
+    }
+
     const profile = getSunVisualProfile(getRuntimeVisuals().suns, index);
+    const previousSwallowedAt =
+      blackHoleSwallowTracker.previousSunSwallowedAtById.get(sun.id) ?? null;
     const swallowFade =
       sun.swallowedAtSec === null
         ? 1
@@ -1816,6 +2392,27 @@ export const updateLocalViewportScene = ({
     visual.coreMesh.rotation.x = 0.38;
     visual.coreMesh.rotation.y = nowSec * visual.rotationSpeed;
     visual.glowMesh.rotation.z = nowSec * (0.05 + index * 0.02);
+
+    if (
+      blackHole !== null &&
+      previousSwallowedAt === null &&
+      sun.swallowedAtSec !== null
+    ) {
+      queueBlackHoleSwallowEffect({
+        activeEffects: activeBlackHoleSwallowEffects,
+        color: profile.glowColor,
+        inactiveVisuals: inactiveBlackHoleSwallowVisuals,
+        radius: sun.radius,
+        startedAtSec: nowSec,
+        startPos: sun.pos,
+        targetPos: blackHole.pos,
+      });
+    }
+
+    blackHoleSwallowTracker.previousSunSwallowedAtById.set(
+      sun.id,
+      sun.swallowedAtSec,
+    );
   }
 
   const neutronStarTuning = getRuntimeTuningDocument().gameplay.neutronStars;
@@ -1885,11 +2482,9 @@ export const updateLocalViewportScene = ({
     const visual = planetVisuals[index]!;
     const trail = trailVisuals[index]!;
     const planet = renderState.planets[index]!;
+    const wasAlive =
+      blackHoleSwallowTracker.previousPlanetAliveById.get(planet.id) ?? true;
     const planetVisualTuning = getPlanetArchetypeVisuals(planet.archetype);
-    const planetOpacity = getCloakPlanetOpacity(
-      planet.hideTrailUntilTick,
-      renderState.tick,
-    );
     const auraRingStops = getPlanetAuraRingStops(
       planetVisualTuning.auraScale,
       planetVisualTuning.auraGap,
@@ -1897,8 +2492,8 @@ export const updateLocalViewportScene = ({
 
     visual.mesh.visible = planet.alive;
     visual.glowMesh.visible = planet.alive;
-    visual.surfaceOpacityUniform.value = planetOpacity;
-    visual.glowOpacityUniform.value = planetOpacity;
+    visual.surfaceOpacityUniform.value = 1;
+    visual.glowOpacityUniform.value = 1;
     trail.points.visible = false;
 
     if (planet.alive) {
@@ -1920,6 +2515,28 @@ export const updateLocalViewportScene = ({
         nowSec * visual.rotationSpeed + visual.spinPhase,
       );
     }
+
+    if (
+      blackHole !== null &&
+      wasAlive &&
+      !planet.alive &&
+      planet.deathReason === "blackHole"
+    ) {
+      queueBlackHoleSwallowEffect({
+        activeEffects: activeBlackHoleSwallowEffects,
+        color: planet.color,
+        inactiveVisuals: inactiveBlackHoleSwallowVisuals,
+        radius: getRenderedPlanetRadius(planet),
+        startedAtSec: nowSec,
+        startPos: planet.pos,
+        targetPos: blackHole.pos,
+      });
+    }
+
+    blackHoleSwallowTracker.previousPlanetAliveById.set(
+      planet.id,
+      planet.alive,
+    );
   }
 
   activeCacheIds.clear();
@@ -1949,6 +2566,42 @@ export const updateLocalViewportScene = ({
     visual.badgeSprite.scale.set(badgeSize, badgeSize, 1);
   }
 
+  if (blackHole !== null) {
+    for (const [
+      cacheId,
+      previousCache,
+    ] of blackHoleSwallowTracker.previousCachesById) {
+      if (
+        activeCacheIds.has(cacheId) ||
+        !isNearBlackHoleSwallowBand({
+          blackHole,
+          margin: Math.max(84, previousCache.radius * 5),
+          pos: previousCache.pos,
+        })
+      ) {
+        continue;
+      }
+
+      queueBlackHoleSwallowEffect({
+        activeEffects: activeBlackHoleSwallowEffects,
+        color: BLACK_HOLE_CACHE_SWALLOW_COLOR,
+        inactiveVisuals: inactiveBlackHoleSwallowVisuals,
+        radius: previousCache.radius * 1.25,
+        startedAtSec: nowSec,
+        startPos: previousCache.pos,
+        targetPos: blackHole.pos,
+      });
+    }
+  }
+
+  blackHoleSwallowTracker.previousCachesById.clear();
+  for (const cache of renderState.caches) {
+    blackHoleSwallowTracker.previousCachesById.set(cache.id, {
+      pos: { ...cache.pos },
+      radius: cache.radius,
+    });
+  }
+
   for (const [cacheId, visual] of cacheVisuals) {
     if (!activeCacheIds.has(cacheId)) {
       scene.remove(visual.group);
@@ -1969,6 +2622,44 @@ export const updateLocalViewportScene = ({
   }
   for (const rocket of renderState.rockets) {
     rocketsByKind[rocket.rocketKind].push(rocket);
+  }
+  if (blackHole !== null) {
+    const currentRocketIds = new Set(
+      renderState.rockets.map((rocket) => rocket.id),
+    );
+    for (const [
+      rocketId,
+      previousRocket,
+    ] of blackHoleSwallowTracker.previousRocketsById) {
+      if (
+        currentRocketIds.has(rocketId) ||
+        !isNearBlackHoleSwallowBand({
+          blackHole,
+          margin: Math.max(64, previousRocket.radius * 9),
+          pos: previousRocket.pos,
+        })
+      ) {
+        continue;
+      }
+
+      queueBlackHoleSwallowEffect({
+        activeEffects: activeBlackHoleSwallowEffects,
+        color: BLACK_HOLE_ROCKET_SWALLOW_COLOR,
+        inactiveVisuals: inactiveBlackHoleSwallowVisuals,
+        radius: Math.max(previousRocket.radius * 2.6, 12),
+        startedAtSec: nowSec,
+        startPos: previousRocket.pos,
+        targetPos: blackHole.pos,
+      });
+    }
+  }
+  blackHoleSwallowTracker.previousRocketsById.clear();
+  for (const rocket of renderState.rockets) {
+    blackHoleSwallowTracker.previousRocketsById.set(rocket.id, {
+      pos: { ...rocket.pos },
+      radius: rocket.radius,
+      rocketKind: rocket.rocketKind,
+    });
   }
   for (const burst of renderState.launchBursts) {
     launchBurstsByKind[burst.rocketKind].push(burst);
@@ -2409,46 +3100,63 @@ export const updateLocalViewportScene = ({
       launchBurstCount > 0 || clearedLaunchBurstTail;
   }
 
-  updateDebrisGeometry(debrisVisual, renderState.debris, maxDebrisSamples);
-  debrisVisual.points.visible =
-    maxDebrisSamples > 0 && renderState.debris.length > 0;
   const arenaRadius = Math.max(
     0,
     getRuntimeTuningDocument().gameplay.arena.radius,
   );
   updateAmbientBoundaryDebrisVisual({
+    blackHoleBody:
+      renderState.blackHole === null
+        ? null
+        : {
+            pos: renderState.blackHole.pos,
+            radius: renderState.blackHole.killRadius,
+          },
     ...getAmbientBoundaryDebrisRadii(arenaRadius),
+    enableFallingDebris: false,
     nowSec,
+    neutronStarBodies: renderState.neutronStars,
     visual: boundaryDebrisVisual,
+    planetBodies: renderState.planets,
+    sunBodies: renderState.suns,
   });
+  const highlightedBoundaryAsteroidCounts = updateBoundaryAsteroidFalloutVisual(
+    boundaryDebrisVisual,
+    renderState.debris,
+    nowSec,
+  );
+  updateDebrisGeometry(
+    debrisVisual,
+    renderState.debris,
+    highlightedBoundaryAsteroidCounts,
+    maxDebrisSamples,
+    nowSec,
+  );
   while (
     activeBoostBursts.length > 0 &&
     nowSec - activeBoostBursts[0]!.startedAtSec > BOOST_BURST_DURATION_SEC
   ) {
     activeBoostBursts.shift();
   }
-  const foresightPathTuning = getLocalViewportForesightPathTuning();
-  for (const [entityId, visual] of foresightVisuals) {
-    const bodySurface = getForesightBodySurface(
-      entityId,
-      renderPlanetsById,
-      renderSunsById,
-    );
-    const visiblePath =
-      bodySurface === null
-        ? (foresightPathsByEntityId.get(entityId) ?? [])
-        : clipForesightPathAtDistance(
-            foresightPathsByEntityId.get(entityId) ?? [],
-            bodySurface.hiddenRadius + foresightPathTuning.leadGap,
-          );
-    updateForesightVisual(visual, visiblePath, foresightPathTuning);
-  }
+  const playerBoostDirectionOverride =
+    playerBoostHeld && playerPlanet !== null && playerPlanet.alive
+      ? (() => {
+          const aimDelta = sub(inputState.aimWorld, playerPlanet.pos);
+          return len(aimDelta) > 0.001
+            ? {
+                direction: normalizeVec2(aimDelta),
+                planetId: playerPlanet.id,
+              }
+            : null;
+        })()
+      : null;
   updateBoostBurstVisual(
     boostBurstVisual,
     activeBoostBursts,
     renderPlanetsById,
     boostBurstParticlesPerBurst,
     nowSec,
+    playerBoostDirectionOverride,
   );
   updateGravityPulseVisual(
     gravityPulseVisual,
@@ -2463,19 +3171,11 @@ export const updateLocalViewportScene = ({
     renderState.elapsedSec,
     maxVisibleImpactBursts,
   );
-  updateCloakVisuals(
-    cloakVisuals,
-    renderState.planets,
-    renderState.tick,
-    nowSec,
-  );
-  for (let index = activePlanetExplosions.length - 1; index >= 0; index -= 1) {
-    const explosion = activePlanetExplosions[index]!;
-    if (!updatePlanetExplosion(explosion, renderState.elapsedSec)) {
-      releasePlanetExplosion(inactivePlanetExplosionVisuals, explosion);
-      activePlanetExplosions.splice(index, 1);
-    }
-  }
+  updateLocalViewportPlanetExplosions({
+    activePlanetExplosions,
+    elapsedSec: renderState.elapsedSec,
+    inactivePlanetExplosionVisuals,
+  });
 
   const shieldLoadRatio =
     currentState.player.shieldMaxLoad > 0
@@ -2690,21 +3390,20 @@ export const updateLocalViewportScene = ({
     lockRingMesh.visible = false;
   }
 
-  blackHoleGroup.visible = renderState.blackHole !== null;
-  if (renderState.blackHole !== null) {
-    blackHoleGroup.position.set(
-      renderState.blackHole.pos.x,
-      renderState.blackHole.pos.y,
-      4,
-    );
-    const blackHoleScale =
-      renderState.blackHole.killRadius /
-      Math.max(1, BLACK_HOLE_SPEC.killRadius);
+  blackHoleGroup.visible = blackHole !== null;
+  if (blackHole !== null) {
+    blackHoleGroup.position.set(blackHole.pos.x, blackHole.pos.y, 4);
+    const blackHoleScale = getBlackHoleVisualScale(blackHole.killRadius);
     blackHoleGroup.scale.set(blackHoleScale, blackHoleScale, 1);
     blackHoleRing.rotation.z = nowSec * 0.16;
   } else {
     blackHoleGroup.scale.set(1, 1, 1);
   }
+  updateBlackHoleSwallowEffects({
+    activeEffects: activeBlackHoleSwallowEffects,
+    inactiveVisuals: inactiveBlackHoleSwallowVisuals,
+    nowSec,
+  });
 
   const debug = getSandboxDebugSnapshot(currentState);
   const chromaticPressure =

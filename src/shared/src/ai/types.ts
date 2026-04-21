@@ -69,9 +69,7 @@ export interface CombatAiSelfState {
   cooldowns: PlanetPrivateState["cooldowns"];
   boostCharges: number;
   gravityPulseHeld: boolean;
-  cloakHeld: boolean;
   nextShieldExt: boolean;
-  nextForesightExt: boolean;
 }
 
 export interface CombatAiThreat {
@@ -134,9 +132,7 @@ export interface CombatAiPerception {
   explore: CombatAiExploreFact | null;
   shieldReady: boolean;
   boostReady: boolean;
-  foresightReady: boolean;
   gravityPulseHeld: boolean;
-  cloakHeld: boolean;
 }
 
 export interface CombatAiIntentScore {
@@ -223,9 +219,7 @@ export interface CombatAiAbilityPolicy {
   shieldDir?: Vec2;
   boost: boolean;
   boostDir?: Vec2;
-  foresight: boolean;
   gravityPulse: boolean;
-  cloak: boolean;
   reason: string[];
 }
 

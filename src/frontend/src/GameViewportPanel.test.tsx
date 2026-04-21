@@ -68,7 +68,6 @@ const createControllerMock = (): GameViewportController =>
     setBoostSetting: vi.fn(),
     setBlackHoleSetting: vi.fn(),
     setCacheBadgeScale: vi.fn(),
-    setForesightSetting: vi.fn(),
     setPlanetBodyScale: vi.fn(),
     setPlanetAuraGap: vi.fn(),
     setPlanetAuraScale: vi.fn(),
@@ -156,18 +155,21 @@ describe("GameViewportPanel", () => {
   it("forwards the requested display mode into the viewport", () => {
     createGameViewportMock.mockReturnValue(vi.fn());
 
-    render(<GameViewportPanel displayMode="vectorAsteroids" />);
+    render(<GameViewportPanel displayMode="vhs" />);
 
     expect(createGameViewportMock).toHaveBeenCalledWith(
       expect.any(HTMLDivElement),
       expect.objectContaining({
-        displayMode: "vectorAsteroids",
+        displayMode: "vhs",
       }),
     );
     expect(combatHudSpy.mock.lastCall?.[0]).toEqual(
       expect.objectContaining({
-        displayMode: "vectorAsteroids",
+        displayMode: "vhs",
       }),
+    );
+    expect(screen.getByTestId("combat-hud").parentElement).toHaveClass(
+      "hud-root--inside-crt",
     );
   });
 });

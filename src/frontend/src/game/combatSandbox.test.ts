@@ -6,8 +6,11 @@ import {
   consumeBlackHoleBodies,
   FIXED_STEP_SEC,
   GRAVITY_PULSE_RADIUS,
+  getBlackHoleKillRadiusAtElapsedSec,
+  getBlackHoleMassAtElapsedSec,
   getOrbitPatternTrack,
   getSeekerLockTicks,
+  mulberry32,
   PLANET_HP,
   ROCKET_SPECS,
   sampleOrbitPatternTrack,
@@ -22,7 +25,6 @@ import {
   describeWildcard,
   getActiveCombatSuns,
   getSandboxDebugSnapshot,
-  getSandboxResetReason,
   interpolateSandboxState,
   stepSandbox,
 } from "./combatSandbox";
@@ -42,6 +44,13 @@ const GROWING_BLACK_HOLE_SPEC: BlackHoleSpec = {
   rampSec: 0.1,
 };
 
+const ACTIVE_BLACK_HOLE_SPEC: BlackHoleSpec = {
+  spawnSec: 0,
+  mass: 50_000_000,
+  killRadius: 150,
+  rampSec: 0,
+};
+
 beforeEach(() => {
   applyRuntimeTuningDocument(CURRENT_GAME_TUNING);
 });
@@ -52,11 +61,9 @@ const createStepInput = (
   aimWorld: { x: 220, y: 0 },
   selectedRocketKind: "light",
   fireRequested: false,
-  foresightRequested: false,
   shieldRequested: false,
   boostRequested: false,
   gravityPulseRequested: false,
-  cloakRequested: false,
   ...overrides,
 });
 
@@ -181,7 +188,6 @@ describe("combatSandbox", () => {
     expect(state.playerBot).toMatchObject({
       difficulty: "hard",
     });
-    expect(state.playerLossResetsEnabled).toBe(false);
     expect(state.planets).toHaveLength(7);
     expect(state.bots).toHaveLength(6);
     expect(focusedPlanet?.displayName).toBe("Atlas");
@@ -189,6 +195,7 @@ describe("combatSandbox", () => {
 
   it("uses runtime orbit tuning for the default sandbox seeds", () => {
     const tunedDocument = structuredClone(CURRENT_GAME_TUNING);
+    tunedDocument.gameplay.orbits.starMotion.mode = "physicsSeed";
     tunedDocument.gameplay.orbits.planetCircleRadius = 1800;
     tunedDocument.visuals.planets.archetypes.terra.bodyScale = 1.5;
     tunedDocument.gameplay.orbits.suns[0] = {
@@ -292,6 +299,7 @@ describe("combatSandbox", () => {
 
   it("scales default sun start spacing and derived velocity around the system center", () => {
     const tunedDocument = structuredClone(CURRENT_GAME_TUNING);
+    tunedDocument.gameplay.orbits.starMotion.mode = "physicsSeed";
     tunedDocument.gameplay.orbits.sunStartDistanceScale = 1.5;
     applyRuntimeTuningDocument(tunedDocument);
 
@@ -463,7 +471,6 @@ describe("combatSandbox", () => {
 
     expect(playerPlanet?.alive).toBe(false);
     expect(playerPlanet?.deathReason).toBe("boundary");
-    expect(next.playerLostAtSec).toBe(next.elapsedSec);
   });
 
   it("applies boundary damage instead of instant death when killzone is disabled", () => {
@@ -494,15 +501,14 @@ describe("combatSandbox", () => {
     expect(playerPlanet?.alive).toBe(true);
     expect(playerPlanet?.hp).toBeLessThan(PLANET_HP);
     expect(playerPlanet?.deathReason).toBeUndefined();
-    expect(next.playerLostAtSec).toBeNull();
   });
 
   it("applies size-based damage when inward-drifting boundary debris hits a planet", () => {
     const tunedDocument = structuredClone(CURRENT_GAME_TUNING);
     tunedDocument.gameplay.arena.asteroidField = {
-      large: { damage: 12, randomization: 0 },
-      micro: { damage: 0.6, randomization: 0 },
-      small: { damage: 3, randomization: 0 },
+      large: { damage: 12, randomization: 0, spawnRatePerSec: 0.12 },
+      micro: { damage: 0.6, randomization: 0, spawnRatePerSec: 2.8 },
+      small: { damage: 3, randomization: 0, spawnRatePerSec: 0.55 },
     };
     applyRuntimeTuningDocument(tunedDocument);
 
@@ -547,6 +553,115 @@ describe("combatSandbox", () => {
       false,
     );
     expect(next.debris.length).toBeGreaterThan(0);
+  });
+
+  it("applies large asteroid damage across the visible large-rock impact radius", () => {
+    const tunedDocument = structuredClone(CURRENT_GAME_TUNING);
+    tunedDocument.gameplay.arena.asteroidField = {
+      large: { damage: 12, randomization: 0, spawnRatePerSec: 0.12 },
+      micro: { damage: 0.6, randomization: 0, spawnRatePerSec: 2.8 },
+      small: { damage: 3, randomization: 0, spawnRatePerSec: 0.55 },
+    };
+    applyRuntimeTuningDocument(tunedDocument);
+
+    const { state } = createLinearCombatState();
+    const playerPlanetIndex = state.planets.findIndex(
+      (planet) => planet.id === state.player.planetId,
+    );
+    state.debris = [
+      {
+        asteroidTier: "large",
+        color: "#ffb87a",
+        id: state.nextEntityId,
+        kind: "debris",
+        ownerPlayerId: undefined,
+        pos: { x: 50, y: 0 },
+        radius: 16,
+        ttlUntilTick: state.tick + 12,
+        vel: { x: 0, y: 0 },
+      },
+    ];
+    state.nextEntityId += 1;
+
+    state.planets[playerPlanetIndex] = {
+      ...state.planets[playerPlanetIndex]!,
+      pos: { x: 0, y: 0 },
+      vel: { x: 0, y: 0 },
+    };
+    const next = stepSandbox(
+      state,
+      createStepInput(),
+      DISABLED_BLACK_HOLE_SPEC,
+    );
+    const playerPlanet = next.planets.find(
+      (planet) => planet.id === state.player.planetId,
+    );
+
+    expect(playerPlanet?.alive).toBe(true);
+    expect(playerPlanet?.hp).toBeCloseTo(PLANET_HP - 12, 6);
+    expect(next.impactBursts).toHaveLength(1);
+    expect(next.debris.some((piece) => piece.asteroidTier === "large")).toBe(
+      false,
+    );
+  });
+
+  it("lets spawned boundary asteroids reach and damage a central target in the live arena", () => {
+    const tunedDocument = structuredClone(CURRENT_GAME_TUNING);
+    tunedDocument.gameplay.arena.instantDeath = false;
+    applyRuntimeTuningDocument(tunedDocument);
+
+    const { state } = createLinearCombatState();
+    const playerPlanetId = state.player.planetId;
+
+    state.rng = mulberry32(0x1badf00d);
+    state.suns = [];
+    state.caches = [];
+    state.cacheRespawnAtTicks = [];
+    state.debris = [];
+    state.impactBursts = [];
+    state.planets = state.planets.map((planet) =>
+      planet.id === playerPlanetId
+        ? {
+            ...planet,
+            pos: { x: 0, y: 0 },
+            vel: { x: 0, y: 0 },
+            radius: 1300,
+            alive: true,
+            hp: PLANET_HP,
+            deathReason: undefined,
+            debuffs: {},
+          }
+        : {
+            ...planet,
+            pos: { x: 50_000 + planet.id, y: 0 },
+            vel: { x: 0, y: 0 },
+            alive: false,
+            hp: 0,
+            deathReason: "rocket",
+            debuffs: {},
+          },
+    );
+
+    let current = state;
+    let tookDamage = false;
+    const maxSteps = Math.round(20 / FIXED_STEP_SEC);
+
+    for (let step = 0; step < maxSteps; step += 1) {
+      current = stepSandbox(
+        current,
+        createStepInput(),
+        DISABLED_BLACK_HOLE_SPEC,
+      );
+      const playerPlanet = current.planets.find(
+        (planet) => planet.id === playerPlanetId,
+      );
+      if (playerPlanet === undefined || playerPlanet.hp < PLANET_HP) {
+        tookDamage = true;
+        break;
+      }
+    }
+
+    expect(tookDamage).toBe(true);
   });
 
   it("assigns local pilot display names for the player and bots", () => {
@@ -1155,53 +1270,6 @@ describe("combatSandbox", () => {
     expect(toggledOn.player.shieldActive).toBe(true);
   });
 
-  it("lets foresight reactivate from partial charge instead of waiting for full refill", () => {
-    const { state } = createLinearCombatState();
-
-    const activated = stepSandbox(
-      state,
-      createStepInput({ foresightRequested: true }),
-      DISABLED_BLACK_HOLE_SPEC,
-    );
-    expect(activated.player.foresightActiveUntilTick).toBeGreaterThan(
-      activated.tick,
-    );
-    const fullDurationRemaining =
-      activated.player.foresightActiveUntilTick - activated.tick;
-    let partiallyDrained = activated;
-    for (let index = 0; index < 12; index += 1) {
-      partiallyDrained = stepSandbox(
-        partiallyDrained,
-        createStepInput(),
-        DISABLED_BLACK_HOLE_SPEC,
-      );
-    }
-
-    const toggledOff = stepSandbox(
-      partiallyDrained,
-      createStepInput({ foresightRequested: true }),
-      DISABLED_BLACK_HOLE_SPEC,
-    );
-    expect(toggledOff.player.foresightActiveUntilTick).toBeLessThanOrEqual(
-      toggledOff.tick,
-    );
-    expect(toggledOff.player.foresightCooldownUntilTick).toBeGreaterThan(
-      toggledOff.tick,
-    );
-
-    const reactivated = stepSandbox(
-      toggledOff,
-      createStepInput({ foresightRequested: true }),
-      DISABLED_BLACK_HOLE_SPEC,
-    );
-    expect(reactivated.player.foresightActiveUntilTick).toBeGreaterThan(
-      reactivated.tick,
-    );
-    expect(
-      reactivated.player.foresightActiveUntilTick - reactivated.tick,
-    ).toBeLessThan(fullDurationRemaining);
-  });
-
   it("drains shield load while it is active", () => {
     const { state } = createLinearCombatState();
     state.player.shieldActive = true;
@@ -1263,49 +1331,6 @@ describe("combatSandbox", () => {
     expect(next.cacheRespawnAtTicks[0]).toBeGreaterThan(next.tick);
   });
 
-  it("refills foresight to a full extended charge when the foresight cache is delivered", () => {
-    const { state } = createLinearCombatState();
-    const playerPlanet = state.planets.find(
-      (planet) => planet.id === state.player.planetId,
-    )!;
-    const baseDurationTicks = state.player.foresightDurationTicks;
-
-    state.player.foresightCooldownUntilTick =
-      state.tick + baseDurationTicks * 4;
-    state.caches = [
-      {
-        id: 602,
-        kind: "cache",
-        contents: { kind: "foresightExt" },
-        pos: { x: playerPlanet.pos.x, y: playerPlanet.pos.y },
-        vel: { x: 0, y: 0 },
-        radius: 24,
-      },
-    ];
-
-    const delivered = stepSandbox(
-      state,
-      createStepInput(),
-      DISABLED_BLACK_HOLE_SPEC,
-    );
-
-    expect(delivered.player.nextForesightExt).toBe(true);
-    expect(delivered.player.foresightCooldownUntilTick).toBeLessThanOrEqual(
-      delivered.tick,
-    );
-
-    const activated = stepSandbox(
-      delivered,
-      createStepInput({ foresightRequested: true }),
-      DISABLED_BLACK_HOLE_SPEC,
-    );
-
-    expect(activated.player.nextForesightExt).toBe(false);
-    expect(
-      activated.player.foresightActiveUntilTick - activated.tick,
-    ).toBeGreaterThan(baseDurationTicks);
-  });
-
   it("does not mutate the prior state when repair caches are collected", () => {
     const { state } = createLinearCombatState();
     const playerPlanetIndex = state.planets.findIndex(
@@ -1338,25 +1363,6 @@ describe("combatSandbox", () => {
 
     expect(state.planets[playerPlanetIndex]!.hp).toBe(hpBefore);
     expect(delivered.planets[playerPlanetIndex]!.hp).toBeGreaterThan(hpBefore);
-  });
-
-  it("cloaks the player planet when cloak is activated", () => {
-    const { state } = createLinearCombatState();
-    state.player.cloakHeld = true;
-
-    const next = stepSandbox(
-      state,
-      createStepInput({
-        cloakRequested: true,
-      }),
-      DISABLED_BLACK_HOLE_SPEC,
-    );
-    const playerPlanetAfter = next.planets.find(
-      (planet) => planet.id === next.player.planetId,
-    )!;
-
-    expect(next.player.cloakHeld).toBe(false);
-    expect(playerPlanetAfter.hideTrailUntilTick).toBeGreaterThan(next.tick);
   });
 
   it("pushes nearby entities outward when gravity pulse is activated", () => {
@@ -1476,49 +1482,6 @@ describe("combatSandbox", () => {
     expect(distanceAfter).toBeGreaterThan(distanceBefore + 20);
   });
 
-  it("consumes cloak and gravity pulse independently in the same step", () => {
-    const { state, enemyPlanetId } = createLinearCombatState();
-    state.player.gravityPulseHeld = true;
-    state.player.cloakHeld = true;
-    const playerPlanetBefore = state.planets.find(
-      (planet) => planet.id === state.player.planetId,
-    )!;
-    const enemyPlanetBefore = state.planets.find(
-      (planet) => planet.id === enemyPlanetId,
-    )!;
-    const playerHideTrailBefore = playerPlanetBefore.hideTrailUntilTick;
-    const enemyVelBefore = { ...enemyPlanetBefore.vel };
-
-    const next = stepSandbox(
-      state,
-      createStepInput({
-        gravityPulseRequested: true,
-        cloakRequested: true,
-      }),
-      DISABLED_BLACK_HOLE_SPEC,
-    );
-    const playerPlanetAfter = next.planets.find(
-      (planet) => planet.id === next.player.planetId,
-    )!;
-    const enemyPlanetAfter = next.planets.find(
-      (planet) => planet.id === enemyPlanetId,
-    )!;
-
-    expect(next.player.gravityPulseHeld).toBe(false);
-    expect(next.player.cloakHeld).toBe(false);
-    expect(playerPlanetAfter.hideTrailUntilTick).toBeGreaterThan(next.tick);
-    expect(enemyPlanetAfter.vel.x).toBeGreaterThan(0);
-    expect(state.player.gravityPulseHeld).toBe(true);
-    expect(state.player.cloakHeld).toBe(true);
-    expect(
-      state.planets.find((planet) => planet.id === state.player.planetId)!
-        .hideTrailUntilTick,
-    ).toBe(playerHideTrailBefore);
-    expect(
-      state.planets.find((planet) => planet.id === enemyPlanetId)!.vel,
-    ).toEqual(enemyVelBefore);
-  });
-
   it("interpolates rockets by id but keeps dead planets on their current frame", () => {
     const previous = createLinearCombatState().state;
     const current = createLinearCombatState().state;
@@ -1553,10 +1516,32 @@ describe("combatSandbox", () => {
       pos: { x: 260, y: 24 },
       vel: { x: 20, y: 0 },
     };
+    previous.neutronStars = [
+      {
+        id: 17,
+        kind: "neutronStar",
+        mass: 4_000_000,
+        pos: { x: 120, y: -40 },
+        radius: 36,
+        vel: { x: -12, y: 4 },
+      },
+    ];
+    current.neutronStars = [
+      {
+        id: 17,
+        kind: "neutronStar",
+        mass: 4_000_000,
+        pos: { x: 200, y: 40 },
+        radius: 36,
+        vel: { x: 20, y: 28 },
+      },
+    ];
 
     const interpolated = interpolateSandboxState(previous, current, 0.25);
 
     expect(interpolated.rockets[0]!.pos.x).toBeCloseTo(30);
+    expect(interpolated.neutronStars[0]!.pos).toEqual({ x: 140, y: -20 });
+    expect(interpolated.neutronStars[0]!.vel).toEqual({ x: -4, y: 10 });
     expect(interpolated.planets[previousEnemyIndex]!.pos).toEqual(
       current.planets[previousEnemyIndex]!.pos,
     );
@@ -1591,7 +1576,6 @@ describe("combatSandbox", () => {
 
     state.player.selectedRocketKind = "heavy";
     state.player.lockTargetId = enemyPlanet.id;
-    state.player.cloakHeld = true;
     state.blackHole = {
       id: 9_001,
       kind: "blackHole",
@@ -1619,10 +1603,12 @@ describe("combatSandbox", () => {
     expect(snapshot.blackHoleActive).toBe(true);
     expect(snapshot.cacheCount).toBe(1);
     expect(snapshot.gravityPulseHeld).toBe(false);
-    expect(snapshot.cloakHeld).toBe(true);
     expect(
-      describeCacheContents({ kind: "wildcard", wildcard: { kind: "cloak" } }),
-    ).toBe("Wildcard: Cloak");
+      describeCacheContents({
+        kind: "wildcard",
+        wildcard: { kind: "gravityPulse" },
+      }),
+    ).toBe("Wildcard: Gravity Pulse");
     expect(describeWildcard("gravityPulse")).toBe("Gravity Pulse");
   });
 
@@ -1652,7 +1638,7 @@ describe("combatSandbox", () => {
       if (planet.id === enemyPlanetId) {
         return {
           ...planet,
-          pos: { x: 60, y: 0 },
+          pos: { x: 40, y: 0 },
           vel: { x: 0, y: 0 },
           alive: true,
           hp: PLANET_HP,
@@ -1677,6 +1663,209 @@ describe("combatSandbox", () => {
     )!;
     expect(nextEnemy.alive).toBe(false);
     expect(nextEnemy.deathReason).toBe("blackHole");
+    expect(next.blackHole).toEqual(expectedBlackHole);
+  });
+
+  it("waits for the planet center to cross the black-hole horizon", () => {
+    const { state, enemyPlanetId } = createLinearCombatState();
+    const playerPlanetId = state.player.planetId;
+    const centerCrossingSpec: BlackHoleSpec = {
+      ...GROWING_BLACK_HOLE_SPEC,
+      mass: 0,
+    };
+
+    state.elapsedSec = 1;
+    state.blackHole = {
+      id: 9_001,
+      kind: "blackHole",
+      mass: centerCrossingSpec.mass,
+      killRadius: centerCrossingSpec.killRadius,
+      pos: { x: 0, y: 0 },
+      radius: centerCrossingSpec.killRadius,
+      vel: { x: 0, y: 0 },
+    };
+    state.planets = state.planets.map((planet) => {
+      if (planet.id === playerPlanetId) {
+        return {
+          ...planet,
+          pos: { x: 220, y: 0 },
+          vel: { x: 0, y: 0 },
+        };
+      }
+
+      if (planet.id === enemyPlanetId) {
+        return {
+          ...planet,
+          pos: { x: 60, y: 0 },
+          vel: { x: 0, y: 0 },
+          alive: true,
+          hp: PLANET_HP,
+          deathReason: undefined,
+        };
+      }
+
+      return planet;
+    });
+
+    const next = stepSandbox(state, createStepInput(), centerCrossingSpec);
+    const nextEnemy = next.planets.find(
+      (planet) => planet.id === enemyPlanetId,
+    )!;
+
+    expect(nextEnemy.alive).toBe(true);
+    expect(nextEnemy.deathReason).toBeUndefined();
+  });
+
+  it("ramps the black hole kill radius gradually over the collapse window", () => {
+    const { state } = createLinearCombatState();
+
+    state.elapsedSec = GROWING_BLACK_HOLE_SPEC.rampSec / 2;
+    state.planets = state.planets.map((planet) =>
+      planet.alive
+        ? {
+            ...planet,
+            pos: { x: 260 + planet.id, y: 0 },
+            vel: { x: 0, y: 0 },
+          }
+        : planet,
+    );
+
+    const next = stepSandbox(state, createStepInput(), GROWING_BLACK_HOLE_SPEC);
+    const expectedKillRadius = getBlackHoleKillRadiusAtElapsedSec(
+      state.elapsedSec,
+      GROWING_BLACK_HOLE_SPEC,
+    );
+    const expectedMass = getBlackHoleMassAtElapsedSec(
+      state.elapsedSec,
+      GROWING_BLACK_HOLE_SPEC,
+    );
+
+    expect(next.blackHole).not.toBeNull();
+    expect(next.blackHole?.killRadius).toBeCloseTo(expectedKillRadius, 6);
+    expect(next.blackHole?.radius).toBeCloseTo(expectedKillRadius, 6);
+    expect(next.blackHole?.mass).toBeCloseTo(expectedMass, 6);
+    expect(next.blackHole?.killRadius).toBeGreaterThan(0);
+    expect(next.blackHole?.killRadius).toBeLessThan(
+      GROWING_BLACK_HOLE_SPEC.killRadius,
+    );
+  });
+
+  it("pulls fixed-pattern suns inward as the black hole collapse starts", () => {
+    const tunedDocument = structuredClone(CURRENT_GAME_TUNING);
+    tunedDocument.gameplay.orbits.starMotion = {
+      mode: "fixedPattern",
+      patternId: "equilateral-circle",
+      speed: 0,
+    };
+    tunedDocument.gameplay.orbits.starPatternDistanceScale = 1.8;
+    applyRuntimeTuningDocument(tunedDocument);
+
+    const state = createSandboxState(DEFAULT_ORBIT_PRESET, {
+      botsEnabled: false,
+    });
+    state.elapsedSec = GROWING_BLACK_HOLE_SPEC.rampSec / 2;
+
+    const next = stepSandbox(state, createStepInput(), GROWING_BLACK_HOLE_SPEC);
+    expect(state.starMotion.mode).toBe("fixedPattern");
+    expect(next.starMotion.mode).toBe("fixedPattern");
+    if (
+      state.starMotion.mode !== "fixedPattern" ||
+      next.starMotion.mode !== "fixedPattern"
+    ) {
+      throw new Error("expected fixed-pattern star motion");
+    }
+
+    expect(next.starMotion.distanceScale).toBeLessThan(
+      state.starMotion.distanceScale,
+    );
+    expect(Math.hypot(next.suns[0]!.pos.x, next.suns[0]!.pos.y)).toBeLessThan(
+      Math.hypot(state.suns[0]!.pos.x, state.suns[0]!.pos.y),
+    );
+    expect(next.suns[0]!.vel.x).not.toBeCloseTo(state.suns[0]!.vel.x, 6);
+    expect(Math.hypot(next.suns[0]!.vel.x, next.suns[0]!.vel.y)).toBeGreaterThan(
+      Math.hypot(state.suns[0]!.vel.x, state.suns[0]!.vel.y),
+    );
+  });
+
+  it("swallows fixed-pattern suns once the collapse finishes", () => {
+    const tunedDocument = structuredClone(CURRENT_GAME_TUNING);
+    tunedDocument.gameplay.orbits.starMotion = {
+      mode: "fixedPattern",
+      patternId: "equilateral-circle",
+      speed: 0,
+    };
+    tunedDocument.gameplay.orbits.starPatternDistanceScale = 1.8;
+    applyRuntimeTuningDocument(tunedDocument);
+
+    const state = createSandboxState(DEFAULT_ORBIT_PRESET, {
+      botsEnabled: false,
+    });
+    state.elapsedSec = GROWING_BLACK_HOLE_SPEC.rampSec;
+
+    const next = stepSandbox(state, createStepInput(), GROWING_BLACK_HOLE_SPEC);
+
+    expect(getActiveCombatSuns(next.suns)).toHaveLength(0);
+    expect(next.blackHole).not.toBeNull();
+    expect(next.blackHole!.mass).toBeGreaterThan(
+      getBlackHoleMassAtElapsedSec(
+        state.elapsedSec,
+        GROWING_BLACK_HOLE_SPEC,
+      ),
+    );
+  });
+
+  it("keeps swallowed-body growth on top of the current ramped black hole size", () => {
+    const { state, enemyPlanetId } = createLinearCombatState();
+    const playerPlanetId = state.player.planetId;
+
+    state.elapsedSec = GROWING_BLACK_HOLE_SPEC.rampSec / 2;
+    state.planets = state.planets.map((planet) => {
+      if (planet.id === playerPlanetId) {
+        return {
+          ...planet,
+          pos: { x: 220, y: 0 },
+          vel: { x: 0, y: 0 },
+        };
+      }
+
+      if (planet.id === enemyPlanetId) {
+        return {
+          ...planet,
+          pos: { x: 20, y: 0 },
+          vel: { x: 0, y: 0 },
+          alive: true,
+          hp: PLANET_HP,
+          deathReason: undefined,
+        };
+      }
+
+      return planet;
+    });
+
+    const expectedBlackHole = consumeBlackHoleBodies(
+      {
+        id: 9_001,
+        kind: "blackHole" as const,
+        mass: getBlackHoleMassAtElapsedSec(
+          state.elapsedSec,
+          GROWING_BLACK_HOLE_SPEC,
+        ),
+        killRadius: getBlackHoleKillRadiusAtElapsedSec(
+          state.elapsedSec,
+          GROWING_BLACK_HOLE_SPEC,
+        ),
+        pos: { x: 0, y: 0 },
+        radius: getBlackHoleKillRadiusAtElapsedSec(
+          state.elapsedSec,
+          GROWING_BLACK_HOLE_SPEC,
+        ),
+        vel: { x: 0, y: 0 },
+      },
+      [state.planets.find((planet) => planet.id === enemyPlanetId)!],
+    );
+
+    const next = stepSandbox(state, createStepInput(), GROWING_BLACK_HOLE_SPEC);
+
     expect(next.blackHole).toEqual(expectedBlackHole);
   });
 
@@ -1705,6 +1894,129 @@ describe("combatSandbox", () => {
     )!;
     expect(nextEnemy.alive).toBe(false);
     expect(nextEnemy.deathReason).toBe("neutronStar");
+  });
+
+  it("lets neutron stars absorb suns and grow", () => {
+    const { state } = createLinearCombatState();
+
+    state.starMotion = { mode: "physicsSeed" };
+    state.planets = state.planets.map((planet) => ({
+      ...planet,
+      alive: false,
+      deathReason: "rocket",
+      hp: 0,
+      debuffs: {},
+      pos: { x: 5_000 + planet.id, y: 0 },
+      vel: { x: 0, y: 0 },
+    }));
+    state.suns = [
+      {
+        id: 70_020,
+        kind: "sun",
+        mass: 220_000,
+        radius: 72,
+        pos: { x: 240, y: 0 },
+        vel: { x: 18, y: 0 },
+        swallowedAtSec: null,
+      },
+    ];
+    state.neutronStars = [
+      {
+        id: 70_021,
+        kind: "neutronStar",
+        mass: 1_000_000,
+        pos: { x: 240, y: 0 },
+        radius: 60,
+        vel: { x: 0, y: 0 },
+      },
+    ];
+
+    const next = stepSandbox(
+      state,
+      createStepInput(),
+      DISABLED_BLACK_HOLE_SPEC,
+    );
+
+    expect(next.suns).toHaveLength(0);
+    expect(next.neutronStars).toHaveLength(1);
+    expect(next.neutronStars[0]!.mass).toBe(1_220_000);
+    expect(next.neutronStars[0]!.radius).toBeGreaterThan(
+      state.neutronStars[0]!.radius,
+    );
+    expect(next.neutronStars[0]!.vel.x).toBeGreaterThan(0);
+  });
+
+  it("pulls neutron stars toward an active black hole", () => {
+    const { state } = createLinearCombatState();
+
+    state.elapsedSec = 1;
+    state.suns = [];
+    state.planets = state.planets.map((planet) => ({
+      ...planet,
+      alive: false,
+      deathReason: "rocket",
+      hp: 0,
+      debuffs: {},
+      pos: { x: 5_000 + planet.id, y: 0 },
+      vel: { x: 0, y: 0 },
+    }));
+    state.neutronStars = [
+      {
+        id: 70_010,
+        kind: "neutronStar",
+        mass: 4_000_000,
+        pos: { x: 300, y: 0 },
+        radius: 40,
+        vel: { x: 0, y: 0 },
+      },
+    ];
+
+    const next = stepSandbox(state, createStepInput(), ACTIVE_BLACK_HOLE_SPEC);
+
+    expect(next.neutronStars).toHaveLength(1);
+    expect(next.neutronStars[0]!.pos.x).toBeLessThan(
+      state.neutronStars[0]!.pos.x,
+    );
+    expect(next.neutronStars[0]!.vel.x).toBeLessThan(0);
+  });
+
+  it("lets black holes swallow neutron stars", () => {
+    const { state } = createLinearCombatState();
+
+    state.elapsedSec = 1;
+    state.suns = [];
+    state.planets = state.planets.map((planet) => ({
+      ...planet,
+      alive: false,
+      deathReason: "rocket",
+      hp: 0,
+      debuffs: {},
+      pos: { x: 5_000 + planet.id, y: 0 },
+      vel: { x: 0, y: 0 },
+    }));
+    state.neutronStars = [
+      {
+        id: 70_011,
+        kind: "neutronStar",
+        mass: 4_000_000,
+        pos: { x: 140, y: 0 },
+        radius: 40,
+        vel: { x: 0, y: 0 },
+      },
+    ];
+
+    const next = stepSandbox(state, createStepInput(), ACTIVE_BLACK_HOLE_SPEC);
+
+    expect(next.neutronStars).toHaveLength(0);
+    expect(next.blackHole?.mass).toBe(
+      ACTIVE_BLACK_HOLE_SPEC.mass + state.neutronStars[0]!.mass,
+    );
+    expect(next.blackHole?.killRadius).toBeCloseTo(
+      Math.hypot(
+        ACTIVE_BLACK_HOLE_SPEC.killRadius,
+        state.neutronStars[0]!.radius,
+      ),
+    );
   });
 
   it("grows the black hole once when it swallows a sun", () => {
@@ -1739,11 +2051,12 @@ describe("combatSandbox", () => {
         kind: "sun",
         mass: 180,
         radius: 36,
-        pos: { x: 60, y: 0 },
+        pos: { x: 40, y: 0 },
         vel: { x: 0, y: 0 },
         swallowedAtSec: null,
       },
     ];
+    state.starMotion = { mode: "physicsSeed" };
 
     const expectedBlackHole = consumeBlackHoleBodies(state.blackHole, [
       state.suns[0]!,
@@ -1767,7 +2080,7 @@ describe("combatSandbox", () => {
     expect(second.blackHole).toEqual(first.blackHole);
   });
 
-  it("filters swallowed suns and reports player-loss resets after the timeout", () => {
+  it("filters swallowed suns without resetting the sandbox", () => {
     const { state, enemyPlanetId } = createLinearCombatState();
     const playerPlanetIndex = state.planets.findIndex(
       (planet) => planet.id === state.player.planetId,
@@ -1811,58 +2124,8 @@ describe("combatSandbox", () => {
           }
         : planet,
     );
-    state.playerLostAtSec = 0;
     state.elapsedSec = 6.1;
 
     expect(getActiveCombatSuns(state.suns)).toHaveLength(1);
-    expect(getSandboxResetReason(state)).toBe("playerLost");
-  });
-
-  it("does not reset the sandbox when active suns collide", () => {
-    const { state } = createLinearCombatState();
-
-    state.suns = [
-      {
-        id: 801,
-        kind: "sun",
-        mass: 100,
-        radius: 30,
-        pos: { x: 0, y: 0 },
-        vel: { x: 0, y: 0 },
-        swallowedAtSec: null,
-      },
-      {
-        id: 802,
-        kind: "sun",
-        mass: 100,
-        radius: 30,
-        pos: { x: 20, y: 0 },
-        vel: { x: 0, y: 0 },
-        swallowedAtSec: null,
-      },
-    ];
-
-    expect(getActiveCombatSuns(state.suns)).toHaveLength(2);
-    expect(getSandboxResetReason(state)).toBeNull();
-  });
-
-  it("does not reset observer-mode sandboxes when the focused bot is destroyed", () => {
-    const state = createSandboxState(DEFAULT_ORBIT_PRESET, {
-      playerBehavior: "bot",
-    });
-    const playerPlanetIndex = state.planets.findIndex(
-      (planet) => planet.id === state.player.planetId,
-    );
-
-    state.planets[playerPlanetIndex] = {
-      ...state.planets[playerPlanetIndex]!,
-      alive: false,
-      hp: 0,
-      deathReason: "rocket",
-    };
-    state.playerLostAtSec = 0;
-    state.elapsedSec = 12;
-
-    expect(getSandboxResetReason(state)).toBeNull();
   });
 });

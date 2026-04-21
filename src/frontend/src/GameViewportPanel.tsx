@@ -54,7 +54,9 @@ export function GameViewportPanel({
   return (
     <div className={className}>
       <div ref={viewportElementRef} className="canvas-root" />
-      <div className="hud-root">
+      <div
+        className={`hud-root${displayMode === "vhs" ? " hud-root--inside-crt" : ""}`}
+      >
         <CombatHud
           controller={viewportController}
           displayMode={displayMode}

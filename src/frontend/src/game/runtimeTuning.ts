@@ -4,7 +4,6 @@ import {
   BOOST_SPEC,
   cloneGameTuningDocument,
   CURRENT_GAME_TUNING,
-  FORESIGHT_SPEC,
   sanitizeGameTuning,
   SHIELD_SPEC,
   type GameTuningDocument,
@@ -14,7 +13,6 @@ interface RuntimeViewportDefaults {
   blackHoleSettings: typeof BLACK_HOLE_SPEC;
   boostSettings: typeof BOOST_SPEC;
   cacheBadgeScale: number;
-  foresightSettings: typeof FORESIGHT_SPEC;
   orbitPresetId: string | null;
   profilingEnabled: boolean;
   shieldSettings: {
@@ -59,7 +57,6 @@ export const createViewportDefaultsFromRuntimeTuning =
       blackHoleSettings: { ...BLACK_HOLE_SPEC },
       boostSettings: { ...BOOST_SPEC },
       cacheBadgeScale: tuning.visuals.caches.badgeScale,
-      foresightSettings: { ...FORESIGHT_SPEC },
       orbitPresetId: null,
       profilingEnabled: false,
       shieldSettings: {

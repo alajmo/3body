@@ -80,9 +80,7 @@ export type CacheIconKey =
   | "seekerPack"
   | "repair"
   | "shieldExt"
-  | "foresightExt"
-  | "wildcardGravityPulse"
-  | "wildcardCloak";
+  | "wildcardGravityPulse";
 
 type CacheBadgeShape =
   | "cache"
@@ -115,6 +113,7 @@ interface BackdropMaterial extends MeshBasicNodeMaterial {
 
 const DUST_CAMERA_FOLLOW = 0.06;
 const DISTANT_BODIES_CAMERA_FOLLOW = 0.08;
+const EVENT_CAMERA_FOLLOW = 0.04;
 const NEBULA_CAMERA_FOLLOW = 0.12;
 const MIN_BACKDROP_WORLD_SPAN = 0.001;
 const BASE_STARFIELD_LAYERS = [
@@ -192,9 +191,7 @@ export const CACHE_ICON_KEYS = [
   "seekerPack",
   "repair",
   "shieldExt",
-  "foresightExt",
   "wildcardGravityPulse",
-  "wildcardCloak",
 ] as const satisfies readonly CacheIconKey[];
 
 const getStarfieldRadius = (): number => ARENA_RADIUS * 2.35;
@@ -229,19 +226,9 @@ const CACHE_ICON_PRESENTATION: Record<
     label: "SHIELD",
     shape: "cache",
   },
-  foresightExt: {
-    accent: "#ffe28b",
-    label: "SIGHT+",
-    shape: "cache",
-  },
   wildcardGravityPulse: {
     accent: "#ffbf7d",
     label: "PULSE",
-    shape: "cache",
-  },
-  wildcardCloak: {
-    accent: "#92f0ff",
-    label: "CLOAK",
     shape: "cache",
   },
 };
@@ -551,10 +538,21 @@ export const createBackdropMaterial = (
 
   if (background.eventsEnabled && background.eventsIntensity > 0) {
     const eventTime = time.mul(0.04 + background.eventsFrequency * 0.03);
-    const pulseTime = time.mul(0.5 + background.eventsFrequency * 0.24);
+    const pulseTime = time.mul(0.42 + background.eventsFrequency * 0.28);
+    const eventUv = surfaceUv.add(
+      parallaxOffsetUniform.mul(getBackdropParallaxOffset(EVENT_CAMERA_FOLLOW)),
+    );
+    const burstCenterA = vec2(
+      sin(eventTime.mul(0.38).add(0.7)).mul(0.018).add(0.78),
+      sin(eventTime.mul(0.24).add(1.4)).mul(0.014).add(0.22),
+    );
+    const burstCenterB = vec2(
+      sin(eventTime.mul(0.27).add(2.6)).mul(-0.014).add(0.18),
+      sin(eventTime.mul(0.31).add(0.4)).mul(0.018).add(0.7),
+    );
     const eventField = mx_fractal_noise_float(
       vec3(
-        surfaceUv
+        eventUv
           .mul(vec2(4.2, 2.4))
           .add(vec2(eventTime.mul(1.8), eventTime.mul(-0.94))),
         eventTime.mul(2.2),
@@ -569,18 +567,87 @@ export const createBackdropMaterial = (
     const eventPulse = sin(pulseTime.add(eventField.mul(13)))
       .mul(0.5)
       .add(0.5);
-    const eventMask = smoothstep(0.9, 0.995, eventField).mul(eventPulse);
+    const diffuseEventMask = smoothstep(0.86, 0.992, eventField)
+      .mul(eventPulse)
+      .mul(0.42);
+    const burstPulseA = pow(
+      sin(pulseTime.add(eventField.mul(5.6)).add(0.7)).mul(0.5).add(0.5),
+      float(6.4),
+    )
+      .mul(0.92)
+      .add(0.08);
+    const burstPulseB = pow(
+      sin(pulseTime.mul(0.84).add(2.3)).mul(0.5).add(0.5),
+      float(5.8),
+    )
+      .mul(0.8)
+      .add(0.06);
+    const burstDistanceA = length(
+      eventUv.sub(burstCenterA).mul(vec2(1.05, 0.72)),
+    );
+    const burstDistanceB = length(
+      eventUv.sub(burstCenterB).mul(vec2(0.92, 0.64)),
+    );
+    const burstCoreA = float(1).sub(smoothstep(0.01, 0.04, burstDistanceA));
+    const burstCoreB = float(1).sub(smoothstep(0.012, 0.046, burstDistanceB));
+    const burstHaloA = float(1).sub(smoothstep(0.03, 0.18, burstDistanceA));
+    const burstHaloB = float(1).sub(smoothstep(0.034, 0.2, burstDistanceB));
+    const burstRingA = smoothstep(0.05, 0.075, burstDistanceA).mul(
+      float(1).sub(smoothstep(0.075, 0.11, burstDistanceA)),
+    );
+    const burstRingB = smoothstep(0.055, 0.082, burstDistanceB).mul(
+      float(1).sub(smoothstep(0.082, 0.12, burstDistanceB)),
+    );
+    const burstFlareA = float(1)
+      .sub(smoothstep(0.006, 0.022, abs(eventUv.y.sub(burstCenterA.y))))
+      .mul(
+        float(1).sub(
+          smoothstep(0.025, 0.22, abs(eventUv.x.sub(burstCenterA.x))),
+        ),
+      );
+    const burstFlareB = float(1)
+      .sub(smoothstep(0.008, 0.024, abs(eventUv.x.sub(burstCenterB.x))))
+      .mul(
+        float(1).sub(
+          smoothstep(0.025, 0.18, abs(eventUv.y.sub(burstCenterB.y))),
+        ),
+      );
+    const burstGlowMask = burstHaloA
+      .mul(burstPulseA)
+      .mul(0.6)
+      .add(burstHaloB.mul(burstPulseB).mul(0.52));
+    const burstRingMask = burstRingA.mul(burstPulseA).add(
+      burstRingB.mul(burstPulseB),
+    );
+    const burstCoreMask = burstCoreA
+      .mul(burstPulseA.mul(1.2).add(0.2))
+      .add(burstCoreB.mul(burstPulseB.mul(1.15).add(0.16)));
+    const burstFlareMask = burstFlareA.mul(burstPulseA).add(
+      burstFlareB.mul(burstPulseB),
+    );
+    const burstCoolColor = color(
+      toHexString(tintColor(background.glowColor, 0.08, 0.12, 0.34)),
+    );
+    const burstWarmColor = color("#f6ecff");
+    const burstNebulaColor = color(
+      toHexString(tintColor(background.nebulaColor, 0.02, 0.02, 0.24)),
+    );
 
     backdropColor = backdropColor
       .add(
-        color("#f6ecff")
-          .mul(eventMask)
-          .mul(background.eventsIntensity * 0.15),
+        burstNebulaColor
+          .mul(diffuseEventMask.add(burstGlowMask.mul(0.24)))
+          .mul(background.eventsIntensity * 0.12),
       )
       .add(
-        color(background.glowColor)
-          .mul(eventMask)
-          .mul(background.eventsIntensity * 0.22),
+        burstCoolColor
+          .mul(burstGlowMask.add(burstRingMask.mul(0.68)))
+          .mul(background.eventsIntensity * 0.24),
+      )
+      .add(
+        burstWarmColor
+          .mul(burstCoreMask.add(burstFlareMask.mul(0.72)))
+          .mul(background.eventsIntensity * 0.34),
       );
   }
 
@@ -1515,18 +1582,6 @@ const drawCacheIconGlyph = (
       context.arc(0, 0, 3.2 * unit, Math.PI * 0.85, Math.PI * 2.15);
       context.stroke();
       break;
-    case "foresightExt":
-      context.beginPath();
-      context.ellipse(0, 0, 6.6 * unit, 4.1 * unit, 0, 0, Math.PI * 2);
-      context.stroke();
-      context.beginPath();
-      context.arc(0, 0, 2.2 * unit, 0, Math.PI * 2);
-      context.fill();
-      context.fillStyle = "#081018";
-      context.beginPath();
-      context.arc(0, 0, 0.9 * unit, 0, Math.PI * 2);
-      context.fill();
-      break;
     case "wildcardGravityPulse":
       traceStar(context, 5.8 * unit, 2.4 * unit, 5);
       context.stroke();
@@ -1535,15 +1590,6 @@ const drawCacheIconGlyph = (
       context.textAlign = "center";
       context.textBaseline = "middle";
       context.fillText("?", 0, 0.6 * unit);
-      break;
-    case "wildcardCloak":
-      context.beginPath();
-      context.arc(0, 0, 5.8 * unit, 0, Math.PI * 2);
-      context.stroke();
-      context.beginPath();
-      context.moveTo(-4.8 * unit, 4.8 * unit);
-      context.lineTo(4.8 * unit, -4.8 * unit);
-      context.stroke();
       break;
   }
 

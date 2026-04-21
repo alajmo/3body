@@ -39,7 +39,6 @@ const buildNeutronStar = (
 const buildPlanet = (overrides: Partial<PlanetPublic> = {}): PlanetPublic => ({
   archetype: "terra",
   debuffs: {},
-  hideTrailUntilTick: 0,
   hp: 90,
   id: 3,
   kind: "planet",
@@ -120,7 +119,10 @@ describe("authoritativeInterpolation", () => {
       }),
       caches: [
         buildCache({
-          contents: { kind: "wildcard", wildcard: { kind: "cloak" } },
+          contents: {
+            kind: "wildcard",
+            wildcard: { kind: "gravityPulse" },
+          },
           pos: { x: 10, y: 12 },
           vel: { x: 6, y: -1 },
         }),
@@ -140,7 +142,6 @@ describe("authoritativeInterpolation", () => {
       planets: [
         buildPlanet({
           debuffs: { dragUntilTick: 44 },
-          hideTrailUntilTick: 30,
           hp: 70,
           pos: { x: 30, y: 60 },
           shieldAimDir: { x: 0, y: 1 },
@@ -185,11 +186,12 @@ describe("authoritativeInterpolation", () => {
     expect(interpolatedWorld.caches[0]!.pos).toEqual({ x: 0, y: 12 });
     expect(interpolatedWorld.caches[0]!.contents).toEqual({
       kind: "wildcard",
-      wildcard: { kind: "cloak" },
+      wildcard: { kind: "gravityPulse" },
     });
     expect(interpolatedWorld.debris[0]!.pos).toEqual({ x: 10, y: 12 });
     expect(interpolatedWorld.blackHole?.pos).toEqual({ x: 110, y: -30 });
-    expect(interpolatedWorld.neutronStars[0]!.pos).toEqual({ x: 150, y: 160 });
+    expect(interpolatedWorld.neutronStars[0]!.pos).toEqual({ x: 100, y: 110 });
+    expect(interpolatedWorld.neutronStars[0]!.vel).toEqual({ x: 6, y: 6 });
 
     expect(interpolatedWorld.suns[0]).not.toBe(previousWorld.suns[0]);
     expect(interpolatedWorld.suns[0]).not.toBe(currentWorld.suns[0]);

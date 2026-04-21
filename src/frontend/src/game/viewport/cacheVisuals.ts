@@ -16,9 +16,7 @@ export type CacheIconKey =
   | "seekerPack"
   | "repair"
   | "shieldExt"
-  | "foresightExt"
-  | "wildcardGravityPulse"
-  | "wildcardCloak";
+  | "wildcardGravityPulse";
 
 type CacheBadgeShape =
   | "cache"
@@ -62,9 +60,7 @@ const CACHE_ICON_KEYS = [
   "seekerPack",
   "repair",
   "shieldExt",
-  "foresightExt",
   "wildcardGravityPulse",
-  "wildcardCloak",
 ] as const satisfies readonly CacheIconKey[];
 
 const CACHE_BADGE_LAYOUT = {
@@ -101,28 +97,16 @@ const CACHE_ICON_PRESENTATION: Record<
     label: "SHIELD",
     shape: "cache",
   },
-  foresightExt: {
-    accent: "#ffe28b",
-    label: "SIGHT+",
-    shape: "cache",
-  },
   wildcardGravityPulse: {
     accent: "#ffbf7d",
     label: "PULSE",
-    shape: "cache",
-  },
-  wildcardCloak: {
-    accent: "#92f0ff",
-    label: "CLOAK",
     shape: "cache",
   },
 };
 
 export const getCacheIconKey = (contents: CacheContents): CacheIconKey =>
   contents.kind === "wildcard"
-    ? contents.wildcard.kind === "gravityPulse"
-      ? "wildcardGravityPulse"
-      : "wildcardCloak"
+    ? "wildcardGravityPulse"
     : contents.kind;
 
 const fillRoundedRect = (
@@ -277,26 +261,9 @@ const drawCacheIconGlyph = (
       traceCacheBadgeShape(context, "shield", size * 0.95);
       context.stroke();
       break;
-    case "foresightExt":
-      context.beginPath();
-      context.arc(0, 0, size * 0.22, 0, Math.PI * 2);
-      context.stroke();
-      context.beginPath();
-      context.arc(0, 0, size * 0.08, 0, Math.PI * 2);
-      context.fill();
-      break;
     case "wildcardGravityPulse":
       traceStar(context, size * 0.3, size * 0.13, 5);
       context.fill();
-      break;
-    case "wildcardCloak":
-      context.beginPath();
-      context.arc(0, 0, size * 0.24, 0, Math.PI * 2);
-      context.stroke();
-      context.beginPath();
-      context.moveTo(-size * 0.22, size * 0.22);
-      context.lineTo(size * 0.22, -size * 0.22);
-      context.stroke();
       break;
   }
 

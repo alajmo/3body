@@ -144,6 +144,7 @@ const createInitialSuns = (
         elapsedSec: 0,
         patternId: resolvedPatternId,
         speed: orbitTuning.starMotion.speed,
+        baseDistanceScale: safeDistanceScale,
         distanceScale: safeDistanceScale,
         sunIds: [sunIds[0], sunIds[1], sunIds[2]],
       },
@@ -240,7 +241,6 @@ const createPlanet = (
       shieldActive: false,
       shieldLoad: getShieldLoadCapacity(player.archetypeId),
       shieldMaxLoad: getShieldLoadCapacity(player.archetypeId),
-      hideTrailUntilTick: 0,
       debuffs: {},
     },
     privateState: {
@@ -250,15 +250,10 @@ const createPlanet = (
         lightReloadUntilTick: 0,
         heavyReloadUntilTick: 0,
         seekerReloadUntilTick: 0,
-        foresightActiveUntilTick: 0,
-        foresightCooldownUntilTick: 0,
-        foresightDurationTicks: 0,
       },
       boostCharges,
       gravityPulseHeld: false,
-      cloakHeld: false,
       nextShieldExt: false,
-      nextForesightExt: false,
     },
   };
 };

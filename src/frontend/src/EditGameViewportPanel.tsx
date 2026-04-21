@@ -78,16 +78,6 @@ const syncSandboxSettings = (
 
   for (const key of ABILITY_SETTING_KEYS) {
     if (
-      previousDocument.gameplay.abilities.foresight[key] !==
-      nextDocument.gameplay.abilities.foresight[key]
-    ) {
-      controller.setForesightSetting(
-        key,
-        nextDocument.gameplay.abilities.foresight[key],
-      );
-    }
-
-    if (
       previousDocument.gameplay.abilities.shield[key] !==
       nextDocument.gameplay.abilities.shield[key]
     ) {
@@ -154,6 +144,7 @@ export function EditGameViewportPanel({
   }));
   const [viewportController, setViewportController] =
     useState<GameViewportController | null>(null);
+  const displayMode = documentValue.visuals.displayMode;
 
   const restartViewport = useCallback(() => {
     const viewportElement = viewportElementRef.current;
@@ -165,7 +156,7 @@ export function EditGameViewportPanel({
     disposeViewportRef.current = createGameViewport(viewportElement, {
       cameraWorldHeightOverride,
       defaultBotsEnabled: true,
-      displayMode: documentValue.visuals.displayMode,
+      displayMode,
       enableSandboxStorage: false,
       onControllerReady: (controller) => {
         setViewportController(controller);
@@ -181,6 +172,7 @@ export function EditGameViewportPanel({
     });
   }, [
     cameraWorldHeightOverride,
+    displayMode,
     onControllerReady,
     onHudStateChange,
     sandboxSessionConfig,
@@ -251,7 +243,11 @@ export function EditGameViewportPanel({
     <div className={className}>
       <div ref={viewportElementRef} className="canvas-root" />
       {showHud ? (
-        <div className="hud-root">
+        <div
+          className={`hud-root${
+            displayMode === "vhs" ? " hud-root--inside-crt" : ""
+          }`}
+        >
           <CombatHud
             controller={viewportController}
             displayMode={documentValue.visuals.displayMode}

@@ -25,11 +25,7 @@ const createEmptyPerception = (
   explore: null,
   shieldReady: self.shieldLoad > 0 && !self.shieldActive,
   boostReady: self.boostCharges > 0,
-  foresightReady:
-    self.cooldowns.foresightActiveUntilTick <= self.tick &&
-    self.cooldowns.foresightCooldownUntilTick <= self.tick,
   gravityPulseHeld: self.gravityPulseHeld,
-  cloakHeld: self.cloakHeld,
 });
 
 const createEmptyIntent = (tick: number): CombatAiIntent => ({

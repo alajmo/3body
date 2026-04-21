@@ -7,7 +7,6 @@ import {
 } from "../orbitPresets";
 import { createViewportDefaultsFromRuntimeTuning } from "../runtimeTuning";
 import {
-  DEFAULT_FORESIGHT_SETTINGS,
   DEFAULT_SHIELD_SETTINGS,
   createInitialHudState,
   type GameViewportController,
@@ -19,7 +18,6 @@ import {
   persistBlackHoleSettings as persistStoredBlackHoleSettings,
   persistBoostSettings as persistStoredBoostSettings,
   persistCacheBadgeScale as persistStoredCacheBadgeScale,
-  persistForesightSettings as persistStoredForesightSettings,
   persistOrbitPresetId,
   persistProfilingEnabled as persistStoredProfilingEnabled,
   persistShieldSettings as persistStoredShieldSettings,
@@ -36,7 +34,6 @@ interface GameViewportSandboxSettingsState {
   botsEnabled: boolean;
   boostSettings: BoostSpec;
   cacheBadgeScale: number;
-  foresightSettings: AbilitySpec;
   profilingEnabled: boolean;
   sandboxPaused: boolean;
   shieldSettings: AbilitySpec;
@@ -91,7 +88,6 @@ const createInitialSandboxSettingsState = (
     botsEnabled: defaultBotsEnabled,
     boostSettings: persistedSettings.boostSettings,
     cacheBadgeScale: persistedSettings.cacheBadgeScale,
-    foresightSettings: persistedSettings.foresightSettings,
     profilingEnabled: sanitizeStoredProfilingEnabled(
       persistedSettings.profilingEnabled,
     ),
@@ -110,7 +106,6 @@ const applySandboxSettingsToHudState = (
   boostSettings: { ...sandboxState.boostSettings },
   cacheBadgeScale: sandboxState.cacheBadgeScale,
   currentPresetId: sandboxState.activePreset.id,
-  foresightSettings: { ...sandboxState.foresightSettings },
   profilingEnabled: sandboxState.profilingEnabled,
   sandboxControlsEnabled: sandboxControlsEnabled(sandboxState),
   sandboxPaused: sandboxState.sandboxPaused,
@@ -129,11 +124,7 @@ export const createGameViewportSandboxSettingsStore = (
     options.storage,
     options.defaultBotsEnabled,
   );
-  syncAbilitySettingsToSpecs(
-    state.foresightSettings,
-    state.shieldSettings,
-    state.boostSettings,
-  );
+  syncAbilitySettingsToSpecs(state.shieldSettings, state.boostSettings);
 
   const emitSandboxHudState = () => {
     options.emitHudState(
@@ -149,9 +140,6 @@ export const createGameViewportSandboxSettingsStore = (
 
   const persistBlackHoleSettings = () => {
     persistStoredBlackHoleSettings(options.storage, state.blackHoleSettings);
-  };
-  const persistForesightSettings = () => {
-    persistStoredForesightSettings(options.storage, state.foresightSettings);
   };
   const persistShieldSettings = () => {
     persistStoredShieldSettings(options.storage, state.shieldSettings);
@@ -174,15 +162,9 @@ export const createGameViewportSandboxSettingsStore = (
       },
       resetAbilitySettings: () => {
         const runtimeDefaults = createViewportDefaultsFromRuntimeTuning();
-        state.foresightSettings = { ...runtimeDefaults.foresightSettings };
         state.shieldSettings = { ...runtimeDefaults.shieldSettings };
         state.boostSettings = { ...runtimeDefaults.boostSettings };
-        syncAbilitySettingsToSpecs(
-          state.foresightSettings,
-          state.shieldSettings,
-          state.boostSettings,
-        );
-        persistForesightSettings();
+        syncAbilitySettingsToSpecs(state.shieldSettings, state.boostSettings);
         persistShieldSettings();
         persistBoostSettings();
         emitSandboxHudState();
@@ -216,11 +198,7 @@ export const createGameViewportSandboxSettingsStore = (
           ...state.boostSettings,
           [key]: value,
         });
-        syncAbilitySettingsToSpecs(
-          state.foresightSettings,
-          state.shieldSettings,
-          state.boostSettings,
-        );
+        syncAbilitySettingsToSpecs(state.shieldSettings, state.boostSettings);
         persistBoostSettings();
         emitSandboxHudState();
         options.onResetSandboxRequested();
@@ -229,23 +207,6 @@ export const createGameViewportSandboxSettingsStore = (
         state.cacheBadgeScale = sanitizeCacheBadgeScale(value);
         persistCacheBadgeScale();
         emitSandboxHudState();
-      },
-      setForesightSetting: (key, value) => {
-        state.foresightSettings = sanitizeAbilitySettings(
-          {
-            ...state.foresightSettings,
-            [key]: value,
-          },
-          DEFAULT_FORESIGHT_SETTINGS,
-        );
-        syncAbilitySettingsToSpecs(
-          state.foresightSettings,
-          state.shieldSettings,
-          state.boostSettings,
-        );
-        persistForesightSettings();
-        emitSandboxHudState();
-        options.onResetSandboxRequested();
       },
       setOrbitPreset: (presetId) => {
         const nextPreset = ORBIT_PRESET_BY_ID.get(presetId);
@@ -281,11 +242,7 @@ export const createGameViewportSandboxSettingsStore = (
           },
           DEFAULT_SHIELD_SETTINGS,
         );
-        syncAbilitySettingsToSpecs(
-          state.foresightSettings,
-          state.shieldSettings,
-          state.boostSettings,
-        );
+        syncAbilitySettingsToSpecs(state.shieldSettings, state.boostSettings);
         persistShieldSettings();
         emitSandboxHudState();
         options.onResetSandboxRequested();

@@ -1,9 +1,5 @@
 import type { PlanetPrivateState, PlanetPublic, World } from "@3body/shared";
-import {
-  FIXED_STEP_SEC,
-  FORESIGHT_SPEC,
-  getShieldLoadCapacity,
-} from "@3body/shared";
+import { getShieldLoadCapacity } from "@3body/shared";
 import { describe, expect, it } from "vitest";
 import { buildAuthoritativeHudState } from "./authoritativeHud";
 import { createInitialHudState } from "../viewportHud";
@@ -31,7 +27,6 @@ const createWorld = (): World =>
         playerId: "pilot-1",
         archetype: "terra",
         debuffs: {},
-        hideTrailUntilTick: 0,
         hp: 87,
         pos: { x: 220, y: 140 },
         radius: 68,
@@ -47,7 +42,6 @@ const createWorld = (): World =>
         playerId: "pilot-2",
         archetype: "ignis",
         debuffs: {},
-        hideTrailUntilTick: 0,
         hp: 92,
         pos: { x: -180, y: -260 },
         radius: 72,
@@ -92,24 +86,18 @@ const createSelf = (): PlanetPrivateState =>
     },
     boostCharges: 1,
     cooldowns: {
-      foresightActiveUntilTick: 0,
-      foresightCooldownUntilTick: 0,
-      foresightDurationTicks: 0,
       heavyReloadUntilTick: 0,
       lightReloadUntilTick: 0,
       nextBoostChargeAtTick: undefined,
       seekerReloadUntilTick: 0,
     },
     gravityPulseHeld: false,
-    cloakHeld: false,
     nextShieldExt: false,
-    nextForesightExt: false,
   }) satisfies PlanetPrivateState;
 
 const createPlayerPlanet = (): PlanetPublic =>
   ({
     debuffs: {},
-    hideTrailUntilTick: 0,
     hp: 87,
     id: 1,
     kind: "planet",
@@ -183,7 +171,6 @@ describe("buildAuthoritativeHudState", () => {
       ),
     ).toEqual({
       boost: "W",
-      foresight: "E",
       shield: "Q",
     });
     expect(hud.debugItems).toEqual(
@@ -301,114 +288,9 @@ describe("buildAuthoritativeHudState", () => {
     );
   });
 
-  it("keeps the remaining foresight charge when toggled off", () => {
-    const extendedDurationTicks = Math.round(
-      (FORESIGHT_SPEC.durationSec * 2) / FIXED_STEP_SEC,
-    );
-    const fullRechargeTicks = Math.max(
-      0,
-      Math.round(FORESIGHT_SPEC.cooldownSec / FIXED_STEP_SEC) -
-        extendedDurationTicks,
-    );
-    const cooldownStartTick = 840;
-    const cooldownUntilTick =
-      cooldownStartTick + Math.round(fullRechargeTicks / 4);
-    const self = createSelf();
-    self.cooldowns.foresightActiveUntilTick = cooldownStartTick;
-    self.cooldowns.foresightCooldownUntilTick = cooldownUntilTick;
-    self.cooldowns.foresightDurationTicks = extendedDurationTicks;
-
-    const cooldownHud = buildAuthoritativeHudState({
-      connection: {
-        extrapolating: false,
-        fps: 58,
-        frameTimeMs: 16.4,
-        label: "room-1 · combat",
-        rttMs: 24,
-        state: "connected",
-      },
-      controlsEnabled: true,
-      currentEffectsQuality: "high",
-      currentMaxPixelRatio: 1.5,
-      currentTick: cooldownStartTick,
-      damageFlash: 0,
-      eventLog: [],
-      extrapolating: false,
-      hudFlicker: 0,
-      playerId: "pilot-1",
-      playerPlanet: {
-        ...createPlayerPlanet(),
-        archetype: "oculus",
-      },
-      profilerSnapshot: null,
-      profilingEnabled: false,
-      recentEventsNowMs: 0,
-      rosterNameByPlayerId: new Map([["pilot-1", "Pilot One"]]),
-      runtimeStats: {
-        fps: 58,
-        frameTimeMs: 16.4,
-      },
-      selectedWeapon: "light",
-      self,
-      world: createWorld(),
-    });
-
-    expect(
-      cooldownHud.abilities.find((ability) => ability.id === "foresight"),
-    ).toEqual(
-      expect.objectContaining({
-        progress: 0.75,
-      }),
-    );
-
-    const rechargingHud = buildAuthoritativeHudState({
-      connection: {
-        extrapolating: false,
-        fps: 58,
-        frameTimeMs: 16.4,
-        label: "room-1 · combat",
-        rttMs: 24,
-        state: "connected",
-      },
-      controlsEnabled: true,
-      currentEffectsQuality: "high",
-      currentMaxPixelRatio: 1.5,
-      currentTick: cooldownStartTick + Math.round(fullRechargeTicks / 8),
-      damageFlash: 0,
-      eventLog: [],
-      extrapolating: false,
-      hudFlicker: 0,
-      playerId: "pilot-1",
-      playerPlanet: {
-        ...createPlayerPlanet(),
-        archetype: "oculus",
-      },
-      profilerSnapshot: null,
-      profilingEnabled: false,
-      recentEventsNowMs: 0,
-      rosterNameByPlayerId: new Map([["pilot-1", "Pilot One"]]),
-      runtimeStats: {
-        fps: 58,
-        frameTimeMs: 16.4,
-      },
-      selectedWeapon: "light",
-      self,
-      world: createWorld(),
-    });
-
-    expect(
-      rechargingHud.abilities.find((ability) => ability.id === "foresight"),
-    ).toEqual(
-      expect.objectContaining({
-        progress: 0.875,
-      }),
-    );
-  });
-
   it("shows readable held ability names in the HUD and event feed", () => {
     const self = createSelf();
     self.gravityPulseHeld = true;
-    self.cloakHeld = true;
 
     const hud = buildAuthoritativeHudState({
       connection: {
@@ -431,7 +313,10 @@ describe("buildAuthoritativeHudState", () => {
             tick: 118,
             playerId: "pilot-1",
             planetId: 1,
-            contents: { kind: "wildcard", wildcard: { kind: "cloak" } },
+            contents: {
+              kind: "wildcard",
+              wildcard: { kind: "gravityPulse" },
+            },
           },
           id: 1,
           receivedAtMs: 1_500,
@@ -473,15 +358,8 @@ describe("buildAuthoritativeHudState", () => {
         statusText: "Gravity Pulse",
       }),
     );
-    expect(hud.abilities.find((ability) => ability.id === "cloak")).toEqual(
-      expect.objectContaining({
-        keyLabel: "C",
-        label: "Cloak",
-        statusText: "Cloak",
-      }),
-    );
     expect(hud.killFeed.map((entry) => entry.text)).toEqual([
-      "Pilot One collected Wildcard: Cloak",
+      "Pilot One collected Wildcard: Gravity Pulse",
       "Pilot One used Gravity Pulse",
     ]);
   });

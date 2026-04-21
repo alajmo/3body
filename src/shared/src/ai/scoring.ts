@@ -723,7 +723,11 @@ const predictTargetPath = (
       world.blackHole,
       orbitStarMotion,
     );
-    orbitStarMotion = advanceWorldOrbitStarMotion(orbitStarMotion, dt);
+    orbitStarMotion = advanceWorldOrbitStarMotion(
+      orbitStarMotion,
+      dt,
+      predictedSuns,
+    );
     predictedTarget = stepBody(
       predictedTarget,
       predictedSuns,
@@ -1043,10 +1047,8 @@ const estimateCacheValue = (
       return privateState.ammo.seeker <= 1 ? 1.12 : 0.5;
     case "shieldExt":
       return self.shieldMaxLoad < self.shieldLoad + 5 ? 0.78 : 0.52;
-    case "foresightExt":
-      return 0.68;
     case "wildcard":
-      return contents.wildcard.kind === "cloak" ? 0.92 : 0.96;
+      return 0.96;
   }
 };
 
@@ -1132,7 +1134,11 @@ export const scoreMovementGoals = ({
       world.blackHole,
       orbitStarMotion,
     );
-    orbitStarMotion = advanceWorldOrbitStarMotion(orbitStarMotion, dt);
+    orbitStarMotion = advanceWorldOrbitStarMotion(
+      orbitStarMotion,
+      dt,
+      sunState,
+    );
     predictedSunsByStep.push(sunState);
   }
 

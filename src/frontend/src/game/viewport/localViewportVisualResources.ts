@@ -1,5 +1,6 @@
 import type {
   ArchetypeId,
+  AsteroidTier,
   PlanetArchetypeVisualSpec,
   RocketKind,
   Vec2,
@@ -38,6 +39,7 @@ import {
   DynamicDrawUsage,
   Float32BufferAttribute,
   Group,
+  IcosahedronGeometry,
   InstancedMesh,
   Matrix4,
   Mesh,
@@ -59,9 +61,7 @@ import {
 import type { CombatSandboxState } from "../combatSandbox";
 import { ROCKET_RENDER_INSTANCE_LIMITS } from "../rocketVisibility";
 import { createShieldVisual } from "../shieldVisuals";
-import {
-  createAmbientBoundaryDebrisVisual,
-} from "./ambientBoundaryDebris";
+import { createAmbientBoundaryDebrisVisual } from "./ambientBoundaryDebris";
 import {
   createCacheSpriteAssets,
   disposeCacheSpriteAssets,
@@ -146,11 +146,18 @@ interface RocketLaunchBurstPoolVisual {
 }
 
 interface DebrisVisual {
+  boundaryAsteroidLayers: Record<AsteroidTier, BoundaryAsteroidLayerVisual>;
   colorAttribute: Float32BufferAttribute;
   geometry: BufferGeometry;
   opacityAttribute: Float32BufferAttribute;
   points: Points;
   positionAttribute: Float32BufferAttribute;
+}
+
+interface BoundaryAsteroidLayerVisual {
+  activeCount: number;
+  capacity: number;
+  mesh: InstancedMesh;
 }
 
 interface BoostBurstVisual {
@@ -159,8 +166,11 @@ interface BoostBurstVisual {
   points: Points;
   positionAttribute: Float32BufferAttribute;
   wakeVisuals: readonly {
+    basePositions: Float32Array;
+    geometry: PlaneGeometry;
     material: MeshBasicMaterial;
     mesh: Mesh;
+    positionAttribute: Float32BufferAttribute;
   }[];
 }
 
@@ -177,13 +187,6 @@ interface ImpactBurstVisual {
   coreMesh: Mesh;
   glowMesh: Mesh;
   ringMesh: Mesh;
-}
-
-interface CloakVisual {
-  ringMaterial: MeshBasicMaterial;
-  ringMesh: Mesh;
-  veilMaterial: MeshBasicMaterial;
-  veilMesh: Mesh;
 }
 
 interface PlanetExplosionChunkVisual {
@@ -240,6 +243,8 @@ interface RocketRenderProfile {
   trailScale: Vec2;
 }
 
+const BOOST_WAKE_GEOMETRY_SEGMENTS = 12;
+
 const registerDisposables = (
   disposables: Array<{ dispose: () => void }>,
   ...items: Array<{ dispose: () => void } | Array<{ dispose: () => void }>>
@@ -270,6 +275,82 @@ const tintColor = (
   const result = new Color(value);
   result.offsetHSL(hueOffset, saturationOffset, lightnessOffset);
   return result;
+};
+
+const BOUNDARY_ASTEROID_TIER_ORDER = [
+  "micro",
+  "small",
+  "large",
+] as const satisfies readonly AsteroidTier[];
+
+const BOUNDARY_ASTEROID_COLOR_BY_TIER = {
+  large: "#ffb87a",
+  micro: "#d7f1ff",
+  small: "#ffd98f",
+} as const satisfies Record<AsteroidTier, string>;
+
+const createBoundaryAsteroidGeometry = (
+  radius: number,
+  seed: number,
+): BufferGeometry => {
+  const baseGeometry = new IcosahedronGeometry(radius, 0);
+  const geometry =
+    baseGeometry.index === null ? baseGeometry : baseGeometry.toNonIndexed();
+  const positionAttribute = geometry.getAttribute(
+    "position",
+  ) as Float32BufferAttribute;
+  const positions = positionAttribute.array as Float32Array;
+
+  for (let offset = 0; offset < positions.length; offset += 3) {
+    const x = positions[offset]!;
+    const y = positions[offset + 1]!;
+    const z = positions[offset + 2]!;
+    const length = Math.hypot(x, y, z) || 1;
+    const nx = x / length;
+    const ny = y / length;
+    const nz = z / length;
+    const hashSeed = nx * 12.9898 + ny * 78.233 + nz * 37.719 + seed * 0.0001;
+    const jitter =
+      0.8 + 0.34 * ((((Math.sin(hashSeed) * 43758.5453) % 1) + 1) % 1);
+    const ridge = 0.92 + 0.16 * Math.abs(nx * 0.66 - ny * 0.28 + nz * 0.58);
+    const stretchX = 0.9 + 0.2 * Math.abs(nx);
+    const stretchY = 0.88 + 0.24 * Math.abs(ny);
+    const stretchZ = 0.86 + 0.22 * Math.abs(nz);
+
+    positions[offset] = nx * radius * jitter * ridge * stretchX;
+    positions[offset + 1] = ny * radius * jitter * ridge * stretchY;
+    positions[offset + 2] = nz * radius * jitter * ridge * stretchZ;
+  }
+
+  positionAttribute.needsUpdate = true;
+  geometry.computeVertexNormals();
+  return geometry;
+};
+
+const createBoundaryAsteroidMaterial = (
+  accentColor: string,
+): MeshBasicNodeMaterial => {
+  const material = new MeshBasicNodeMaterial();
+  const accent = tintColor(accentColor, 0.01, -0.03, 0.18);
+
+  {
+    const lightDir = normalize(vec3(-0.38, 0.61, 0.7));
+    const viewDir = vec3(0, 0, 1);
+    const halfDir = normalize(lightDir.add(viewDir));
+    const n = normalize(normalWorld);
+    const nDotL = max(dot(n, lightDir), float(0));
+    const lambert = pow(nDotL.mul(0.5).add(0.5), float(1.6));
+    const shading = mix(float(0.24), float(1.04), lambert);
+    const nDotH = max(dot(n, halfDir), float(0));
+    const spec = pow(nDotH, float(20)).mul(0.12);
+    const rim = pow(float(1).sub(max(dot(n, viewDir), float(0))), float(2.9));
+    material.colorNode = color("#505860")
+      .mul(shading)
+      .add(color(`#${accent.getHexString()}`).mul(rim.mul(0.14)))
+      .add(color("#edf5ff").mul(spec));
+  }
+
+  return material;
 };
 
 export const createLocalViewportVisualResources = ({
@@ -606,13 +687,6 @@ export const createLocalViewportVisualResources = ({
       samples: [],
     } satisfies TrailVisual;
   });
-  const hiddenTrailUntilByPlanetId = new Map(
-    initialState.planets.map((planet) => [
-      planet.id,
-      planet.hideTrailUntilTick,
-    ]),
-  );
-
   const cacheSpriteAssets = createCacheSpriteAssets(hostElement.ownerDocument);
   const cacheVisuals = new Map<number, CacheVisual>();
   const renderedCacheKeysById = new Map<number, CacheIconKey>();
@@ -902,21 +976,83 @@ export const createLocalViewportVisualResources = ({
   debrisPoints.renderOrder = 10;
   debrisPoints.position.z = 2;
   debrisPoints.frustumCulled = false;
-  scene.add(debrisPoints);
+  const boundaryAsteroidGeometry = createBoundaryAsteroidGeometry(1, 0x73a9d1);
+  const hiddenInit = createHiddenInstanceMatrix();
+  const createBoundaryAsteroidLayer = (
+    tier: AsteroidTier,
+  ): BoundaryAsteroidLayerVisual => {
+    const material = createBoundaryAsteroidMaterial(
+      BOUNDARY_ASTEROID_COLOR_BY_TIER[tier],
+    );
+    const mesh = new InstancedMesh(
+      boundaryAsteroidGeometry,
+      material,
+      debrisSampleLimit,
+    );
+    mesh.instanceMatrix.setUsage(DynamicDrawUsage);
+    for (let index = 0; index < debrisSampleLimit; index += 1) {
+      mesh.setMatrixAt(index, hiddenInit);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.count = 0;
+    mesh.visible = false;
+    mesh.frustumCulled = false;
+    mesh.renderOrder = 11;
+    mesh.position.z = 2.05;
+    mesh.name = `boundaryAsteroid:${tier}`;
+
+    return {
+      activeCount: 0,
+      capacity: debrisSampleLimit,
+      mesh,
+    };
+  };
+  const boundaryAsteroidLayers: Record<
+    AsteroidTier,
+    BoundaryAsteroidLayerVisual
+  > = {
+    large: createBoundaryAsteroidLayer("large"),
+    micro: createBoundaryAsteroidLayer("micro"),
+    small: createBoundaryAsteroidLayer("small"),
+  };
+  scene.add(
+    debrisPoints,
+    ...BOUNDARY_ASTEROID_TIER_ORDER.map(
+      (tier) => boundaryAsteroidLayers[tier].mesh,
+    ),
+  );
   const debrisVisual = {
+    boundaryAsteroidLayers,
     colorAttribute: debrisColorAttribute,
     geometry: debrisGeometry,
     opacityAttribute: debrisOpacityAttribute,
     points: debrisPoints,
     positionAttribute: debrisPositionAttribute,
   } satisfies DebrisVisual;
-  registerDisposables(disposables, debrisGeometry, debrisMaterial);
+  registerDisposables(
+    disposables,
+    debrisGeometry,
+    debrisMaterial,
+    boundaryAsteroidGeometry,
+    BOUNDARY_ASTEROID_TIER_ORDER.map(
+      (tier) =>
+        boundaryAsteroidLayers[tier].mesh.material as MeshBasicNodeMaterial,
+    ),
+  );
 
   const boundaryDebrisVisual = createAmbientBoundaryDebrisVisual({
     renderOrder: -11,
     z: -5,
   });
-  scene.add(boundaryDebrisVisual.bandGroup, boundaryDebrisVisual.points);
+  boundaryDebrisVisual.fallingGroup.position.z = 2.08;
+  for (const layer of boundaryDebrisVisual.fallingLayers) {
+    layer.mesh.renderOrder = 11;
+  }
+  scene.add(
+    boundaryDebrisVisual.bandGroup,
+    boundaryDebrisVisual.fallingGroup,
+    boundaryDebrisVisual.points,
+  );
   registerDisposables(
     disposables,
     boundaryDebrisVisual.bandGeometries,
@@ -1151,23 +1287,32 @@ export const createLocalViewportVisualResources = ({
   boostBurstPoints.visible = false;
   scene.add(boostBurstPoints);
 
-  const boostWakeGeometry = new PlaneGeometry(1, 1);
-  boostWakeGeometry.translate(0.5, 0, 0);
   const boostWakeTemplate = createBoostWakeMaterial();
   const boostWakeVisuals = Array.from({ length: ROOM_CAPACITY }, (_, index) => {
+    const geometry = new PlaneGeometry(1, 1, BOOST_WAKE_GEOMETRY_SEGMENTS, 1);
+    geometry.translate(0.5, 0, 0);
     const material =
       index === 0
         ? boostWakeTemplate.material
         : boostWakeTemplate.material.clone();
-    const mesh = new Mesh(boostWakeGeometry, material);
+    const positionAttribute = geometry.getAttribute(
+      "position",
+    ) as Float32BufferAttribute;
+    positionAttribute.setUsage(DynamicDrawUsage);
+    const mesh = new Mesh(geometry, material);
     mesh.frustumCulled = false;
     mesh.renderOrder = 11.8;
     mesh.position.z = 2.26;
     mesh.visible = false;
     scene.add(mesh);
     return {
+      basePositions: Float32Array.from(
+        positionAttribute.array as ArrayLike<number>,
+      ),
+      geometry,
       material,
       mesh,
+      positionAttribute,
     };
   });
   const boostBurstVisual = {
@@ -1284,50 +1429,6 @@ export const createLocalViewportVisualResources = ({
     gravityPulseEchoMaterial,
   );
 
-  const cloakVeilGeometry = new CircleGeometry(1, 48);
-  const cloakRingGeometry = new RingGeometry(0.88, 1, 64);
-  const cloakVisuals = initialState.planets.map(() => {
-    const veilMaterial = new MeshBasicMaterial({
-      color: tintColor(wildcardColor, -0.12, 0.04, 0.1),
-      depthWrite: false,
-      opacity: 0,
-      transparent: true,
-      blending: AdditiveBlending,
-    });
-    const ringMaterial = new MeshBasicMaterial({
-      color: tintColor(wildcardColor, 0.08, 0.18, 0.22),
-      depthWrite: false,
-      opacity: 0,
-      transparent: true,
-      blending: AdditiveBlending,
-    });
-    const veilMesh = new Mesh(cloakVeilGeometry, veilMaterial);
-    const ringMesh = new Mesh(cloakRingGeometry, ringMaterial);
-    veilMesh.visible = false;
-    ringMesh.visible = false;
-    veilMesh.renderOrder = 1.2;
-    ringMesh.renderOrder = 1.6;
-    veilMesh.position.z = 0.28;
-    ringMesh.position.z = 0.34;
-    scene.add(veilMesh, ringMesh);
-
-    return {
-      ringMaterial,
-      ringMesh,
-      veilMaterial,
-      veilMesh,
-    } satisfies CloakVisual;
-  });
-  registerDisposables(
-    disposables,
-    cloakVeilGeometry,
-    cloakRingGeometry,
-    cloakVisuals.flatMap((visual) => [
-      visual.veilMaterial,
-      visual.ringMaterial,
-    ]),
-  );
-
   const planetExplosionFragmentGeometries = [
     new BoxGeometry(1, 1, 1, 3, 3, 3),
     new BoxGeometry(1, 1, 1, 2, 3, 2),
@@ -1429,7 +1530,7 @@ export const createLocalViewportVisualResources = ({
     shieldCrestMaterial,
     boostBurstGeometry,
     boostBurstMaterial,
-    boostWakeGeometry,
+    ...boostWakeVisuals.map((visual) => visual.geometry),
     ...boostWakeVisuals.map((visual) => visual.material),
     ...(boostWakeTemplate.texture === null ? [] : [boostWakeTemplate.texture]),
     blackHoleLens.geometry,
@@ -1459,7 +1560,6 @@ export const createLocalViewportVisualResources = ({
     boundaryDebrisVisual,
     debrisVisual,
     gravityPulseVisual,
-    hiddenTrailUntilByPlanetId,
     impactBurstVisuals,
     inactivePlanetExplosionVisuals,
     lockRingLockedUniform,
@@ -1480,6 +1580,5 @@ export const createLocalViewportVisualResources = ({
     sunVisuals,
     neutronStarVisuals,
     trailVisuals,
-    cloakVisuals,
   };
 };

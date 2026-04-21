@@ -52,15 +52,6 @@ const createPreviewHudState = (
     ...base,
     abilities: [
       {
-        accent: documentValue.visuals.abilities.foresightColor,
-        id: "foresight",
-        keyLabel: "E",
-        label: "Foresight",
-        mode: "cooldown",
-        progress: 0.42,
-        statusText: "6s cd",
-      },
-      {
         accent: documentValue.visuals.abilities.shieldColor,
         id: "shield",
         keyLabel: "Q",
@@ -96,7 +87,6 @@ const createPreviewHudState = (
       rttMs: 18,
       state: "connected",
     },
-    foresightSettings: { ...documentValue.gameplay.abilities.foresight },
     damageFlash,
     hudFlicker,
     killFeed: [
@@ -287,7 +277,11 @@ export function EditorPreviewStage({
         </button>
       ) : null}
       {showHud ? (
-        <div className="hud-root">
+        <div
+          className={`hud-root${
+            overviewDisplayMode === "vhs" ? " hud-root--inside-crt" : ""
+          }`}
+        >
           <CombatHud
             controller={null}
             displayMode={overviewDisplayMode}

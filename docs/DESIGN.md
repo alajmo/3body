@@ -92,7 +92,7 @@ Notes
 |                                                                                  |
 | +----------+ +----------+ +----------+                                           |
 | | Oculus   | | Umbra    | | Corvus   |                                           |
-| | foresight| | drag     | | burst    |                                           |
+| | control  | | drag     | | burst    |                                           |
 | | [pick]   | | [pick]   | | [pick]   |                                           |
 | +----------+ +----------+ +----------+                                           |
 |                                                                                  |

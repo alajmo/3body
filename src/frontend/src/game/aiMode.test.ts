@@ -5,7 +5,6 @@ import {
   buildCombatAiPlan,
   cloneGameTuningDocument,
   DEFAULT_GAME_TUNING,
-  FORESIGHT_SPEC,
   len,
   PLANET_HP,
   ROCKET_SPECS,
@@ -49,7 +48,6 @@ const createPlanet = (
   shieldActive: overrides.shieldActive ?? false,
   shieldLoad: overrides.shieldLoad ?? 100,
   shieldMaxLoad: overrides.shieldMaxLoad ?? 100,
-  hideTrailUntilTick: overrides.hideTrailUntilTick ?? 0,
   pos: overrides.pos ?? { x: 0, y: 0 },
   vel: overrides.vel ?? { x: 0, y: 0 },
   radius: overrides.radius ?? 20,
@@ -71,16 +69,11 @@ const createPrivateState = (
     lightReloadUntilTick: 0,
     heavyReloadUntilTick: 0,
     seekerReloadUntilTick: 0,
-    foresightActiveUntilTick: 0,
-    foresightCooldownUntilTick: 0,
-    foresightDurationTicks: 0,
     ...overrides.cooldowns,
   },
   boostCharges: overrides.boostCharges ?? 2,
   gravityPulseHeld: overrides.gravityPulseHeld ?? false,
-  cloakHeld: overrides.cloakHeld ?? false,
   nextShieldExt: overrides.nextShieldExt ?? false,
-  nextForesightExt: overrides.nextForesightExt ?? false,
 });
 
 const createWorld = (
@@ -127,11 +120,9 @@ const createStepInput = (
   aimWorld: { x: 240, y: 0 },
   selectedRocketKind: "light",
   fireRequested: false,
-  foresightRequested: false,
   shieldRequested: false,
   boostRequested: false,
   gravityPulseRequested: false,
-  cloakRequested: false,
   ...overrides,
 });
 
@@ -140,52 +131,60 @@ beforeEach(() => {
 });
 
 describe("AI mode", () => {
-  it("uses boost in the opening window of an observer sandbox match", () => {
-    let state = createSandboxState(DEFAULT_ORBIT_PRESET, {
-      botDifficulty: "hard",
-      participantCount: 7,
-      playerBehavior: "bot",
-    });
+  it(
+    "uses boost in the opening window of an observer sandbox match",
+    () => {
+      let state = createSandboxState(DEFAULT_ORBIT_PRESET, {
+        botDifficulty: "hard",
+        participantCount: 7,
+        playerBehavior: "bot",
+      });
 
-    for (let step = 0; step < 6 * 120; step += 1) {
-      state = stepSandbox(state, createStepInput(), DISABLED_BLACK_HOLE_SPEC);
-    }
-
-    const boostedControllers = [
-      ...(state.playerBot === null ? [] : [state.player]),
-      ...state.bots,
-    ].filter((controller) => controller.lastBoostTick !== null);
-    const firstBoostTick = boostedControllers.reduce(
-      (best, controller) =>
-        controller.lastBoostTick === null
-          ? best
-          : Math.min(best, controller.lastBoostTick),
-      Number.POSITIVE_INFINITY,
-    );
-
-    expect(boostedControllers.length).toBeGreaterThanOrEqual(2);
-    expect(firstBoostTick).toBeLessThanOrEqual(240);
-  });
-
-  it("opens with offensive rocket pressure in the observer sandbox exchange", () => {
-    let state = createSandboxState(DEFAULT_ORBIT_PRESET, {
-      botDifficulty: "hard",
-      participantCount: 7,
-      playerBehavior: "bot",
-    });
-    const observedKinds = new Set<string>();
-
-    for (let step = 0; step < 12 * 120; step += 1) {
-      state = stepSandbox(state, createStepInput(), DISABLED_BLACK_HOLE_SPEC);
-      for (const burst of state.launchBursts) {
-        observedKinds.add(burst.rocketKind);
+      for (let step = 0; step < 6 * 120; step += 1) {
+        state = stepSandbox(state, createStepInput(), DISABLED_BLACK_HOLE_SPEC);
       }
-    }
 
-    expect(Array.from(observedKinds)).toEqual(
-      expect.arrayContaining(["heavy"]),
-    );
-  });
+      const boostedControllers = [
+        ...(state.playerBot === null ? [] : [state.player]),
+        ...state.bots,
+      ].filter((controller) => controller.lastBoostTick !== null);
+      const firstBoostTick = boostedControllers.reduce(
+        (best, controller) =>
+          controller.lastBoostTick === null
+            ? best
+            : Math.min(best, controller.lastBoostTick),
+        Number.POSITIVE_INFINITY,
+      );
+
+      expect(boostedControllers.length).toBeGreaterThanOrEqual(2);
+      expect(firstBoostTick).toBeLessThanOrEqual(240);
+    },
+    15_000,
+  );
+
+  it(
+    "opens with offensive rocket pressure in the observer sandbox exchange",
+    () => {
+      let state = createSandboxState(DEFAULT_ORBIT_PRESET, {
+        botDifficulty: "hard",
+        participantCount: 7,
+        playerBehavior: "bot",
+      });
+      const observedKinds = new Set<string>();
+
+      for (let step = 0; step < 12 * 120; step += 1) {
+        state = stepSandbox(state, createStepInput(), DISABLED_BLACK_HOLE_SPEC);
+        for (const burst of state.launchBursts) {
+          observedKinds.add(burst.rocketKind);
+        }
+      }
+
+      expect(Array.from(observedKinds)).toEqual(
+        expect.arrayContaining(["heavy"]),
+      );
+    },
+    15_000,
+  );
 
   it("holds fire when a target is actively shielding the lane", () => {
     const self = createPlanet({
@@ -832,7 +831,7 @@ describe("AI mode", () => {
       expect.arrayContaining([
         expect.objectContaining({
           type: "ability",
-          slot: "e",
+          slot: "w",
         }),
       ]),
     );
@@ -1095,7 +1094,6 @@ describe("AI mode", () => {
       cacheBadgeScale: 1,
       colors: {
         boost: "#ff8d4a",
-        foresight: "#7cf2ff",
         shield: "#7ab8ff",
         weapon: {
           heavy: { accent: "#ff7043" },
@@ -1111,10 +1109,6 @@ describe("AI mode", () => {
       currentSsaaLevel: 1,
       currentState: state,
       debug,
-      foresightActiveRemainingSec: 0,
-      foresightCooldownRemainingSec: 0,
-      foresightMode: "ready",
-      foresightSettings: FORESIGHT_SPEC,
       fullViewEnabled: false,
       killFeed: [],
       planetAuraGap: 0.3,

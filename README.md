@@ -1,3 +1,8 @@
+- UI for gameplay, node based?
+    - when black hole
+    - when asteroids, ramp up
+    - sun orientation, etc.
+
 - Shake camera when get hit by missile, I think we already have something for when a planet is destroyed 
 - Flicker HUD and screen on missile hit (when a missile hits the player) , be able to test in /edit&item=HUD
 - Asteroids losing from the circle radius going into the game, big, small, etc. shouldnt maybe destroy but damage depending on the asteroid size

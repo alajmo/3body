@@ -132,10 +132,8 @@ const scoreCacheContents = (
       return privateState.ammo.seeker <= 1 ? 1.08 : 0.42;
     case "shieldExt":
       return self.shieldLoad < self.shieldMaxLoad * 0.55 ? 0.82 : 0.48;
-    case "foresightExt":
-      return 0.62;
     case "wildcard":
-      return contents.wildcard.kind === "cloak" ? 0.9 : 0.94;
+      return 0.94;
   }
 };
 
@@ -284,7 +282,11 @@ const assessHazardThreats = ({
       world.blackHole,
       orbitStarMotion,
     );
-    orbitStarMotion = advanceWorldOrbitStarMotion(orbitStarMotion, dt);
+    orbitStarMotion = advanceWorldOrbitStarMotion(
+      orbitStarMotion,
+      dt,
+      predictedSuns,
+    );
     predictedSelf = stepBody(
       predictedSelf,
       predictedSuns,
@@ -759,11 +761,7 @@ export const buildCombatAiPerception = ({
     explore,
     shieldReady: self.shieldLoad > 0 && !self.shieldActive,
     boostReady: privateState.boostCharges > 0,
-    foresightReady:
-      privateState.cooldowns.foresightActiveUntilTick <= tick &&
-      privateState.cooldowns.foresightCooldownUntilTick <= tick,
     gravityPulseHeld: privateState.gravityPulseHeld,
-    cloakHeld: privateState.cloakHeld,
   };
 };
 

@@ -374,18 +374,6 @@ const buildAbilityPolicy = ({
     reasons.push("boost commit");
   }
 
-  const foresight =
-    perception.foresightReady &&
-    !shield &&
-    chosenShot !== null &&
-    chosenShot.confidence >= 0.64 &&
-    (intent.kind === "finish" ||
-      intent.kind === "zoneWithHeavy" ||
-      intent.kind === "lockSeeker");
-  if (foresight) {
-    reasons.push("foresight setup");
-  }
-
   const gravityPulse =
     privateState.gravityPulseHeld &&
     gravityPulseScore >= 0.66 &&
@@ -394,17 +382,6 @@ const buildAbilityPolicy = ({
       intent.kind === "useWildcard");
   if (gravityPulse) {
     reasons.push(`gravity pulse ${gravityPulseScore.toFixed(2)}`);
-  }
-
-  const cloak =
-    privateState.cloakHeld &&
-    ((intent.kind === "contestCache" &&
-      perception.caches[0] !== undefined &&
-      perception.caches[0]!.contestMarginSec <= 0.75) ||
-      (intent.kind === "survive" && (topThreat?.urgency ?? 0) >= 0.82) ||
-      (intent.kind === "finish" && (chosenShot?.confidence ?? 0) >= 0.74));
-  if (cloak) {
-    reasons.push("cloak swing window");
   }
 
   return {
@@ -419,9 +396,7 @@ const buildAbilityPolicy = ({
         : topThreat?.escapeDir !== undefined
           ? normalize(topThreat.escapeDir)
           : undefined,
-    foresight,
     gravityPulse,
-    cloak,
     reason: reasons,
   };
 };

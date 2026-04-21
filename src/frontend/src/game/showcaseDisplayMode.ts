@@ -1,17 +1,11 @@
+import type { ViewportDisplayMode } from "@3body/shared";
 import {
-  DEFAULT_VIEWPORT_DISPLAY_MODE,
-  sanitizeViewportDisplayMode,
-  type ViewportDisplayMode,
-} from "@3body/shared";
-import {
+  abs,
   clamp,
   convertToTexture,
   dot,
   float,
   fract,
-  luminance,
-  max,
-  posterize,
   renderOutput,
   screenSize,
   sin,
@@ -24,9 +18,7 @@ import {
 } from "three/tsl";
 import { bloom } from "three/addons/tsl/display/BloomNode.js";
 import { barrelUV, scanlines, vignette } from "three/addons/tsl/display/CRT.js";
-import { pixelationPass } from "three/addons/tsl/display/PixelationPassNode.js";
 import { rgbShift } from "three/addons/tsl/display/RGBShiftNode.js";
-import { sobel } from "three/addons/tsl/display/SobelOperatorNode.js";
 import type { Camera, Scene, WebGPURenderer } from "three/webgpu";
 import { createCompatibleScenePass } from "./viewport/postProcessingCompat";
 
@@ -34,23 +26,22 @@ const BLOOM_RADIUS = 0.18;
 const BLOOM_THRESHOLD = 0.82;
 const DEFAULT_BLOOM_STRENGTH = 1.02;
 const VHS_BLOOM_STRENGTH = 0.78;
-const PIXEL_ART_SIZE = 6;
-const PIXEL_ART_NORMAL_EDGE_STRENGTH = 0.16;
-const PIXEL_ART_DEPTH_EDGE_STRENGTH = 0.22;
-const PIXEL_ART_POSTERIZE_STEPS = float(7);
+const VHS_BARREL_DISTORTION = 0.044;
+const VHS_DRIFT_WAVE_AMPLITUDE = 0.00012;
+const VHS_DRIFT_TRACKING_AMPLITUDE = 0.00065;
+const VHS_CURVED_OVERSCAN = 1.08;
+const VHS_PHOSPHOR_STRIPE_SCALE = 0.34;
+const VHS_PHOSPHOR_BASE = 0.91;
+const VHS_PHOSPHOR_BOOST = 0.07;
+const VHS_SCREEN_FALLOFF_INNER = 0.7;
+const VHS_SCREEN_FALLOFF_OUTER = 0.98;
 
 export const SHOWCASE_DISPLAY_MODE_OPTIONS = [
-  { label: "Default", value: "default" },
+  { label: "Normal", value: "default" },
   { label: "VHS", value: "vhs" },
-  { label: "Pixel Art", value: "pixelArt" },
-  { label: "Vector Asteroids", value: "vectorAsteroids" },
 ] as const;
 
 export type ShowcaseDisplayMode = ViewportDisplayMode;
-
-export const DEFAULT_SHOWCASE_DISPLAY_MODE = DEFAULT_VIEWPORT_DISPLAY_MODE;
-
-export const sanitizeShowcaseDisplayMode = sanitizeViewportDisplayMode;
 
 const createDefaultDisplayNode = (
   sceneNode: Parameters<typeof convertToTexture>[0],
@@ -62,9 +53,9 @@ const createVhsDisplayNode = (
   const textureNode = convertToTexture(sourceNode);
   const uvNode = uv();
   const texelSize = vec2(1).div(screenSize);
-  const barrelUv = barrelUV(float(0.06), uvNode);
-  const horizontalDrift = sin(uvNode.y.mul(34).add(time.mul(12)))
-    .mul(0.0016)
+  const barrelUv = barrelUV(float(VHS_BARREL_DISTORTION), uvNode);
+  const horizontalDrift = sin(time.mul(4.8))
+    .mul(VHS_DRIFT_WAVE_AMPLITUDE)
     .add(
       smoothstep(
         0.92,
@@ -72,17 +63,45 @@ const createVhsDisplayNode = (
         sin(time.mul(0.85).sub(uvNode.y.mul(6.4)))
           .mul(0.5)
           .add(0.5),
-      ).mul(0.0032),
+      ).mul(VHS_DRIFT_TRACKING_AMPLITUDE),
     );
-  const sampleUv = barrelUv
-    .add(vec2(horizontalDrift, 0))
-    .clamp(vec2(0.001, 0.001), vec2(0.999, 0.999));
-  const barrelKeepMask = sampleUv.x
+  const distortedUv = barrelUv
+    .sub(vec2(0.5))
+    .mul(VHS_CURVED_OVERSCAN)
+    .add(vec2(0.5))
+    .add(vec2(horizontalDrift, 0));
+  const sampleUv = distortedUv.clamp(vec2(0.001, 0.001), vec2(0.999, 0.999));
+  const barrelKeepMask = distortedUv.x
     .greaterThan(0)
-    .and(sampleUv.x.lessThan(1))
-    .and(sampleUv.y.greaterThan(0))
-    .and(sampleUv.y.lessThan(1))
+    .and(distortedUv.x.lessThan(1))
+    .and(distortedUv.y.greaterThan(0))
+    .and(distortedUv.y.lessThan(1))
     .select(float(1), float(0));
+  const screenLocal = distortedUv.sub(vec2(0.5)).mul(2);
+  const screenFaceMask = float(1).sub(
+    smoothstep(
+      VHS_SCREEN_FALLOFF_INNER,
+      VHS_SCREEN_FALLOFF_OUTER,
+      dot(screenLocal, screenLocal),
+    ),
+  );
+  const phosphorPhase = fract(
+    sampleUv.x.mul(screenSize.x).mul(VHS_PHOSPHOR_STRIPE_SCALE),
+  );
+  const phosphorR = float(1).sub(
+    smoothstep(0.08, 0.22, abs(phosphorPhase.sub(0.16))),
+  );
+  const phosphorG = float(1).sub(
+    smoothstep(0.08, 0.22, abs(phosphorPhase.sub(0.5))),
+  );
+  const phosphorB = float(1).sub(
+    smoothstep(0.08, 0.22, abs(phosphorPhase.sub(0.84))),
+  );
+  const phosphorMask = vec3(
+    float(VHS_PHOSPHOR_BASE).add(phosphorR.mul(VHS_PHOSPHOR_BOOST)),
+    float(VHS_PHOSPHOR_BASE).add(phosphorG.mul(VHS_PHOSPHOR_BOOST)),
+    float(VHS_PHOSPHOR_BASE).add(phosphorB.mul(VHS_PHOSPHOR_BOOST)),
+  );
   const channelOffset = vec2(texelSize.x.mul(1.8), 0);
   const red = textureNode.sample(sampleUv.add(channelOffset)).r;
   const green = textureNode.sample(sampleUv).g;
@@ -105,7 +124,9 @@ const createVhsDisplayNode = (
   )
     .sub(0.5)
     .mul(0.08);
-  const trackedColor = clamp(scanlineColor.add(vec3(noise)), 0, 1);
+  const trackedColor = clamp(scanlineColor.add(vec3(noise)), 0, 1)
+    .mul(phosphorMask)
+    .mul(screenFaceMask.mul(0.28).add(0.72));
   const finalColor = vignette(
     trackedColor,
     float(0.32),
@@ -114,34 +135,6 @@ const createVhsDisplayNode = (
   ).mul(barrelKeepMask);
 
   return vec4(finalColor, alpha);
-};
-
-const createVectorAsteroidsDisplayNode = (
-  sourceNode: Parameters<typeof convertToTexture>[0],
-) => {
-  const uvNode = uv();
-  const sobelTexture = convertToTexture(sobel(sourceNode));
-  const textureNode = convertToTexture(sourceNode);
-  const sceneSample = textureNode.sample(uvNode);
-  const edgeMask = smoothstep(
-    0.08,
-    0.22,
-    luminance(sobelTexture.sample(uvNode).rgb),
-  );
-  const highlightMask = smoothstep(0.62, 0.92, luminance(sceneSample.rgb)).mul(
-    float(0.18),
-  );
-  const phosphorPulse = sin(time.mul(14)).mul(0.04).add(0.96);
-  const scanlinePulse = sin(uv().y.mul(screenSize.y.mul(0.48)).add(time.mul(6)))
-    .mul(0.025)
-    .add(0.975);
-  const lineMask = clamp(
-    max(edgeMask, highlightMask).mul(phosphorPulse).mul(scanlinePulse),
-    0,
-    1,
-  );
-
-  return vec4(vec3(lineMask), float(1));
 };
 
 export const createShowcaseDisplayPipeline = ({
@@ -157,35 +150,6 @@ export const createShowcaseDisplayPipeline = ({
   sampleLevel: number;
   scene: Scene;
 }) => {
-  if (mode === "pixelArt") {
-    const pixelPass = pixelationPass(
-      scene,
-      camera,
-      PIXEL_ART_SIZE,
-      PIXEL_ART_NORMAL_EDGE_STRENGTH,
-      PIXEL_ART_DEPTH_EDGE_STRENGTH,
-    );
-    const pixelArtColor = posterize(
-      pixelPass.rgb.mul(1.05),
-      PIXEL_ART_POSTERIZE_STEPS,
-    );
-    const chromaticAberrationNode = rgbShift(
-      vec4(pixelArtColor, float(1)),
-      0,
-      0,
-    );
-
-    return {
-      chromaticAberrationNode,
-      disposables: [pixelPass] as Array<{ dispose: () => void }>,
-      outputNode: renderOutput(
-        chromaticAberrationNode,
-        renderer.toneMapping,
-        renderer.outputColorSpace,
-      ),
-    };
-  }
-
   const scenePass = createCompatibleScenePass(
     renderer,
     scene,
@@ -193,24 +157,6 @@ export const createShowcaseDisplayPipeline = ({
     sampleLevel,
   );
   const disposables: Array<{ dispose: () => void }> = [scenePass];
-
-  if (mode === "vectorAsteroids") {
-    const chromaticAberrationNode = rgbShift(
-      createVectorAsteroidsDisplayNode(scenePass),
-      0,
-      0,
-    );
-
-    return {
-      chromaticAberrationNode,
-      disposables,
-      outputNode: renderOutput(
-        chromaticAberrationNode,
-        renderer.toneMapping,
-        renderer.outputColorSpace,
-      ),
-    };
-  }
 
   const bloomNode = bloom(
     scenePass,

@@ -99,7 +99,7 @@ On each render frame, the local sandbox loop:
 - runs as many fixed simulation steps as needed
 - caps steps per frame to avoid spiral-of-death behavior
 - interpolates from previous to current local sandbox state for rendering
-- rebuilds render lookups and foresight paths
+- rebuilds render lookups
 - updates camera, VFX, HUD, and scene rendering
 
 Inside `stepSandbox(...)`, one local simulation tick:

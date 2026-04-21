@@ -3,7 +3,6 @@ import {
   BLACK_HOLE_SPEC,
   BOOST_SPEC,
   FIXED_STEP_SEC,
-  FORESIGHT_SPEC,
   ROCKET_SPECS,
   SHIELD_SPEC,
   getShieldLoadCapacity,
@@ -29,7 +28,6 @@ import type { ViewportPerformanceSnapshot } from "./performanceProfiler";
 import type { ViewportEffectsQuality } from "./renderQuality";
 import { getPlanetArchetypeVisuals } from "../planetVisualTuning";
 import { getRuntimeTuningDocument } from "../runtimeTuning";
-import { getForesightMeterProgress } from "./foresightMeter";
 
 const KILL_FEED_WINDOW_SEC = 4;
 const WEAPON_LABELS: Record<RocketKind, string> = {
@@ -39,12 +37,7 @@ const WEAPON_LABELS: Record<RocketKind, string> = {
 };
 
 const describeWildcard = (wildcard: WildcardKind): string => {
-  switch (wildcard) {
-    case "gravityPulse":
-      return "Gravity Pulse";
-    case "cloak":
-      return "Cloak";
-  }
+  return wildcard === "gravityPulse" ? "Gravity Pulse" : wildcard;
 };
 
 const getShieldDisplayCapacity = (planet: PlanetPublic): number => {
@@ -174,8 +167,6 @@ const describeCacheContents = (
   }
 
   switch (contents.kind) {
-    case "foresightExt":
-      return "Foresight Max";
     case "heavyAmmo":
       return "Heavy Ammo";
     case "repair":
@@ -300,11 +291,6 @@ const buildContextualShortcuts = (
           label: "Seeker",
         },
         {
-          id: "foresight",
-          keyLabel: "E",
-          label: "Foresight",
-        },
-        {
           id: "shield",
           keyLabel: "Q",
           label: "Shield",
@@ -318,11 +304,6 @@ const buildContextualShortcuts = (
           id: "gravityPulse",
           keyLabel: "G",
           label: "Gravity Pulse",
-        },
-        {
-          id: "cloak",
-          keyLabel: "C",
-          label: "Cloak",
         },
       ]
     : [];
@@ -357,8 +338,6 @@ export const buildAuthoritativeHudState = ({
   const playerMotion = getPlayerMotionHud(playerPlanet?.vel);
   const blackHoleSettings = tuning.gameplay.blackHole ?? BLACK_HOLE_SPEC;
   const boostSettings = tuning.gameplay.abilities.boost ?? BOOST_SPEC;
-  const foresightSettings =
-    tuning.gameplay.abilities.foresight ?? FORESIGHT_SPEC;
   const shieldSettings = {
     cooldownSec:
       tuning.gameplay.abilities.shield?.cooldownSec ?? SHIELD_SPEC.cooldownSec,
@@ -384,44 +363,6 @@ export const buildAuthoritativeHudState = ({
   const abilities: GameViewportHudAbility[] = [];
 
   if (self !== null) {
-    const foresightActiveRemainingSec =
-      Math.max(0, self.cooldowns.foresightActiveUntilTick - currentTick) *
-      FIXED_STEP_SEC;
-    const foresightCooldownRemainingSec =
-      Math.max(0, self.cooldowns.foresightCooldownUntilTick - currentTick) *
-      FIXED_STEP_SEC;
-    abilities.push(
-      buildAbility({
-        accent: tuning.visuals.abilities.foresightColor,
-        id: "foresight",
-        keyLabel: "E",
-        label: "Foresight",
-        mode:
-          foresightActiveRemainingSec > 0
-            ? "active"
-            : foresightCooldownRemainingSec > 0
-              ? "cooldown"
-              : "ready",
-        remainingSec:
-          foresightActiveRemainingSec > 0
-            ? foresightActiveRemainingSec
-            : foresightCooldownRemainingSec,
-        statusText:
-          foresightActiveRemainingSec > 0
-            ? "Active"
-            : foresightCooldownRemainingSec > 0
-              ? "Cooldown"
-              : "Ready",
-        fill: getForesightMeterProgress({
-          activeUntilTick: self.cooldowns.foresightActiveUntilTick,
-          activeDurationTicks: self.cooldowns.foresightDurationTicks,
-          cooldownUntilTick: self.cooldowns.foresightCooldownUntilTick,
-          currentTick,
-          settings: foresightSettings,
-        }),
-      }),
-    );
-
     const shieldLoadRatio =
       playerPlanet !== null && playerPlanet.shieldMaxLoad > 0
         ? Math.min(
@@ -494,19 +435,6 @@ export const buildAuthoritativeHudState = ({
           label: "Gravity Pulse",
           mode: "ready",
           statusText: "Gravity Pulse",
-        }),
-      );
-    }
-
-    if (self.cloakHeld) {
-      abilities.push(
-        buildAbility({
-          accent: tuning.visuals.abilities.wildcardColor,
-          id: "cloak",
-          keyLabel: "C",
-          label: "Cloak",
-          mode: "ready",
-          statusText: "Cloak",
         }),
       );
     }
@@ -590,7 +518,6 @@ export const buildAuthoritativeHudState = ({
       world,
     }),
     damageFlash,
-    foresightSettings: { ...foresightSettings },
     hudFlicker,
     hudOpacity: 1,
     killFeed,

@@ -178,7 +178,7 @@ Caches are pickup objects that drift in the outer ring of the arena. Each Cache 
 | **Boost charge +1**    | Refills one Boost charge (above the normal max).                                                                                                                                                                                                                              |
 | **Shield extender**    | Next Shield activation lasts 2× as long.                                                                                                                                                                                                                                      |
 | **Foresight extender** | Next Foresight lasts 2× as long and remains accurate further out.                                                                                                                                                                                                             |
-| **Wildcard ability**   | A one-shot fourth ability slot, bound to **R** for the rest of the match (or until used). Possible rolls: gravity-pulse (briefly nudges all nearby objects outward), cloak (planet body stays visible but its trail is hidden for 5s via a public `hideTrailUntilTick` state that tells clients to clear/suppress trail rendering), teleport-swap (swaps positions with the planet under cursor — high-skill, high-impact). |
+| **Gravity Pulse**      | A one-shot extra ability, bound to **G** until used. On activation it briefly nudges nearby planets, rockets, and caches outward from your planet. |
 
 The Wildcard is intentionally rare (~10% of cache rolls) and game-swinging — it gives behind-players a comeback path and creates dramatic moments.
 
@@ -241,7 +241,7 @@ Default mid-match dropouts spawn at **Normal**. Lobby fill defaults to a difficu
 - The Black Hole must be readable on spawn: dark core, bright accretion band, subtle lensing/distortion, and a clearly legible kill radius so overtime is understandable instantly.
 - Foresight predicted path renders as a dashed line that fades from solid → dotted → invisible across its duration.
 - Hit effects: brief screen shake (subtle), particle burst, HP bar flash.
-- A compact bottom-right shortcuts panel keeps the core controls readable in live play: `1/2/3` rockets, `4/F` drone, `Q/W/E` abilities, `R` wildcard when active, plus contextual drone/spectator hints.
+- A compact bottom-right shortcuts panel keeps the core controls readable in live play: `1/2/3` rockets, `4/F` drone, `Q/W/E` abilities, `G` Gravity Pulse when active, plus contextual drone/spectator hints.
 
 **Audio**
 - Ambient drone that intensifies with proximity to suns.

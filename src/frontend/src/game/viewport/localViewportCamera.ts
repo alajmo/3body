@@ -4,6 +4,7 @@ import type { Mesh, OrthographicCamera, WebGPURenderer } from "three/webgpu";
 import type { CombatSandboxPlanet } from "../combatSandbox";
 import { getRuntimeTuningDocument } from "../runtimeTuning";
 import { syncBackdropFrame } from "../showcaseVisuals";
+import { getBlackHoleVisualRadius } from "./blackHoleVisuals";
 import { getViewportCameraShakeOffsets } from "./cameraShake";
 import {
   getViewportHostSize,
@@ -256,7 +257,7 @@ export const getLocalViewportCameraFrame = ({
       expandCameraBounds(
         bounds,
         state.blackHole.pos,
-        state.blackHole.radius * 2.4,
+        getBlackHoleVisualRadius(state.blackHole.radius) * 1.12,
       );
     }
 

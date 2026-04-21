@@ -61,7 +61,6 @@ export interface CombatBotMemory {
   lastAimTick: number;
   lastBoostTick: number;
   lastFireTick: number;
-  lastForesightTick: number;
   lastShieldTick: number;
   lastWildcardTick: number;
   blackboard: CombatAiBlackboard;
@@ -115,15 +114,10 @@ const placeholderSelfState = (): CombatAiSelfState => ({
     lightReloadUntilTick: 0,
     heavyReloadUntilTick: 0,
     seekerReloadUntilTick: 0,
-    foresightActiveUntilTick: 0,
-    foresightCooldownUntilTick: 0,
-    foresightDurationTicks: 0,
   },
   boostCharges: 0,
   gravityPulseHeld: false,
-  cloakHeld: false,
   nextShieldExt: false,
-  nextForesightExt: false,
 });
 
 const hashBotSeed = (value: string): number => {
@@ -143,7 +137,6 @@ export const createCombatBotMemory = (): CombatBotMemory => ({
   lastAimTick: -1,
   lastBoostTick: -1,
   lastFireTick: -1,
-  lastForesightTick: -1,
   lastShieldTick: -1,
   lastWildcardTick: -1,
   blackboard: createBotBlackboard(),
@@ -156,7 +149,6 @@ export const cloneCombatBotMemory = (
   lastAimTick: memory.lastAimTick,
   lastBoostTick: memory.lastBoostTick,
   lastFireTick: memory.lastFireTick,
-  lastForesightTick: memory.lastForesightTick,
   lastShieldTick: memory.lastShieldTick,
   lastWildcardTick: memory.lastWildcardTick,
   blackboard: cloneCombatAiBlackboard(memory.blackboard),
@@ -183,9 +175,7 @@ const buildCombatAiSelfState = (
   cooldowns: { ...context.privateState.cooldowns },
   boostCharges: context.privateState.boostCharges,
   gravityPulseHeld: context.privateState.gravityPulseHeld,
-  cloakHeld: context.privateState.cloakHeld,
   nextShieldExt: context.privateState.nextShieldExt,
-  nextForesightExt: context.privateState.nextForesightExt,
 });
 
 const ensureBlackboard = (
@@ -267,13 +257,7 @@ export const decideCombatAi = (
       threats: threatProbe,
       shieldReady: context.self.shieldLoad > 0 && !context.self.shieldActive,
       boostReady: context.privateState.boostCharges > 0,
-      foresightReady:
-        context.privateState.cooldowns.foresightActiveUntilTick <=
-          context.tick &&
-        context.privateState.cooldowns.foresightCooldownUntilTick <=
-          context.tick,
       gravityPulseHeld: context.privateState.gravityPulseHeld,
-      cloakHeld: context.privateState.cloakHeld,
     };
   }
   blackboard.history.recentThreats = blackboard.perception.threats.slice(0, 4);
@@ -439,7 +423,7 @@ export const decideCombatBot = (
   ) {
     emitAbilityCommand(
       commands,
-      "w",
+      "q",
       normalizeDir(directive.shieldAimDir ?? aimDir, aimDir),
     );
     memory.lastShieldTick = context.tick;
@@ -448,7 +432,7 @@ export const decideCombatBot = (
     !directive.abilityPolicy.shield &&
     actionReady(memory.lastShieldTick, 14, context.tick)
   ) {
-    emitAbilityCommand(commands, "w", undefined);
+    emitAbilityCommand(commands, "q", undefined);
     memory.lastShieldTick = context.tick;
   }
 
@@ -464,19 +448,11 @@ export const decideCombatBot = (
   ) {
     emitAbilityCommand(
       commands,
-      "e",
+      "w",
       normalizeDir(directive.abilityPolicy.boostDir, aimDir),
     );
     memory.lastBoostTick = context.tick;
     blackboard.history.lastBoostTick = context.tick;
-  }
-
-  if (
-    directive.abilityPolicy.foresight &&
-    actionReady(memory.lastForesightTick, 12, context.tick)
-  ) {
-    emitAbilityCommand(commands, "q", undefined);
-    memory.lastForesightTick = context.tick;
   }
 
   if (
@@ -485,13 +461,6 @@ export const decideCombatBot = (
     actionReady(memory.lastWildcardTick, WILDCARD_CADENCE_TICKS, context.tick)
   ) {
     emitAbilityCommand(commands, "g", undefined);
-    memory.lastWildcardTick = context.tick;
-  } else if (
-    directive.abilityPolicy.cloak &&
-    context.privateState.cloakHeld &&
-    actionReady(memory.lastWildcardTick, WILDCARD_CADENCE_TICKS, context.tick)
-  ) {
-    emitAbilityCommand(commands, "c", undefined);
     memory.lastWildcardTick = context.tick;
   }
 

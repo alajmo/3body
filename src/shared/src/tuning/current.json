@@ -359,7 +359,7 @@
           "y": 9
         },
         "hudAccent": "#f5fbff",
-        "scale": 10,
+        "scale": 8,
         "trail": "#b7e6ff",
         "trailScale": {
           "x": 30,
@@ -377,7 +377,7 @@
           "y": 14
         },
         "hudAccent": "#ff7a3d",
-        "scale": 10,
+        "scale": 8,
         "trail": "#ff6130",
         "trailScale": {
           "x": 36,
@@ -395,7 +395,7 @@
           "y": 11
         },
         "hudAccent": "#ff61eb",
-        "scale": 10,
+        "scale": 8,
         "trail": "#ff4dd4",
         "trailScale": {
           "x": 33,
@@ -405,20 +405,6 @@
     },
     "abilities": {
       "boostColor": "#8bc6ff",
-      "foresight": {
-        "dotColor": "#80d7ff",
-        "dotOpacity": 0.82,
-        "farStride": 6,
-        "leadGap": 24,
-        "lineColor": "#81d7ff",
-        "lineOpacity": 0.76,
-        "midStride": 4,
-        "nearStride": 3,
-        "pointSize": 9,
-        "showDots": true,
-        "showLine": false
-      },
-      "foresightColor": "#80d7ff",
       "shieldColor": "#86ecff",
       "wildcardColor": "#ffd37a"
     },
@@ -528,15 +514,18 @@
       "asteroidField": {
         "large": {
           "damage": 6.5,
-          "randomization": 0.85
+          "randomization": 1,
+          "spawnRatePerSec": 0.12
         },
         "micro": {
           "damage": 0.4,
-          "randomization": 0.2
+          "randomization": 1,
+          "spawnRatePerSec": 2.8
         },
         "small": {
           "damage": 1.6,
-          "randomization": 0.55
+          "randomization": 1,
+          "spawnRatePerSec": 0.55
         }
       },
       "instantDeath": true,
@@ -562,11 +551,11 @@
     },
     "orbits": {
       "planetStartSpeedScale": 1,
-      "starPatternDistanceScale": 1,
+      "starPatternDistanceScale": 7.20345074544651,
       "starMotion": {
-        "mode": "physicsSeed",
-        "patternId": "figure-eight-v1a",
-        "speed": 1
+        "mode": "fixedPattern",
+        "patternId": "clover-3",
+        "speed": 2
       },
       "sunStartDistanceScale": 5,
       "planetCircleRadius": 10000,
@@ -724,10 +713,6 @@
       }
     },
     "abilities": {
-      "foresight": {
-        "cooldownSec": 12,
-        "durationSec": 4
-      },
       "shield": {
         "cooldownSec": 15,
         "durationSec": 4,

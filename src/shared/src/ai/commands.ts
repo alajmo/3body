@@ -33,9 +33,7 @@ export const buildCombatAiCommandDirective = (
       plan?.abilityPolicy ?? {
         shield: false,
         boost: false,
-        foresight: false,
         gravityPulse: false,
-        cloak: false,
         reason: [],
       },
     notes,

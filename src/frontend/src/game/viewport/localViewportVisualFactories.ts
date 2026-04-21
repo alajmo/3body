@@ -41,20 +41,15 @@ import {
   Float32BufferAttribute,
   Group,
   LinearFilter,
-  Line,
-  LineBasicMaterial,
   Mesh,
   MeshBasicMaterial,
   MeshBasicNodeMaterial,
-  Points,
-  PointsNodeMaterial,
   type RingGeometry,
   SRGBColorSpace,
   type Scene,
   Vector3,
 } from "three/webgpu";
 import { getRuntimeTuningDocument } from "../runtimeTuning";
-import { MAX_FORESIGHT_SAMPLES } from "./foresightShared";
 const PLANET_EXPLOSION_CHUNK_COUNT = 12;
 const getRuntimeVisuals = () => getRuntimeTuningDocument().visuals;
 const getBoostColor = () => getRuntimeVisuals().abilities.boostColor;
@@ -334,72 +329,6 @@ export const createRocketLaunchBurstMaterial = (
   material.opacityNode = mask.mul(0.9);
   material.alphaTest = 0.01;
   return material;
-};
-
-export const createForesightVisual = () => {
-  const foresightTuning = getRuntimeVisuals().abilities.foresight;
-  const lineGeometry = new BufferGeometry();
-  const linePositions = new Float32Array(MAX_FORESIGHT_SAMPLES * 3);
-  const linePositionAttribute = new Float32BufferAttribute(linePositions, 3);
-  linePositionAttribute.setUsage(DynamicDrawUsage);
-  lineGeometry.setAttribute("position", linePositionAttribute);
-  lineGeometry.setDrawRange(0, 0);
-
-  const lineMaterial = new LineBasicMaterial({
-    color: foresightTuning.lineColor,
-    depthWrite: false,
-    opacity: foresightTuning.lineOpacity,
-    transparent: true,
-  });
-  const line = new Line(lineGeometry, lineMaterial);
-  line.frustumCulled = false;
-  line.renderOrder = 11;
-  line.position.z = 4.1;
-  line.visible = false;
-
-  const pointGeometry = new BufferGeometry();
-  const pointPositions = new Float32Array(MAX_FORESIGHT_SAMPLES * 3);
-  const pointOpacity = new Float32Array(MAX_FORESIGHT_SAMPLES);
-  const pointPositionAttribute = new Float32BufferAttribute(pointPositions, 3);
-  const pointOpacityAttribute = new Float32BufferAttribute(pointOpacity, 1);
-  pointPositionAttribute.setUsage(DynamicDrawUsage);
-  pointOpacityAttribute.setUsage(DynamicDrawUsage);
-  pointGeometry.setAttribute("position", pointPositionAttribute);
-  pointGeometry.setAttribute("foresightOpacity", pointOpacityAttribute);
-  pointGeometry.setDrawRange(0, 0);
-
-  const pointColorUniform = uniform(new Color(foresightTuning.dotColor));
-  const pointOpacityUniform = uniform(foresightTuning.dotOpacity);
-  const pointMaterial = new PointsNodeMaterial({
-    transparent: true,
-    depthWrite: false,
-    blending: AdditiveBlending,
-  });
-  const foresightOpacityNode = attribute<"float">("foresightOpacity", "float");
-  pointMaterial.colorNode = pointColorUniform;
-  pointMaterial.opacityNode = foresightOpacityNode.mul(pointOpacityUniform);
-  pointMaterial.size = foresightTuning.pointSize;
-  pointMaterial.alphaTest = 0.01;
-
-  const points = new Points(pointGeometry, pointMaterial);
-  points.frustumCulled = false;
-  points.renderOrder = 12;
-  points.position.z = 4.2;
-  points.visible = false;
-
-  return {
-    line,
-    lineGeometry,
-    lineMaterial,
-    linePositionAttribute,
-    pointGeometry,
-    pointColorUniform,
-    pointOpacityAttribute,
-    pointOpacityUniform,
-    pointMaterial,
-    pointPositionAttribute,
-    points,
-  };
 };
 
 export const createPlanetMaterial = (

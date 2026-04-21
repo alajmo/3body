@@ -17,28 +17,36 @@ import {
   createSandboxState,
   getSandboxDebugSnapshot,
 } from "./combatSandbox";
+import { getPlanetArchetypeVisuals } from "./planetVisualTuning";
 import { ROCKET_RENDER_INSTANCE_LIMITS } from "./rocketVisibility";
 import { getScaledRocketVisuals } from "./rocketVisualTuning";
+import { getRuntimeTuningDocument } from "./runtimeTuning";
 import {
-  createCacheVisual as createSharedCacheVisual,
+  SHIELD_GLOW_OUTER_SCALE,
+  SHIELD_INNER_SCALE,
+  SHIELD_OUTER_SCALE,
+} from "./shieldPresentation";
+import {
+  createBackdropMaterial,
+  createBackgroundLayer,
+  createBackgroundLayerConfigs,
+  createSceneBackgroundColor,
+} from "./showcaseVisuals";
+import { createViewportAnimationLoopController } from "./viewport/animationLoopController";
+import {
+  type BlackHoleSwallowState,
+  createBlackHoleSwallowVisualPool,
+} from "./viewport/blackHoleVisuals";
+import {
   type CacheIconKey,
-  getCacheIconKey as getSharedCacheIconKey,
   type CacheSpriteMaterialMap,
   type CacheVisual,
+  createCacheVisual as createSharedCacheVisual,
+  getCacheIconKey as getSharedCacheIconKey,
   updateCacheVisualBadge as updateSharedCacheVisualBadge,
 } from "./viewport/cacheVisuals";
 import { buildLocalSandboxHudState } from "./viewport/localHud";
-import { createViewportAnimationLoopController } from "./viewport/animationLoopController";
 import { createGameViewportInputController } from "./viewport/localInput";
-import {
-  LOCAL_VIEWPORT_CAMERA_DISTANCE,
-  createLocalViewportCameraState,
-  getLocalViewportCameraFrame,
-  resizeLocalViewportCamera,
-  screenToLocalViewportWorld,
-  syncLocalViewportCameraToFrame,
-  updateLocalViewportCamera,
-} from "./viewport/localViewportCamera";
 import {
   createLocalSandboxSimulationState,
   decayLocalSandboxFrameEffects,
@@ -49,20 +57,28 @@ import {
   shouldEmitLocalSandboxHudUpdate,
 } from "./viewport/localSandboxSimulation";
 import {
+  createLocalViewportCameraState,
+  getLocalViewportCameraFrame,
+  LOCAL_VIEWPORT_CAMERA_DISTANCE,
+  resizeLocalViewportCamera,
+  screenToLocalViewportWorld,
+  syncLocalViewportCameraToFrame,
+  updateLocalViewportCamera,
+} from "./viewport/localViewportCamera";
+import { disposeLocalViewportDisposables } from "./viewport/localViewportDisposal";
+import { createLocalViewportRenderShell } from "./viewport/localViewportRenderShell";
+import {
   clearLocalViewportPlanetExplosions,
+  createLocalViewportBlackHoleSwallowTracker,
   queueLocalViewportPlanetExplosion,
   resetLocalViewportSceneState,
   updateLocalViewportScene,
 } from "./viewport/localViewportScene";
-import { disposeLocalViewportDisposables } from "./viewport/localViewportDisposal";
-import { createLocalViewportRenderShell } from "./viewport/localViewportRenderShell";
-import { createLocalViewportVisualResources } from "./viewport/localViewportVisualResources";
 import {
   createBlackHoleCoreMaterial,
   createBlackHoleLensMaterial,
   createBlackHoleRingMaterial,
   createBoostWakeMaterial,
-  createForesightVisual,
   createNeutronStarCoreMaterial,
   createNeutronStarHaloMaterial,
   createNeutronStarJetMaterial,
@@ -80,36 +96,24 @@ import {
   createWarpMaterial,
   getPlanetForestProfile,
 } from "./viewport/localViewportVisualFactories";
-import { DEFAULT_VIEWPORT_RENDER_QUALITY_PROFILE } from "./viewport/renderQuality";
+import { createLocalViewportVisualResources } from "./viewport/localViewportVisualResources";
+import { createManagedViewportSession } from "./viewport/managedViewportSession";
+import {
+  disposeViewportRendererSession,
+  type ViewportRendererBootstrap,
+} from "./viewport/rendererBootstrap";
 import { createViewportRendererSizeState } from "./viewport/rendererSizing";
+import { DEFAULT_VIEWPORT_RENDER_QUALITY_PROFILE } from "./viewport/renderQuality";
 import {
   createGameViewportSandboxSettingsStore,
   sandboxControlsEnabled as sandboxSettingsControlsEnabled,
 } from "./viewport/sandboxSettingsStore";
 import {
-  disposeViewportRendererSession,
-  type ViewportRendererBootstrap,
-} from "./viewport/rendererBootstrap";
-import { createManagedViewportSession } from "./viewport/managedViewportSession";
-import {
   areHudStatesEqual,
-  createInitialHudState,
   type CreateGameViewportOptions,
+  createInitialHudState,
   type GameViewportHudState,
 } from "./viewportHud";
-import { getRuntimeTuningDocument } from "./runtimeTuning";
-import {
-  createBackgroundLayer,
-  createBackgroundLayerConfigs,
-  createBackdropMaterial,
-  createSceneBackgroundColor,
-} from "./showcaseVisuals";
-import { getPlanetArchetypeVisuals } from "./planetVisualTuning";
-import {
-  SHIELD_GLOW_OUTER_SCALE,
-  SHIELD_INNER_SCALE,
-  SHIELD_OUTER_SCALE,
-} from "./shieldPresentation";
 
 const TRAIL_DURATION_SEC = 3.5;
 const TRAIL_POINT_SIZE = 12;
@@ -136,6 +140,7 @@ const MAX_ACTIVE_BOOST_BURSTS = 4;
 const MAX_BOOST_BURST_SAMPLES = BOOST_BURST_PARTICLES * MAX_ACTIVE_BOOST_BURSTS;
 const MAX_VISIBLE_IMPACT_BURSTS = 20;
 const MAX_ACTIVE_PLANET_EXPLOSIONS = 6;
+const MAX_ACTIVE_BLACK_HOLE_SWALLOWS = 24;
 const RETICLE_BASE_COLOR = "#dff3ff";
 const _CANNON_STEM_LENGTH_PX = 4;
 const _CANNON_STEM_WIDTH_PX = 8;
@@ -162,7 +167,6 @@ const getBlackHoleRingRadius = () => getRuntimeVisuals().blackHole.ringRadius;
 const getBlackHoleLensRadius = () => getRuntimeVisuals().blackHole.lensRadius;
 const getShieldColor = () => getRuntimeVisuals().abilities.shieldColor;
 const getBoostColor = () => getRuntimeVisuals().abilities.boostColor;
-const getForesightColor = () => getRuntimeVisuals().abilities.foresightColor;
 const getWildcardColor = () => getRuntimeVisuals().abilities.wildcardColor;
 const getBackgroundVisuals = () => getRuntimeVisuals().background;
 const getWeaponColors = (): Record<RocketKind, { accent: string }> => ({
@@ -436,10 +440,8 @@ export function createGameViewport(
             cannonMuzzleMesh,
             cannonStemMesh,
             boundaryDebrisVisual,
-            cloakVisuals,
             debrisVisual,
             gravityPulseVisual,
-            hiddenTrailUntilByPlanetId,
             impactBurstVisuals,
             inactivePlanetExplosionVisuals,
             lockRingLockedUniform,
@@ -516,6 +518,16 @@ export function createGameViewport(
           const simulationState =
             createLocalSandboxSimulationState(initialState);
           const activePlanetExplosions: PlanetExplosionState[] = [];
+          const activeBlackHoleSwallowEffects: BlackHoleSwallowState[] = [];
+          const inactiveBlackHoleSwallowVisuals =
+            createBlackHoleSwallowVisualPool({
+              capacity: MAX_ACTIVE_BLACK_HOLE_SWALLOWS,
+              disposables,
+              document: hostElement.ownerDocument,
+              scene,
+            });
+          const blackHoleSwallowTracker =
+            createLocalViewportBlackHoleSwallowTracker(initialState);
           const rocketTrailStates = new Map<number, RocketTrailState>();
           const rocketMatrix = new Matrix4();
           const hiddenRocketMatrix = new Matrix4();
@@ -564,41 +576,6 @@ export function createGameViewport(
             light: [] as CombatSandboxRocket[],
             seeker: [] as CombatSandboxRocket[],
           };
-          const foresightVisuals = new Map<
-            number,
-            ReturnType<typeof createForesightVisual>
-          >();
-          const ensureForesightVisual = (planetId: number) => {
-            let visual = foresightVisuals.get(planetId);
-            if (visual !== undefined) {
-              return visual;
-            }
-
-            visual = createForesightVisual();
-            scene.add(visual.line, visual.points);
-            disposables.push(
-              visual.lineGeometry,
-              visual.line.material,
-              visual.pointGeometry,
-              visual.points.material,
-            );
-            foresightVisuals.set(planetId, visual);
-            return visual;
-          };
-          const syncForesightVisualsToState = (
-            state: Pick<
-              typeof simulationState.currentState,
-              "planets" | "suns"
-            >,
-          ) => {
-            for (const sun of state.suns) {
-              ensureForesightVisual(sun.id);
-            }
-            for (const planet of state.planets) {
-              ensureForesightVisual(planet.id);
-            }
-          };
-          syncForesightVisualsToState(initialState);
           const syncCameraToFocus = (
             state: typeof simulationState.currentState,
           ) => {
@@ -619,7 +596,7 @@ export function createGameViewport(
           };
 
           syncAimWorldToPointer = () => {
-            if (!pointerState.hasPointer) {
+            if (inputRuntime.keyboardAimActive || !pointerState.hasPointer) {
               return;
             }
 
@@ -642,26 +619,25 @@ export function createGameViewport(
             clearPlanetExplosions();
             cameraState.shakeOffsetX = 0;
             cameraState.shakeOffsetY = 0;
-            syncForesightVisualsToState(simulationState.currentState);
             resetLocalViewportSceneState({
+              activeBlackHoleSwallowEffects,
               activeGravityPulse: simulationState.activeGravityPulse,
               activeBoostBursts: simulationState.activeBoostBursts,
+              blackHoleSwallowTracker,
               boostBurstVisual,
               boundaryDebrisVisual,
               cacheVisuals,
-              cloakVisuals,
               currentState: simulationState.currentState,
               debrisVisual,
               disposeCacheVisual,
-              foresightVisuals,
               gravityPulseVisual,
               hiddenRocketMatrix,
               hiddenRocketPosition,
               hiddenRocketRotation,
               hiddenRocketScale,
-              hiddenTrailUntilByPlanetId,
               hostScene: scene,
               impactBurstVisuals,
+              inactiveBlackHoleSwallowVisuals,
               maxLaunchBurstInstances: MAX_ROCKET_LAUNCH_BURST_INSTANCES,
               renderPlanetsById: simulationState.renderPlanetsById,
               rocketLaunchBurstPools,
@@ -708,7 +684,6 @@ export function createGameViewport(
               const blackHoleSettings = sandboxSettings.blackHoleSettings;
               const boostSettings = sandboxSettings.boostSettings;
               const cacheBadgeScale = sandboxSettings.cacheBadgeScale;
-              const foresightSettings = sandboxSettings.foresightSettings;
               const fullViewEnabled = inputRuntime.fullViewEnabled;
               const profilingEnabled = sandboxSettings.profilingEnabled;
               const sandboxPaused = sandboxSettings.sandboxPaused;
@@ -730,9 +705,6 @@ export function createGameViewport(
                     startedAtSec,
                   });
                 },
-                onSandboxResetRequested: () => {
-                  resetSandbox?.();
-                },
                 onViewportFocusChanged: (state) => {
                   syncCameraToFocus(state);
                 },
@@ -742,6 +714,12 @@ export function createGameViewport(
                 simulationState,
               });
               resetSimulationAccumulator = false;
+              if (simulationFrame.playerPlanet !== null) {
+                inputController?.updateKeyboardAim(
+                  simulationFrame.playerPlanet.pos,
+                  0,
+                );
+              }
 
               const currentEffectsQuality = renderQuality.effectsQuality;
               const boostBurstParticlesPerBurst = getBudgetedCount(
@@ -762,7 +740,6 @@ export function createGameViewport(
                 frameDeltaSec: simulationFrame.frameDeltaSec,
                 simulationState,
               });
-              syncForesightVisualsToState(simulationState.currentState);
 
               updateLocalViewportCamera({
                 backdropMesh,
@@ -814,16 +791,12 @@ export function createGameViewport(
                 cannonGroup,
                 cannonMuzzleMesh,
                 cannonStemMesh,
-                cloakVisuals,
                 chromaticAberrationNode,
                 controlsEnabled: sandboxControlsEnabled(),
                 createCacheVisual,
                 currentState: simulationState.currentState,
                 debrisVisual,
                 disposeCacheVisual,
-                foresightPathsByEntityId:
-                  simulationState.foresightPathsByEntityId,
-                foresightVisuals,
                 getCacheIconKey: getSharedCacheIconKey,
                 gravityPulseVisual,
                 hiddenRocketMatrix,
@@ -832,8 +805,10 @@ export function createGameViewport(
                 hiddenRocketScale,
                 hostElement,
                 impactBurstVisuals,
+                inactiveBlackHoleSwallowVisuals,
                 inactivePlanetExplosionVisuals,
                 inputState,
+                playerBoostHeld: inputRuntime.pendingAbilityRequests.boost,
                 launchBurstsByKind,
                 lockRingLockedUniform,
                 lockRingMesh,
@@ -871,6 +846,8 @@ export function createGameViewport(
                 trailVisuals,
                 updateCacheVisualBadge,
                 weaponKinds: WEAPON_KINDS,
+                activeBlackHoleSwallowEffects,
+                blackHoleSwallowTracker,
               });
 
               if (
@@ -882,18 +859,6 @@ export function createGameViewport(
                 const currentState = simulationState.currentState;
                 const playerPlanet = simulationFrame.playerPlanet;
                 const debug = getSandboxDebugSnapshot(currentState);
-                const foresightActiveRemainingSec =
-                  Math.max(
-                    0,
-                    currentState.player.foresightActiveUntilTick -
-                      currentState.tick,
-                  ) * FIXED_STEP_SEC;
-                const foresightCooldownRemainingSec =
-                  Math.max(
-                    0,
-                    currentState.player.foresightCooldownUntilTick -
-                      currentState.tick,
-                  ) * FIXED_STEP_SEC;
                 const boostChargeRemainingSec =
                   currentState.player.nextBoostChargeAtTick === null
                     ? 0
@@ -904,12 +869,6 @@ export function createGameViewport(
                       ) * FIXED_STEP_SEC;
                 const boostRecoveryRemainingSec = boostChargeRemainingSec;
                 const boostRecoveryDurationSec = boostSettings.cooldownSec;
-                const foresightMode =
-                  foresightActiveRemainingSec > 0
-                    ? "active"
-                    : foresightCooldownRemainingSec > 0
-                      ? "cooldown"
-                      : "ready";
                 const shieldMode = currentState.player.shieldActive
                   ? "active"
                   : currentState.player.shieldLoad <
@@ -954,7 +913,6 @@ export function createGameViewport(
                     cacheBadgeScale,
                     colors: {
                       boost: getBoostColor(),
-                      foresight: getForesightColor(),
                       shield: getShieldColor(),
                       weapon: getWeaponColors(),
                       wildcard: getWildcardColor(),
@@ -966,10 +924,6 @@ export function createGameViewport(
                     currentSsaaLevel,
                     currentState,
                     debug,
-                    foresightActiveRemainingSec,
-                    foresightCooldownRemainingSec,
-                    foresightMode,
-                    foresightSettings,
                     fullViewEnabled,
                     killFeed,
                     planetAuraGap:

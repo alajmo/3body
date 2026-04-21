@@ -1,5 +1,4 @@
 import {
-  BLACK_HOLE_SPEC,
   FIXED_STEP_SEC,
   getNeutronStarMassAlpha,
   getNeutronStarRadiusForMass,
@@ -62,6 +61,10 @@ import {
   createNeutronStarJetMaterial,
   createNeutronStarLensMaterial,
 } from "./viewport/localViewportVisualFactories";
+import {
+  getBlackHoleVisualRadius,
+  getBlackHoleVisualScale,
+} from "./viewport/blackHoleVisuals";
 import {
   disposeViewportRendererSession,
   type ViewportRendererBootstrap,
@@ -264,9 +267,7 @@ const createIdleSandboxInput = (
   aimWorld: { x: state.player.aimWorld.x, y: state.player.aimWorld.y },
   boostRequested: false,
   fireRequested: false,
-  foresightRequested: false,
   gravityPulseRequested: false,
-  cloakRequested: false,
   selectedRocketKind: state.player.selectedRocketKind,
   shieldRequested: false,
 });
@@ -279,6 +280,7 @@ export function createSunInteractionViewport(
     mode?: SunInteractionViewportMode;
   } = {},
 ): () => void {
+  const rendersNeutronStars = mode === "neutronStars" || mode === "orbits";
   let disposed = false;
   let renderer: WebGPURenderer | null = null;
   let rendererBootstrap: ViewportRendererBootstrap | null = null;
@@ -494,7 +496,11 @@ export function createSunInteractionViewport(
             return layer;
           });
           const outerRingDebris = createAmbientBoundaryDebrisVisual({});
-          scene.add(outerRingDebris.bandGroup, outerRingDebris.points);
+          scene.add(
+            outerRingDebris.bandGroup,
+            outerRingDebris.fallingGroup,
+            outerRingDebris.points,
+          );
           registerDisposables(
             disposables,
             ...outerRingDebris.bandGeometries,
@@ -610,65 +616,64 @@ export function createSunInteractionViewport(
             } satisfies SunVisual;
           });
 
-          const neutronStarVisuals =
-            mode === "neutronStars"
-              ? previewState.neutronStars.map((neutronStar, index) => {
-                  const coreMesh = new Mesh(
-                    sunGeometry,
-                    createNeutronStarCoreMaterial(neutronStar.id),
-                  );
-                  const haloMesh = new Mesh(
-                    glowGeometry,
-                    createNeutronStarHaloMaterial(neutronStar.id),
-                  );
-                  const lensMesh = new Mesh(
-                    glowGeometry,
-                    createNeutronStarLensMaterial(neutronStar.id),
-                  );
-                  const jetMeshA = new Mesh(
-                    new PlaneGeometry(1, 1),
-                    createNeutronStarJetMaterial(neutronStar.id),
-                  );
-                  const jetMeshB = new Mesh(
-                    new PlaneGeometry(1, 1),
-                    createNeutronStarJetMaterial(neutronStar.id + 0.37),
-                  );
-                  const group = new Group();
+          const neutronStarVisuals = rendersNeutronStars
+            ? previewState.neutronStars.map((neutronStar, index) => {
+                const coreMesh = new Mesh(
+                  sunGeometry,
+                  createNeutronStarCoreMaterial(neutronStar.id),
+                );
+                const haloMesh = new Mesh(
+                  glowGeometry,
+                  createNeutronStarHaloMaterial(neutronStar.id),
+                );
+                const lensMesh = new Mesh(
+                  glowGeometry,
+                  createNeutronStarLensMaterial(neutronStar.id),
+                );
+                const jetMeshA = new Mesh(
+                  new PlaneGeometry(1, 1),
+                  createNeutronStarJetMaterial(neutronStar.id),
+                );
+                const jetMeshB = new Mesh(
+                  new PlaneGeometry(1, 1),
+                  createNeutronStarJetMaterial(neutronStar.id + 0.37),
+                );
+                const group = new Group();
 
-                  coreMesh.renderOrder = -6;
-                  haloMesh.renderOrder = -7;
-                  lensMesh.renderOrder = -8;
-                  jetMeshA.renderOrder = -7;
-                  jetMeshB.renderOrder = -7;
-                  haloMesh.position.z = -1.6;
-                  lensMesh.position.z = -2.4;
-                  jetMeshA.position.z = -1.2;
-                  jetMeshB.position.z = -1.2;
-                  group.add(lensMesh, haloMesh, jetMeshA, jetMeshB, coreMesh);
-                  scene.add(group);
-                  registerDisposables(
-                    disposables,
-                    jetMeshA.geometry,
-                    jetMeshB.geometry,
-                    coreMesh.material as { dispose: () => void },
-                    haloMesh.material as { dispose: () => void },
-                    lensMesh.material as { dispose: () => void },
-                    jetMeshA.material as { dispose: () => void },
-                    jetMeshB.material as { dispose: () => void },
-                  );
+                coreMesh.renderOrder = -6;
+                haloMesh.renderOrder = -7;
+                lensMesh.renderOrder = -8;
+                jetMeshA.renderOrder = -7;
+                jetMeshB.renderOrder = -7;
+                haloMesh.position.z = -1.6;
+                lensMesh.position.z = -2.4;
+                jetMeshA.position.z = -1.2;
+                jetMeshB.position.z = -1.2;
+                group.add(lensMesh, haloMesh, jetMeshA, jetMeshB, coreMesh);
+                scene.add(group);
+                registerDisposables(
+                  disposables,
+                  jetMeshA.geometry,
+                  jetMeshB.geometry,
+                  coreMesh.material as { dispose: () => void },
+                  haloMesh.material as { dispose: () => void },
+                  lensMesh.material as { dispose: () => void },
+                  jetMeshA.material as { dispose: () => void },
+                  jetMeshB.material as { dispose: () => void },
+                );
 
-                  return {
-                    coreMesh,
-                    group,
-                    haloMesh,
-                    jetMeshA,
-                    jetMeshB,
-                    lensMesh,
-                    phase: index * 0.91 + neutronStar.id * 0.0008,
-                    spinSpeed: 0.22 + index * 0.04,
-                  } satisfies NeutronStarVisual;
-                })
-              : [];
+                return {
+                  coreMesh,
+                  group,
+                  haloMesh,
+                  jetMeshA,
+                  jetMeshB,
+                  lensMesh,
+                  phase: index * 0.91 + neutronStar.id * 0.0008,
+                  spinSpeed: 0.22 + index * 0.04,
+                } satisfies NeutronStarVisual;
+              })
+            : [];
 
           const planetVisuals = previewState.planets.map((planet, index) => {
             const visualStyle = getPlanetArchetypeVisuals(planet.archetype);
@@ -814,7 +819,7 @@ export function createSunInteractionViewport(
                 maxY = Math.max(maxY, debrisOuterRadius);
               }
 
-              if (mode === "neutronStars") {
+              if (rendersNeutronStars) {
                 const neutronStarTuning =
                   getRuntimeTuningDocument().gameplay.neutronStars;
                 const neutronStarVisualTuning =
@@ -914,15 +919,12 @@ export function createSunInteractionViewport(
 
               blackHoleGroup.visible = renderState.blackHole !== null;
               if (renderState.blackHole !== null) {
-                const blackHoleScale =
-                  renderState.blackHole.killRadius /
-                  Math.max(1, BLACK_HOLE_SPEC.killRadius);
-                const blackHoleVisualRadius =
-                  Math.max(
-                    getRuntimeTuningDocument().visuals.blackHole.lensRadius,
-                    getRuntimeTuningDocument().visuals.blackHole.ringRadius,
-                    getRuntimeTuningDocument().visuals.blackHole.coreRadius,
-                  ) * blackHoleScale;
+                const blackHoleScale = getBlackHoleVisualScale(
+                  renderState.blackHole.killRadius,
+                );
+                const blackHoleVisualRadius = getBlackHoleVisualRadius(
+                  renderState.blackHole.killRadius,
+                );
                 minX = Math.min(
                   minX,
                   renderState.blackHole.pos.x - blackHoleVisualRadius,
@@ -1016,9 +1018,19 @@ export function createSunInteractionViewport(
               }
 
               updateAmbientBoundaryDebrisVisual({
+                blackHoleBody:
+                  renderState.blackHole === null
+                    ? null
+                    : {
+                        pos: renderState.blackHole.pos,
+                        radius: renderState.blackHole.killRadius,
+                      },
                 ...getAmbientBoundaryDebrisRadii(arenaRadius),
                 nowSec,
+                neutronStarBodies: renderState.neutronStars,
                 visual: outerRingDebris,
+                planetBodies: renderState.planets,
+                sunBodies: renderState.suns,
               });
 
               const width = Math.max(1, hostElement.clientWidth);
