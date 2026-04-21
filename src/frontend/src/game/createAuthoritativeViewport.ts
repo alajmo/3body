@@ -81,6 +81,8 @@ import {
   createAuthoritativeInterpolationCache,
   syncAuthoritativeInterpolatedWorld,
 } from "./viewport/authoritativeInterpolation";
+import { syncAuthoritativeLocalPlayerPrediction } from "./viewport/authoritativeLocalPlayerPrediction";
+import { getCannonWorldLayout } from "./rocketVisibility";
 import { getScaledRocketVisuals } from "./rocketVisualTuning";
 import {
   CAMERA_SHAKE_DURATION_SEC,
@@ -139,7 +141,15 @@ import {
   createBlackHoleRingMaterial,
   createRocketLaunchBurstMaterial,
 } from "./viewport/localViewportVisualFactories";
-import { getAuthoritativeInterpolationDelayMs } from "./viewport/authoritativeLatency";
+import {
+  getAuthoritativeInterpolationDelayMs,
+  getAuthoritativeInterpolationMaxAlpha,
+  getAuthoritativeLateSnapshotThresholdMs,
+} from "./viewport/authoritativeLatency";
+import {
+  getAuthoritativeAbilitySlots,
+  smoothAuthoritativeCameraAxis,
+} from "./viewport/authoritativeViewportBehavior";
 import {
   createBlackHoleSwallowVisualPool,
   getBlackHoleVisualScale,
@@ -160,11 +170,13 @@ const MAX_FRAME_DELTA_SEC = 0.1;
 const HUD_UPDATE_INTERVAL_SEC = 1 / 12;
 const MAX_TRAIL_SAMPLES = 220;
 const TRAIL_POINT_SIZE = 12;
-const INPUT_SEND_INTERVAL_MS = 1000 / 60;
+const INPUT_SEND_INTERVAL_MS = 1000 / 30;
+const SHIELD_AIM_SEND_INTERVAL_MS = 1000 / 30;
 const MAX_ACTIVE_BLACK_HOLE_SWALLOWS = 24;
 const MAX_ACTIVE_NEUTRON_STAR_ABSORPTION_EXPLOSIONS = 8;
 const BLACK_HOLE_ROCKET_SWALLOW_COLOR = "#ffd7ac";
 const BLACK_HOLE_CACHE_SWALLOW_COLOR = "#fff0bb";
+const CANNON_BAND_POSITION = 0.32;
 const IMMEDIATE_FIRE_BURST_DURATION_SEC = 0.12;
 const IMMEDIATE_GHOST_ROCKET_DURATION_SEC = 0.18;
 const IMMEDIATE_SHIELD_FEEDBACK_DURATION_SEC = 0.18;
@@ -187,6 +199,18 @@ interface RocketVisual {
   flame: Mesh;
   group: Group;
   trail: Mesh;
+}
+
+interface CannonVisual {
+  accentMaterial: MeshBasicMaterial;
+  barrelBandMesh: Mesh;
+  barrelMesh: Mesh;
+  breechMesh: Mesh;
+  flashMaterial: MeshBasicMaterial;
+  flashMesh: Mesh;
+  group: Group;
+  muzzleMesh: Mesh;
+  stemMesh: Mesh;
 }
 
 interface SunVisual {
@@ -251,6 +275,11 @@ interface ImmediateGravityPulseFeedbackState {
 
 interface ImmediateShieldFeedbackState {
   aimDir: Vec2;
+  startedAtSec: number;
+}
+
+interface ImmediateCannonFlashState {
+  rocketKind: RocketKind;
   startedAtSec: number;
 }
 
@@ -414,6 +443,7 @@ export function createAuthoritativeViewport(
   let lastHudUpdateSec = 0;
   let previousFrameTimeSec: number | null = null;
   let lastInputSentAtMs = 0;
+  let lastShieldAimSentAtMs = 0;
   let nextClientTick = 1;
   let lastProfilingResetToken = options.getPerformanceState().resetToken;
   const renderQuality = DEFAULT_VIEWPORT_RENDER_QUALITY_PROFILE;
@@ -441,6 +471,8 @@ export function createAuthoritativeViewport(
   let shieldPanelOpacityUniform: { value: number } | null = null;
   let shieldCrestOpacityUniform: { value: number } | null = null;
   let shieldGlowOpacityUniform: { value: number } | null = null;
+  let cannonVisual: CannonVisual | null = null;
+  let immediateCannonFlashState: ImmediateCannonFlashState | null = null;
   let boostFeedbackMesh: Mesh | null = null;
   let boostFeedbackState: ImmediateBoostFeedbackState | null = null;
   let gravityPulseVisual: GravityPulseVisual | null = null;
@@ -499,6 +531,15 @@ export function createAuthoritativeViewport(
     0,
     snapshotWindowMs - authoritativeInterpolationDelayMs,
   );
+  const authoritativeInterpolationMaxAlpha =
+    getAuthoritativeInterpolationMaxAlpha({
+      hostname: window.location.hostname,
+      snapshotWindowMs,
+    });
+  const authoritativeLateSnapshotThresholdMs =
+    getAuthoritativeLateSnapshotThresholdMs({
+      snapshotWindowMs,
+    });
   let cameraShake = 0;
   let damageFlash = 0;
   let hudFlicker = 0;
@@ -601,6 +642,10 @@ export function createAuthoritativeViewport(
       sceneRemoveSafe(shieldGroup);
       shieldGroup = null;
     }
+    if (cannonVisual !== null) {
+      sceneRemoveSafe(cannonVisual.group);
+      cannonVisual = null;
+    }
     if (boostFeedbackMesh !== null) {
       sceneRemoveSafe(boostFeedbackMesh);
       boostFeedbackMesh = null;
@@ -638,6 +683,7 @@ export function createAuthoritativeViewport(
     shieldPanelOpacityUniform = null;
     shieldCrestOpacityUniform = null;
     shieldGlowOpacityUniform = null;
+    immediateCannonFlashState = null;
     boostFeedbackState = null;
     gravityPulseFeedbackState = null;
     immediateShieldFeedbackState = null;
@@ -848,6 +894,95 @@ export function createAuthoritativeViewport(
             shieldVisual.shieldPanelMaterial,
             shieldVisual.shieldCrestMesh.geometry,
             shieldVisual.shieldCrestMaterial,
+          );
+
+          const cannonMetalMaterial = new MeshBasicMaterial({
+            color: "#7c8ea8",
+          });
+          const cannonAccentMaterial = new MeshBasicMaterial({
+            color: initialTuning.visuals.rockets.light.hudAccent,
+          });
+          const cannonFlashMaterial = new MeshBasicMaterial({
+            blending: AdditiveBlending,
+            color: "#fff1c2",
+            depthWrite: false,
+            opacity: 0,
+            transparent: true,
+          });
+          const cannonStemGeometry = new CylinderGeometry(1, 1, 1, 16);
+          const cannonBarrelGeometry = new CylinderGeometry(1, 1, 1, 20);
+          const cannonBarrelBandGeometry = new CylinderGeometry(1, 1, 1, 20);
+          const cannonMuzzleGeometry = new CylinderGeometry(1, 1, 1, 22);
+          const cannonBreechGeometry = new BoxGeometry(1, 1, 1);
+          const cannonFlashGeometry = new SphereGeometry(1, 18, 12);
+          cannonStemGeometry.rotateZ(-Math.PI / 2);
+          cannonBarrelGeometry.rotateZ(-Math.PI / 2);
+          cannonBarrelBandGeometry.rotateZ(-Math.PI / 2);
+          cannonMuzzleGeometry.rotateZ(-Math.PI / 2);
+          const cannonStemMesh = new Mesh(
+            cannonStemGeometry,
+            cannonMetalMaterial,
+          );
+          cannonStemMesh.renderOrder = 14;
+          const cannonBreechMesh = new Mesh(
+            cannonBreechGeometry,
+            cannonMetalMaterial,
+          );
+          cannonBreechMesh.renderOrder = 15;
+          const cannonBarrelMesh = new Mesh(
+            cannonBarrelGeometry,
+            cannonMetalMaterial,
+          );
+          cannonBarrelMesh.renderOrder = 16;
+          const cannonBarrelBandMesh = new Mesh(
+            cannonBarrelBandGeometry,
+            cannonAccentMaterial,
+          );
+          cannonBarrelBandMesh.renderOrder = 17;
+          const cannonMuzzleMesh = new Mesh(
+            cannonMuzzleGeometry,
+            cannonAccentMaterial,
+          );
+          cannonMuzzleMesh.renderOrder = 18;
+          const cannonFlashMesh = new Mesh(
+            cannonFlashGeometry,
+            cannonFlashMaterial,
+          );
+          cannonFlashMesh.renderOrder = 20;
+          cannonFlashMesh.visible = false;
+          const cannonGroup = new Group();
+          cannonGroup.visible = false;
+          cannonGroup.position.z = 6;
+          cannonGroup.add(
+            cannonStemMesh,
+            cannonBreechMesh,
+            cannonBarrelMesh,
+            cannonBarrelBandMesh,
+            cannonMuzzleMesh,
+            cannonFlashMesh,
+          );
+          scene.add(cannonGroup);
+          cannonVisual = {
+            accentMaterial: cannonAccentMaterial,
+            barrelBandMesh: cannonBarrelBandMesh,
+            barrelMesh: cannonBarrelMesh,
+            breechMesh: cannonBreechMesh,
+            flashMaterial: cannonFlashMaterial,
+            flashMesh: cannonFlashMesh,
+            group: cannonGroup,
+            muzzleMesh: cannonMuzzleMesh,
+            stemMesh: cannonStemMesh,
+          };
+          disposables.push(
+            cannonMetalMaterial,
+            cannonAccentMaterial,
+            cannonFlashMaterial,
+            cannonStemGeometry,
+            cannonBreechGeometry,
+            cannonBarrelGeometry,
+            cannonBarrelBandGeometry,
+            cannonMuzzleGeometry,
+            cannonFlashGeometry,
           );
 
           const boostBurstMaterial = createRocketLaunchBurstMaterial(
@@ -1108,6 +1243,7 @@ export function createAuthoritativeViewport(
             onActiveChange: (active) => {
               previousFrameTimeSec = null;
               lastInputSentAtMs = 0;
+              lastShieldAimSentAtMs = 0;
               if (active) {
                 resizeViewport();
                 syncAimWorldToPointer?.();
@@ -1152,21 +1288,25 @@ export function createAuthoritativeViewport(
               const interpolationProfilerStartMs = profilingEnabled
                 ? performance.now()
                 : 0;
+              const rawInterpolationAlpha =
+                snapshot === null || previousSnapshot === null
+                  ? 1
+                  : (timeMs -
+                      snapshot.receivedAtMs +
+                      authoritativeInterpolationLeadMs) /
+                    snapshotWindowMs;
               const interpolationAlpha =
                 snapshot === null || previousSnapshot === null
                   ? 1
                   : clamp(
-                      (timeMs -
-                        snapshot.receivedAtMs +
-                        authoritativeInterpolationLeadMs) /
-                        snapshotWindowMs,
+                      rawInterpolationAlpha,
                       0,
-                      1,
+                      authoritativeInterpolationMaxAlpha,
                     );
               const extrapolating =
                 snapshot !== null &&
                 timeMs - snapshot.receivedAtMs >
-                  authoritativeInterpolationDelayMs + snapshotWindowMs * 0.35;
+                  authoritativeLateSnapshotThresholdMs;
 
               const world =
                 snapshot === null
@@ -1186,11 +1326,19 @@ export function createAuthoritativeViewport(
 
               const playerId = runtime.playerId;
               const playerPlanet =
-                playerId === null || world === null
+                playerId === null || world === null || snapshot === null
                   ? null
-                  : (world.planets.find(
+                  : (syncAuthoritativeLocalPlayerPrediction({
+                      playerId,
+                      predictionMs: Math.max(0, timeMs - snapshot.receivedAtMs),
+                      renderWorld: world,
+                      snapshotTick: snapshot.tick,
+                      snapshotWorld: snapshot.world,
+                    }) ??
+                    world.planets.find(
                       (planet) => planet.playerId === playerId,
-                    ) ?? null);
+                    ) ??
+                    null);
               if (playerPlanet !== null) {
                 viewportInputController.updateKeyboardAim(
                   playerPlanet.pos,
@@ -1299,20 +1447,20 @@ export function createAuthoritativeViewport(
                 lastProcessedEventId = latestEventId;
               }
               const frame = getCameraFrame(world, playerPlanet);
-              const cameraMoveAlpha =
-                1 - Math.exp(-CAMERA_FOLLOW_LERP * frameDeltaSec);
               const cameraZoomAlpha =
                 1 - Math.exp(-CAMERA_ZOOM_LERP * frameDeltaSec);
-              cameraState.centerX = lerp(
-                cameraState.centerX,
-                frame.centerX,
-                cameraMoveAlpha,
-              );
-              cameraState.centerY = lerp(
-                cameraState.centerY,
-                frame.centerY,
-                cameraMoveAlpha,
-              );
+              cameraState.centerX = smoothAuthoritativeCameraAxis({
+                currentValue: cameraState.centerX,
+                followLerp: CAMERA_FOLLOW_LERP,
+                frameDeltaSec,
+                targetValue: frame.centerX,
+              });
+              cameraState.centerY = smoothAuthoritativeCameraAxis({
+                currentValue: cameraState.centerY,
+                followLerp: CAMERA_FOLLOW_LERP,
+                frameDeltaSec,
+                targetValue: frame.centerY,
+              });
               cameraState.visibleWorldHeight = lerp(
                 cameraState.visibleWorldHeight,
                 frame.visibleWorldHeight,
@@ -1361,19 +1509,31 @@ export function createAuthoritativeViewport(
                     len(aimDelta) > 0
                       ? normalizeVec2(aimDelta)
                       : ({ x: 1, y: 0 } as Vec2);
+                  const shieldActive =
+                    playerPlanet.shieldActive && playerPlanet.shieldLoad > 0;
 
-                  if (timeMs - lastInputSentAtMs >= INPUT_SEND_INTERVAL_MS) {
+                  if (
+                    !shieldActive &&
+                    timeMs - lastInputSentAtMs >= INPUT_SEND_INTERVAL_MS
+                  ) {
                     lastInputSentAtMs = timeMs;
                     options.dispatchMessage({
                       clientTick: nextClientTick,
                       mouseDir: aimDir,
                       type: "input",
                     });
+                    nextClientTick += 1;
+                  }
+                  if (
+                    shieldActive &&
+                    timeMs - lastShieldAimSentAtMs >=
+                      SHIELD_AIM_SEND_INTERVAL_MS
+                  ) {
+                    lastShieldAimSentAtMs = timeMs;
                     options.dispatchMessage({
                       dir: aimDir,
                       type: "shieldAim",
                     });
-                    nextClientTick += 1;
                   }
 
                   const fireRequested =
@@ -1402,6 +1562,10 @@ export function createAuthoritativeViewport(
                       radius: playerPlanet.radius,
                       startedAtSec: nowSec,
                     });
+                    immediateCannonFlashState = {
+                      rocketKind: selectedRocketKind,
+                      startedAtSec: nowSec,
+                    };
                     immediateGhostRocketState.set(selectedRocketKind, {
                       direction: { x: aimDir.x, y: aimDir.y },
                       origin: fireOrigin,
@@ -1415,32 +1579,50 @@ export function createAuthoritativeViewport(
 
                   const pendingAbilityRequests =
                     viewportInputController.state.pendingAbilityRequests;
-                  if (pendingAbilityRequests.shield) {
-                    options.dispatchMessage({ slot: "q", type: "ability" });
-                    immediateShieldFeedbackState = {
-                      aimDir: { x: aimDir.x, y: aimDir.y },
-                      startedAtSec: nowSec,
-                    };
-                    hudFlicker = Math.max(hudFlicker, 0.06);
-                  }
-                  if (pendingAbilityRequests.boost) {
-                    options.dispatchMessage({ slot: "w", type: "ability" });
-                    boostFeedbackState = {
-                      direction: { x: aimDir.x, y: aimDir.y },
-                      startedAtSec: nowSec,
-                    };
-                    cameraShake = Math.max(cameraShake, 0.1);
-                  }
-                  if (pendingAbilityRequests.gravityPulse) {
-                    options.dispatchMessage({ slot: "g", type: "ability" });
-                    gravityPulseFeedbackState = {
-                      effectRadius: GRAVITY_PULSE_SPEC.radius,
-                      origin: { x: playerPlanet.pos.x, y: playerPlanet.pos.y },
-                      planetRadius: playerPlanet.radius,
-                      startedAtSec: nowSec,
-                    };
-                    cameraShake = Math.max(cameraShake, 0.18);
-                    hudFlicker = Math.max(hudFlicker, 0.1);
+                  const boostAvailable =
+                    (runtime.snapshot?.self?.boostCharges ?? 0) > 0;
+                  for (const abilitySlot of getAuthoritativeAbilitySlots(
+                    pendingAbilityRequests,
+                  )) {
+                    if (abilitySlot === "w" && !boostAvailable) {
+                      continue;
+                    }
+
+                    options.dispatchMessage({
+                      aimDir,
+                      slot: abilitySlot,
+                      type: "ability",
+                    });
+
+                    switch (abilitySlot) {
+                      case "q":
+                        immediateShieldFeedbackState = {
+                          aimDir: { x: aimDir.x, y: aimDir.y },
+                          startedAtSec: nowSec,
+                        };
+                        hudFlicker = Math.max(hudFlicker, 0.06);
+                        break;
+                      case "w":
+                        boostFeedbackState = {
+                          direction: { x: aimDir.x, y: aimDir.y },
+                          startedAtSec: nowSec,
+                        };
+                        cameraShake = Math.max(cameraShake, 0.1);
+                        break;
+                      case "g":
+                        gravityPulseFeedbackState = {
+                          effectRadius: GRAVITY_PULSE_SPEC.radius,
+                          origin: {
+                            x: playerPlanet.pos.x,
+                            y: playerPlanet.pos.y,
+                          },
+                          planetRadius: playerPlanet.radius,
+                          startedAtSec: nowSec,
+                        };
+                        cameraShake = Math.max(cameraShake, 0.18);
+                        hudFlicker = Math.max(hudFlicker, 0.1);
+                        break;
+                    }
                   }
                 }
               }
@@ -2088,6 +2270,151 @@ export function createAuthoritativeViewport(
                 shieldArcOpacityUniform.value = 0;
                 shieldPanelOpacityUniform.value = 0;
                 shieldCrestOpacityUniform.value = 0;
+              }
+
+              if (cannonVisual !== null) {
+                const controlsEnabled =
+                  runtime.phase === "combat" &&
+                  runtime.connectionState === "connected";
+                if (!controlsEnabled || playerPlanet === null) {
+                  cannonVisual.group.visible = false;
+                  cannonVisual.flashMesh.visible = false;
+                  cannonVisual.flashMaterial.opacity = 0;
+                } else {
+                  const worldUnitsPerPixel =
+                    cameraState.visibleWorldHeight /
+                    Math.max(1, hostElement.clientHeight);
+                  const cannonLayout = getCannonWorldLayout(
+                    tuning.visuals.cannon,
+                    worldUnitsPerPixel,
+                  );
+                  const selectedRocketKind =
+                    viewportInputController.state.inputState.selectedRocketKind;
+                  const weaponAccent =
+                    rocketVisualTuning[selectedRocketKind].hudAccent;
+                  const aimDelta = sub(
+                    viewportInputController.state.inputState.aimWorld,
+                    playerPlanet.pos,
+                  );
+                  const aimDir =
+                    len(aimDelta) > 0.001
+                      ? normalizeVec2(aimDelta)
+                      : { x: 1, y: 0 };
+                  const aimAngle = Math.atan2(aimDir.y, aimDir.x);
+                  const stemStart = playerPlanet.radius;
+                  const breechStart = stemStart + cannonLayout.stemLenWorld;
+                  const barrelStart = breechStart + cannonLayout.breechLenWorld;
+                  const barrelEnd = barrelStart + cannonLayout.barrelLenWorld;
+
+                  cannonVisual.group.visible = !authoritativeShieldActive;
+                  cannonVisual.group.position.set(
+                    playerPlanet.pos.x,
+                    playerPlanet.pos.y,
+                    6,
+                  );
+                  cannonVisual.group.rotation.z = aimAngle;
+                  cannonVisual.accentMaterial.color.set(weaponAccent);
+                  cannonVisual.stemMesh.position.set(
+                    stemStart + cannonLayout.stemLenWorld * 0.5,
+                    0,
+                    0,
+                  );
+                  cannonVisual.stemMesh.scale.set(
+                    cannonLayout.stemLenWorld,
+                    cannonLayout.stemRadiusWorld,
+                    cannonLayout.stemRadiusWorld,
+                  );
+                  cannonVisual.breechMesh.position.set(
+                    breechStart + cannonLayout.breechLenWorld * 0.5,
+                    0,
+                    0,
+                  );
+                  cannonVisual.breechMesh.scale.set(
+                    cannonLayout.breechLenWorld,
+                    cannonLayout.breechWidthWorld,
+                    cannonLayout.breechDepthWorld,
+                  );
+                  cannonVisual.barrelMesh.position.set(
+                    barrelStart + cannonLayout.barrelLenWorld * 0.5,
+                    0,
+                    0,
+                  );
+                  cannonVisual.barrelMesh.scale.set(
+                    cannonLayout.barrelLenWorld,
+                    cannonLayout.barrelRadiusWorld,
+                    cannonLayout.barrelRadiusWorld,
+                  );
+                  cannonVisual.barrelBandMesh.position.set(
+                    barrelStart +
+                      cannonLayout.barrelLenWorld * CANNON_BAND_POSITION,
+                    0,
+                    0,
+                  );
+                  cannonVisual.barrelBandMesh.scale.set(
+                    cannonLayout.bandLenWorld,
+                    cannonLayout.bandRadiusWorld,
+                    cannonLayout.bandRadiusWorld,
+                  );
+                  cannonVisual.muzzleMesh.position.set(
+                    barrelEnd - cannonLayout.muzzleLenWorld * 0.5,
+                    0,
+                    0,
+                  );
+                  cannonVisual.muzzleMesh.scale.set(
+                    cannonLayout.muzzleLenWorld,
+                    cannonLayout.muzzleRadiusWorld,
+                    cannonLayout.muzzleRadiusWorld,
+                  );
+
+                  if (
+                    authoritativeShieldActive ||
+                    immediateCannonFlashState === null
+                  ) {
+                    cannonVisual.flashMesh.visible = false;
+                    cannonVisual.flashMaterial.opacity = 0;
+                  } else {
+                    const flashAgeSec =
+                      nowSec - immediateCannonFlashState.startedAtSec;
+                    if (
+                      flashAgeSec < 0 ||
+                      flashAgeSec > cannonLayout.flashDurationSec
+                    ) {
+                      cannonVisual.flashMesh.visible = false;
+                      cannonVisual.flashMaterial.opacity = 0;
+                      immediateCannonFlashState = null;
+                    } else {
+                      const flashProgress = clamp(
+                        flashAgeSec / cannonLayout.flashDurationSec,
+                        0,
+                        1,
+                      );
+                      const flashOpacity = (1 - flashProgress) ** 2.1;
+                      const flashLength =
+                        cannonLayout.flashRadiusWorld *
+                        (1.15 + (1 - flashProgress) * 1.35);
+                      const flashWidth =
+                        cannonLayout.flashRadiusWorld *
+                        (0.3 + (1 - flashProgress) * 0.42);
+                      cannonVisual.flashMesh.visible = true;
+                      cannonVisual.flashMaterial.opacity = flashOpacity;
+                      cannonVisual.flashMaterial.color.set(
+                        rocketVisualTuning[
+                          immediateCannonFlashState.rocketKind
+                        ].hudAccent,
+                      );
+                      cannonVisual.flashMesh.position.set(
+                        barrelEnd + flashLength * 0.26,
+                        0,
+                        0,
+                      );
+                      cannonVisual.flashMesh.scale.set(
+                        flashLength,
+                        flashWidth,
+                        flashWidth,
+                      );
+                    }
+                  }
+                }
               }
 
               if (boostFeedbackMesh !== null && boostFeedbackState !== null) {

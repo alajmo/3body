@@ -58,6 +58,8 @@ import {
   getBoundaryAsteroidExplosionPieces,
   getBoundaryAsteroidExplosionSpeedVariance,
   getBoundaryAsteroidImpactRadius,
+  getUmbraDragDurationTicks,
+  getUmbraDragStepMultiplier,
   getOrbitPatternDistanceScaleAtElapsedSec,
   getOuterRingMax,
   getOuterRingMin,
@@ -152,9 +154,8 @@ const LOCAL_BOT_DISPLAY_NAMES = [
 ] as const;
 const SWALLOWED_SUN_DRIFT_ALPHA = 0.035;
 const SWALLOWED_SUN_VELOCITY_DAMPING = 0.08;
-const UMBRA_DRAG_DURATION_TICKS = Math.max(1, Math.round(2 * SIM_HZ));
-// Interpret the spec's "30% velocity multiplier" as cumulative damping over the drag window.
-const UMBRA_DRAG_STEP_MULTIPLIER = 0.3 ** (1 / UMBRA_DRAG_DURATION_TICKS);
+const UMBRA_DRAG_DURATION_TICKS = getUmbraDragDurationTicks(SIM_HZ);
+const UMBRA_DRAG_STEP_MULTIPLIER = getUmbraDragStepMultiplier(SIM_HZ);
 const CACHE_RESPAWN_TICKS = Math.max(
   1,
   Math.round(CACHE_SPEC.respawnSec * SIM_HZ),

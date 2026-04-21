@@ -31,6 +31,8 @@ import {
 } from "./vec2";
 
 const SHIELD_LOAD_REFERENCE_DURATION_SEC = 4;
+const UMBRA_DRAG_DURATION_SEC = 2;
+const UMBRA_DRAG_TOTAL_VELOCITY_MULTIPLIER = 0.3;
 const TAU = Math.PI * 2;
 const ARENA_ASTEROID_SPEED = {
   large: 132,
@@ -119,6 +121,15 @@ export const getBaseShieldLoad = (
   durationSec = SHIELD_SPEC.durationSec,
 ): number =>
   PLANET_HP * Math.max(0, durationSec / SHIELD_LOAD_REFERENCE_DURATION_SEC);
+
+export const getUmbraDragDurationTicks = (tickHz: number): number =>
+  Math.max(1, Math.round(UMBRA_DRAG_DURATION_SEC * tickHz));
+
+// Interpret the spec's "30% velocity multiplier" as cumulative damping over
+// the full drag window so the frontend and backend share the same per-tick step.
+export const getUmbraDragStepMultiplier = (tickHz: number): number =>
+  UMBRA_DRAG_TOTAL_VELOCITY_MULTIPLIER **
+  (1 / getUmbraDragDurationTicks(tickHz));
 
 export const getShieldLoadCapacity = (
   archetypeId: ArchetypeId,

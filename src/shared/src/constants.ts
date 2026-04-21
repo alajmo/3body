@@ -93,7 +93,7 @@ export const OUTER_RING_MIN = 1300;
 export const OUTER_RING_MAX = 1825;
 export const SIM_HZ = 120;
 export const FIXED_STEP_SEC = 1 / SIM_HZ;
-export const SNAPSHOT_HZ = 30;
+export const SNAPSHOT_HZ = 60;
 export const PLANET_HP = 100;
 export const ROOM_CAPACITY = 7;
 

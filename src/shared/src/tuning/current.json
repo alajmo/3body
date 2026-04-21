@@ -13,8 +13,8 @@
       "dustEnabled": true,
       "dustSize": 1,
       "eventsEnabled": true,
-      "eventsFrequency": 0.1,
-      "eventsIntensity": 1,
+      "eventsFrequency": 0.3,
+      "eventsIntensity": 0.2,
       "glowColor": "#0f2748",
       "movingObjectsBrightness": 0.34,
       "movingObjectsDensity": 3,
@@ -409,16 +409,16 @@
       "wildcardColor": "#ffd37a"
     },
     "caches": {
-      "badgeBaseSize": 160,
+      "badgeBaseSize": 400,
       "badgeScale": 1
     },
     "orbits": {
       "boundaryDebris": {
         "coolColor": "#8ca8c7",
-        "density": 10,
+        "density": 5,
         "dustSize": 12,
-        "largeRockScale": 3,
-        "smallRockScale": 2,
+        "largeRockScale": 4,
+        "smallRockScale": 3,
         "speed": 3,
         "thickness": 2000,
         "warmColor": "#b7a18e"
@@ -513,19 +513,19 @@
     "arena": {
       "asteroidField": {
         "large": {
-          "damage": 6.5,
+          "damage": 5,
           "randomization": 1,
-          "spawnRatePerSec": 0.12
+          "spawnRatePerSec": 3
         },
         "micro": {
-          "damage": 0.4,
+          "damage": 1,
           "randomization": 1,
           "spawnRatePerSec": 2.8
         },
         "small": {
-          "damage": 1.6,
+          "damage": 2,
           "randomization": 1,
-          "spawnRatePerSec": 0.55
+          "spawnRatePerSec": 2
         }
       },
       "instantDeath": true,
@@ -535,7 +535,7 @@
       "killRadius": 150,
       "mass": 50000000,
       "rampSec": 30,
-      "spawnSec": 120
+      "spawnSec": 60
     },
     "camera": {
       "gameplayCameraWorldHeight": 10000,
@@ -735,7 +735,7 @@
     },
     "timers": {
       "countdownSec": 3,
-      "lobbySec": 30,
+      "lobbySec": 3,
       "pickSec": 30,
       "rematchVoteSec": 20
     }

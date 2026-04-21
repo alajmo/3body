@@ -1796,7 +1796,7 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
       randomizePositionInsidePlayableCircle: true,
     },
     timers: {
-      lobbySec: 30,
+      lobbySec: 3,
       pickSec: 30,
       countdownSec: 3,
       rematchVoteSec: 20,

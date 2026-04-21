@@ -6,7 +6,6 @@ import {
   ROCKET_SPECS,
   SHIELD_SPEC,
   getShieldLoadCapacity,
-  type CacheContents,
   type PlanetPrivateState,
   type PlanetPublic,
   type RocketKind,
@@ -159,27 +158,6 @@ const buildProfilerDebugItems = ({
   ];
 };
 
-const describeCacheContents = (
-  contents: CacheContents | undefined,
-): string | null => {
-  if (contents === undefined) {
-    return null;
-  }
-
-  switch (contents.kind) {
-    case "heavyAmmo":
-      return "Heavy Ammo";
-    case "repair":
-      return "Repair";
-    case "seekerPack":
-      return "Seeker Pack";
-    case "shieldExt":
-      return "Shield Ext";
-    case "wildcard":
-      return `Wildcard: ${describeWildcard(contents.wildcard.kind)}`;
-  }
-};
-
 const describeEvent = (
   event: SnapshotEvent,
   rosterNameByPlayerId: ReadonlyMap<string, string>,
@@ -214,18 +192,6 @@ const describeEvent = (
       }
 
       return null;
-    }
-    case "cachePickup": {
-      const player = rosterNameByPlayerId.get(event.playerId) ?? "Unknown";
-      return `${player} collected ${describeCacheContents(event.contents) ?? "cache"}`;
-    }
-    case "boost": {
-      const player = rosterNameByPlayerId.get(event.playerId) ?? "Unknown";
-      return `${player} boosted`;
-    }
-    case "wildcardUse": {
-      const player = rosterNameByPlayerId.get(event.playerId) ?? "Unknown";
-      return `${player} used ${describeWildcard(event.wildcard)}`;
     }
     default:
       return null;

@@ -34,6 +34,8 @@ import {
   getBaseShieldLoad,
   getBlackHoleKillRadiusAtTick,
   getBlackHoleMassAtTick,
+  getUmbraDragDurationTicks,
+  getUmbraDragStepMultiplier,
   hasCrossedBlackHoleHorizon,
   getOuterRingMax,
   getOuterRingMin,
@@ -81,6 +83,7 @@ const CACHE_DEBRIS_SPEED_VARIANCE = 92;
 const BOUNDARY_ASTEROID_TIERS = ["micro", "small", "large"] as const;
 const LAG_COMP_MAX_REWIND_MS = 100;
 const NEAR_MISS_DISTANCE = 48;
+const AUTHORITATIVE_BOT_ACTIONS_ENABLED = false;
 
 interface RoomTickBroadcast {
   emitDeltaSnapshot: boolean;
@@ -149,12 +152,6 @@ const lagCompMaxRewindTicks = (tickHz: number): number =>
 
 const lagCompHistoryEntries = (tickHz: number): number =>
   lagCompMaxRewindTicks(tickHz) + 2;
-
-const umbraDragDurationTicks = (tickHz: number): number =>
-  getAbilityTicks(2, tickHz);
-
-const umbraDragStepMultiplier = (tickHz: number): number =>
-  0.3 ** (1 / umbraDragDurationTicks(tickHz));
 
 const shieldArcDotThreshold = (): number =>
   Math.cos(((SHIELD_SPEC.arcDeg / 2) * Math.PI) / 180);
@@ -875,7 +872,7 @@ const applyQueuedCombatMessages = (room: Room, config: AppConfig): void => {
 };
 
 const enqueueBotCombatMessages = (room: Room, config: AppConfig): void => {
-  if (!room.world) {
+  if (!AUTHORITATIVE_BOT_ACTIONS_ENABLED || !room.world) {
     return;
   }
 
@@ -921,6 +918,7 @@ const stepPlanets = (
   }
 
   const neutronStars = room.world.neutronStars;
+  const dragStepMultiplier = getUmbraDragStepMultiplier(config.tickHz);
   return room.world.planets.map((planet) => {
     const dragActive =
       planet.debuffs.dragUntilTick !== undefined &&
@@ -944,7 +942,7 @@ const stepPlanets = (
     return dragActive
       ? {
           ...stepped,
-          vel: scale(stepped.vel, umbraDragStepMultiplier(config.tickHz)),
+          vel: scale(stepped.vel, dragStepMultiplier),
         }
       : stepped;
   });
@@ -1490,7 +1488,7 @@ const applyRocketCollisions = (
                   ...planet.debuffs,
                   dragUntilTick: Math.max(
                     planet.debuffs.dragUntilTick ?? 0,
-                    nextTick + umbraDragDurationTicks(config.tickHz),
+                    nextTick + getUmbraDragDurationTicks(config.tickHz),
                   ),
                 }
               : planet.debuffs,

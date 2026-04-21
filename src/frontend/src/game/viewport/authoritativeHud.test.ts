@@ -288,7 +288,7 @@ describe("buildAuthoritativeHudState", () => {
     );
   });
 
-  it("shows readable held ability names in the HUD and event feed", () => {
+  it("shows readable held ability names without surfacing ability spam in the kill feed", () => {
     const self = createSelf();
     self.gravityPulseHeld = true;
 
@@ -358,10 +358,7 @@ describe("buildAuthoritativeHudState", () => {
         statusText: "Gravity Pulse",
       }),
     );
-    expect(hud.killFeed.map((entry) => entry.text)).toEqual([
-      "Pilot One collected Wildcard: Gravity Pulse",
-      "Pilot One used Gravity Pulse",
-    ]);
+    expect(hud.killFeed).toEqual([]);
   });
 
   it("describes neutron star kills in the event feed", () => {

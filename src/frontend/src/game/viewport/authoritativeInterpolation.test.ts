@@ -239,4 +239,48 @@ describe("authoritativeInterpolation", () => {
       kind: "seekerPack",
     });
   });
+
+  it("supports bounded extrapolation past the latest snapshot without freezing", () => {
+    const previousWorld = buildWorld({
+      planets: [
+        buildPlanet({
+          pos: { x: 10, y: 20 },
+          vel: { x: 2, y: 4 },
+        }),
+      ],
+      rockets: [
+        buildRocket({
+          pos: { x: 30, y: 40 },
+          vel: { x: 6, y: 8 },
+        }),
+      ],
+    });
+    const currentWorld = buildWorld({
+      planets: [
+        buildPlanet({
+          pos: { x: 30, y: 60 },
+          vel: { x: 4, y: 8 },
+        }),
+      ],
+      rockets: [
+        buildRocket({
+          pos: { x: 50, y: 80 },
+          vel: { x: 8, y: 12 },
+        }),
+      ],
+    });
+    const cache = createAuthoritativeInterpolationCache();
+
+    const extrapolatedWorld = syncAuthoritativeInterpolatedWorld(
+      cache,
+      previousWorld,
+      currentWorld,
+      1.25,
+    );
+
+    expect(extrapolatedWorld.planets[0]!.pos).toEqual({ x: 35, y: 70 });
+    expect(extrapolatedWorld.planets[0]!.vel).toEqual({ x: 4.5, y: 9 });
+    expect(extrapolatedWorld.rockets[0]!.pos).toEqual({ x: 55, y: 90 });
+    expect(extrapolatedWorld.rockets[0]!.vel).toEqual({ x: 8.5, y: 13 });
+  });
 });

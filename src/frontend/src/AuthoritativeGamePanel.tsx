@@ -91,6 +91,46 @@ const snapshotUiState = (
   roomRoster: [...runtime.roomRoster],
 });
 
+const areRoomRostersEqual = (
+  current: MatchPanelUiState["roomRoster"],
+  next: MatchPanelUiState["roomRoster"],
+): boolean => {
+  if (current.length !== next.length) {
+    return false;
+  }
+
+  for (let index = 0; index < current.length; index += 1) {
+    const left = current[index]!;
+    const right = next[index]!;
+    if (
+      left.playerId !== right.playerId ||
+      left.name !== right.name ||
+      left.seat !== right.seat ||
+      left.isBot !== right.isBot
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+const areMatchPanelUiStatesEqual = (
+  current: MatchPanelUiState,
+  next: MatchPanelUiState,
+): boolean =>
+  current.connectionError === next.connectionError &&
+  current.connectionState === next.connectionState &&
+  current.countdownEndsAtMs === next.countdownEndsAtMs &&
+  current.lobbyState === next.lobbyState &&
+  current.matchEnd === next.matchEnd &&
+  current.phase === next.phase &&
+  current.pickState === next.pickState &&
+  current.playerId === next.playerId &&
+  current.rematchState === next.rematchState &&
+  current.roomId === next.roomId &&
+  areRoomRostersEqual(current.roomRoster, next.roomRoster);
+
 const formatCountdown = (targetAtMs: number, nowMs: number): string => {
   const remainingSec = Math.max(0, Math.ceil((targetAtMs - nowMs) / 1000));
   const minutes = Math.floor(remainingSec / 60);
@@ -192,14 +232,13 @@ export function AuthoritativeGamePanel({
   const controllerRef = useRef<GameViewportController | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const runtimeRef = useRef(createInitialAuthoritativeMatchRuntimeState());
+  const uiStateRef = useRef<MatchPanelUiState>(snapshotUiState(runtimeRef.current));
   const [connectionSessionVersion, setConnectionSessionVersion] = useState(0);
   const [hudState, setHudState] = useState(() => ({
     ...createInitialHudState(),
     profilingEnabled: initialProfilingEnabledRef.current ?? false,
   }));
-  const [uiState, setUiState] = useState<MatchPanelUiState>(() =>
-    snapshotUiState(runtimeRef.current),
-  );
+  const [uiState, setUiState] = useState<MatchPanelUiState>(() => uiStateRef.current);
   const [nowMs, setNowMs] = useState(() => Date.now());
 
   const dispatchRuntimeMessage = (message: ClientMsg): boolean => {
@@ -302,9 +341,14 @@ export function AuthoritativeGamePanel({
         return;
       }
 
-      const snapshot = snapshotUiState(runtimeRef.current);
+      const nextUiState = snapshotUiState(runtimeRef.current);
+      if (areMatchPanelUiStatesEqual(uiStateRef.current, nextUiState)) {
+        return;
+      }
+
+      uiStateRef.current = nextUiState;
       startTransition(() => {
-        setUiState(snapshot);
+        setUiState(nextUiState);
       });
     };
 
@@ -580,11 +624,7 @@ export function AuthoritativeGamePanel({
               message.code === "bad_resume_token" ||
               message.code === "invalid_room"
             ) {
-              clearStoredRoomSession(storage);
-              runtimeRef.current.roomId = null;
-              runtimeRef.current.phase = "reconnecting";
-              socket.close();
-              syncUiState();
+              queueFreshMatch();
               return;
             }
 
@@ -629,8 +669,9 @@ export function AuthoritativeGamePanel({
   const queueFreshMatch = () => {
     clearStoredRoomSession(window.localStorage);
     runtimeRef.current = createInitialAuthoritativeMatchRuntimeState();
+    uiStateRef.current = snapshotUiState(runtimeRef.current);
     startTransition(() => {
-      setUiState(snapshotUiState(runtimeRef.current));
+      setUiState(uiStateRef.current);
       setHudState((current) => ({
         ...createInitialHudState(),
         profilingEnabled: current.profilingEnabled,
@@ -670,7 +711,7 @@ export function AuthoritativeGamePanel({
       </div>
       <div className="page-overlay page-overlay--page">
         <div className="page-chrome">
-          <section className="page-copy">
+          <section className="page-copy" style={{ pointerEvents: "auto" }}>
             <div className="edit-panel__eyebrow">{phaseCopy.eyebrow}</div>
             <h1 className="edit-panel__title">{phaseCopy.title}</h1>
             <div className="edit-panel__body">{phaseCopy.body}</div>
