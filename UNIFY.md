@@ -221,49 +221,81 @@ what is only partially complete, and what the next useful seam is.
   modules, especially around celestial visuals and frame sync orchestration.
 - Authoritative-only cosmetic feedback is now more clearly isolated as runtime
   adapter behavior instead of being mixed directly into renderer-specific code.
+- The last dense authoritative aim/lock/input-throttling decision block has
+  been extracted into `viewport/authoritativeViewportBehavior.ts`, so
+  `createAuthoritativeViewport()` is no longer the owner of that control seam.
+- An explicit shared `ViewportFrameState` contract now exists at the shared
+  frame-sync boundary, and both local and authoritative paths emit that
+  contract before renderer-owned sync resources are applied.
+- Local and authoritative frame/bundle shaping now live in dedicated runtime
+  adapter modules:
+  - `viewport/localViewportFrameAdapter.ts`
+  - `viewport/authoritativeViewportFrameAdapter.ts`
+- Both local and authoritative routes now update background parallax, dynamic
+  celestial visuals, and the shared viewport frame through the same explicit
+  scene-sync layer:
+  - `viewport/sharedCombatSceneSync.ts`
+- The authoritative route scene-update path is now extracted into
+  `viewport/authoritativeViewportScene.ts`, so
+  `createAuthoritativeViewport()` no longer owns the dense shared-scene bundle
+  assembly inline.
+- The local sandbox route scene-update bundle is now extracted into
+  `viewport/localViewportCombatScene.ts`, so `localViewportScene.ts` no longer
+  owns the dense weapon-frame + shared-scene bundle assembly inline.
 
 ### What is partially done
 
-- Shared scene/resource bootstrap extraction is underway, but both routes still
-  allocate and orchestrate too much directly inside
-  `createGameViewport()` / `createAuthoritativeViewport()`.
-- Shared scene sync extraction is underway, but both routes still compose
-  shared helpers manually instead of flowing through one explicit shared combat
-  viewport / scene-sync layer.
-- Transient event unification is meaningfully improved, but it still happens
-  through route-specific plumbing instead of one normalized frame-state/event
-  contract.
+- Shared scene/resource bootstrap extraction is still incomplete. Both routes
+  still allocate renderer-owned resources, capability wiring, and too much
+  lifecycle orchestration directly inside `createGameViewport()` /
+  `createAuthoritativeViewport()`.
+- Shared scene sync now exists, but the route-specific scene modules still own
+  the last large argument-bundle assembly that feeds
+  `sharedCombatSceneSync.ts`; there is not yet one shared combat viewport
+  owner above them.
+- Transient event unification is meaningfully better, but local and
+  authoritative runtimes still feed shared VFX/event systems through
+  different route-shaped plumbing instead of one normalized event adapter
+  boundary.
+- Renderer-owned sync resources are now split from the shared frame-state and
+  assembled through dedicated runtime adapter modules, but lower-level
+  entity/transient sync helpers still internally consume merged args.
 
 ### What is still missing
 
-- An explicit shared `ViewportFrameState` contract.
-- One shared scene sync that consumes that frame-state for both local and
-  authoritative modes.
-- A clear runtime-adapter boundary where:
-  - local sandbox emits normalized frame-state from local simulation
-  - authoritative mode emits normalized frame-state from interpolation,
-    prediction, protocol events, and allowed local-owner cosmetic intent
+- One shared combat viewport layer that:
+  - owns shared scene/resource bootstrap
+  - accepts runtime adapter output
+  - drives `sharedCombatSceneSync.ts`
+  - wires shared render-shell/HUD-facing concerns in one place
 - Thin viewport entry points:
-  - `createGameViewport()` should become a thin local-runtime wrapper
-  - `createAuthoritativeViewport()` should become a thin authoritative-runtime
-    wrapper
-- Final collapse toward one shared combat viewport API.
+  - `createGameViewport()` should become local runtime bootstrap + lifecycle
+    glue
+  - `createAuthoritativeViewport()` should become authoritative runtime
+    bootstrap + lifecycle glue
+- Final simplification of the route-specific scene modules so they become thin
+  runtime shims or disappear entirely behind one shared combat viewport API.
 
 ### Current Best Next Step
 
-Do not keep doing helper-by-helper cleanup indefinitely.
+Do not keep extracting isolated helpers below the new seams.
 
 The next useful move is:
 
-1. Finish extracting the remaining authoritative control/aim/lock/input
-   decision logic from `createAuthoritativeViewport()`.
-2. Then stop and introduce the explicit shared `ViewportFrameState` contract.
-3. Adapt both local and authoritative runtimes to emit that normalized shape.
-4. Move scene updates behind one shared combat viewport / scene-sync layer.
+1. Introduce a real shared combat viewport owner around
+   `sharedCombatSceneSync.ts` and move shared scene/resource bootstrap into it.
+2. Convert `localViewportCombatScene.ts` and
+   `authoritativeViewportScene.ts` from route-owned bundle assemblers into
+   thin adapters that provide runtime-specific inputs to that shared owner.
+3. Reduce `createGameViewport()` and `createAuthoritativeViewport()` to
+   runtime bootstrap, capability wiring, and teardown.
+4. Once that owner exists, simplify the remaining merged-arg
+   entity/transient sync helpers and normalize the event adapter boundary.
 
-The remaining inline authoritative seam at the time of this update is the
-control/aim/lock/input-throttling block in `createAuthoritativeViewport()`.
-That is a good final cleanup step before the frame-state pivot.
+The explicit `ViewportFrameState` seam, the dedicated runtime adapter modules,
+and the shared scene-sync layer now exist. The remaining work is ownership
+consolidation: shared bootstrap, shared scene-update ownership, and thinner
+route wrappers.
 
 ## Phase 0: Freeze the Direction
 
@@ -555,26 +587,32 @@ Status on April 22, 2026: effectively done.
 
 - `/` and `/sandbox` allocate scene resources through the same shared bootstrap.
 
-Status on April 22, 2026: partially done.
+Status on April 22, 2026: partially done. The shared scene-update seam exists,
+but scene/resource bootstrap is still not owned by one shared viewport.
 
 ### Milestone C
 
 - both routes produce the same normalized frame-state shape.
 
-Status on April 22, 2026: not done.
+Status on April 22, 2026: effectively done. The shared contract exists and both
+routes emit it through dedicated runtime adapter modules.
 
 ### Milestone D
 
 - both routes update the scene through the same sync function.
 
-Status on April 22, 2026: partially done, but not done.
+Status on April 22, 2026: effectively done. Both routes now flow through
+`sharedCombatSceneSync.ts`, although the higher-level viewport ownership is
+still split.
 
 ### Milestone E
 
 - `createGameViewport()` and `createAuthoritativeViewport()` are thin wrappers
   around one shared combat viewport.
 
-Status on April 22, 2026: not done.
+Status on April 22, 2026: partially done. The biggest control and scene seams
+are extracted, but the route entry points are not yet thin wrappers around one
+shared viewport.
 
 ## Validation
 
@@ -599,17 +637,23 @@ Useful profiling checks:
 - `npm run profile:local-sandbox`
 - `npm run profile:authoritative-match`
 
-## Recommended First Patch
+Latest validation on April 22, 2026: `npm run typecheck` and
+`npm run test:frontend` both passed after the shared scene-sync and
+route-scene extraction work.
 
-Do not start by rewriting both viewport files.
+## Recommended Next Patch
 
-Start with the smallest high-value move:
+Do not go back to display-mode parity work. That part is already landed.
 
-1. Thread `displayMode` into `AuthoritativeGamePanel`.
-2. Make the authoritative route use the same render shell/post-processing path
-   as sandbox.
-3. Confirm visual parity improves immediately.
-4. Then extract shared scene/resource bootstrap.
+Start with the next ownership move:
 
-That gives an early visible win while still moving toward the actual
-architecture instead of doing cosmetic-only cleanup.
+1. Introduce a real shared combat viewport owner that combines shared
+   scene/resource bootstrap with `sharedCombatSceneSync.ts`.
+2. Have `localViewportCombatScene.ts` and
+   `authoritativeViewportScene.ts` provide runtime-specific state/callbacks to
+   that shared owner instead of assembling route-owned sync bundles.
+3. Delete duplicated bootstrap/orchestration from `createGameViewport()` and
+   `createAuthoritativeViewport()` as the shared owner takes over.
+
+That keeps the next patch on the real remaining problem: shared ownership, not
+another round of route-specific cleanup.

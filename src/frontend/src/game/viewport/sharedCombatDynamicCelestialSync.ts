@@ -19,7 +19,7 @@ export interface SharedCombatTrackedNeutronStarBody {
   radius: number;
 }
 
-export const syncSharedCombatDynamicSunPresentation = <
+export interface SharedCombatDynamicSunPresentationArgs<
   SunBody extends {
     id: number;
     pos: Vec2;
@@ -27,24 +27,7 @@ export const syncSharedCombatDynamicSunPresentation = <
     vel: Vec2;
   },
   SunVisual,
->({
-  blackHole,
-  createVisual,
-  currentNeutronStars,
-  disposeVisual,
-  nowSec,
-  onSunAbsorbedByNeutronStar,
-  onSunStartedBlackHoleSwallow,
-  onSunSwallowedByBlackHole,
-  previousNeutronStarsById,
-  previousSunSwallowedAtById,
-  previousSunsById,
-  resolveSunProfile,
-  resolveSwallowedAtSec,
-  sunVisuals,
-  suns,
-  syncVisual,
-}: {
+> {
   blackHole: SharedCombatBlackHoleBody | null;
   createVisual: (args: {
     index: number;
@@ -94,7 +77,34 @@ export const syncSharedCombatDynamicSunPresentation = <
     swallowedAtSec: number | null;
     visual: SunVisual;
   }) => void;
-}) => {
+}
+
+export const syncSharedCombatDynamicSunPresentation = <
+  SunBody extends {
+    id: number;
+    pos: Vec2;
+    radius: number;
+    vel: Vec2;
+  },
+  SunVisual,
+>({
+  blackHole,
+  createVisual,
+  currentNeutronStars,
+  disposeVisual,
+  nowSec,
+  onSunAbsorbedByNeutronStar,
+  onSunStartedBlackHoleSwallow,
+  onSunSwallowedByBlackHole,
+  previousNeutronStarsById,
+  previousSunSwallowedAtById,
+  previousSunsById,
+  resolveSunProfile,
+  resolveSwallowedAtSec,
+  sunVisuals,
+  suns,
+  syncVisual,
+}: SharedCombatDynamicSunPresentationArgs<SunBody, SunVisual>) => {
   const activeSunIds = new Set<number>();
 
   for (const [index, sun] of suns.entries()) {
@@ -214,6 +224,32 @@ export const syncSharedCombatDynamicSunPresentation = <
   }
 };
 
+export interface SharedCombatDynamicNeutronStarPresentationArgs<
+  NeutronStarBody extends {
+    id: number;
+    mass: number;
+    pos: Vec2;
+    radius: number;
+  },
+  NeutronStarVisual,
+> {
+  createVisual: (args: {
+    index: number;
+    neutronStar: NeutronStarBody;
+  }) => NeutronStarVisual;
+  disposeVisual: (visual: NeutronStarVisual) => void;
+  neutronStarVisuals: Map<number, NeutronStarVisual>;
+  neutronStars: readonly NeutronStarBody[];
+  nowSec: number;
+  previousNeutronStarsById: Map<number, SharedCombatTrackedNeutronStarBody>;
+  syncVisual: (args: {
+    index: number;
+    neutronStar: NeutronStarBody;
+    nowSec: number;
+    visual: NeutronStarVisual;
+  }) => void;
+}
+
 export const syncSharedCombatDynamicNeutronStarPresentation = <
   NeutronStarBody extends {
     id: number;
@@ -230,23 +266,10 @@ export const syncSharedCombatDynamicNeutronStarPresentation = <
   nowSec,
   previousNeutronStarsById,
   syncVisual,
-}: {
-  createVisual: (args: {
-    index: number;
-    neutronStar: NeutronStarBody;
-  }) => NeutronStarVisual;
-  disposeVisual: (visual: NeutronStarVisual) => void;
-  neutronStarVisuals: Map<number, NeutronStarVisual>;
-  neutronStars: readonly NeutronStarBody[];
-  nowSec: number;
-  previousNeutronStarsById: Map<number, SharedCombatTrackedNeutronStarBody>;
-  syncVisual: (args: {
-    index: number;
-    neutronStar: NeutronStarBody;
-    nowSec: number;
-    visual: NeutronStarVisual;
-  }) => void;
-}) => {
+}: SharedCombatDynamicNeutronStarPresentationArgs<
+  NeutronStarBody,
+  NeutronStarVisual
+>) => {
   const activeNeutronStarIds = new Set<number>();
 
   for (const [index, neutronStar] of neutronStars.entries()) {
@@ -286,28 +309,14 @@ export const syncSharedCombatDynamicNeutronStarPresentation = <
   }
 };
 
-export const syncSharedCombatDynamicPlanetPresentation = <
+export interface SharedCombatDynamicPlanetPresentationArgs<
   PlanetBody extends {
     id: number;
     pos: Vec2;
   },
   PlanetVisual,
   TrailVisual,
->({
-  createTrail,
-  createVisual,
-  disposeTrail,
-  disposeVisual,
-  onPlanetStartedBlackHoleSwallow,
-  planetTrails,
-  planetVisuals,
-  planets,
-  previousPlanetAliveById,
-  resolveAlive,
-  syncTrail,
-  syncVisual,
-  shouldTriggerBlackHoleSwallow,
-}: {
+> {
   createTrail: (args: { index: number; planet: PlanetBody }) => TrailVisual;
   createVisual: (args: { index: number; planet: PlanetBody }) => PlanetVisual;
   disposeTrail: (trail: TrailVisual) => void;
@@ -332,7 +341,34 @@ export const syncSharedCombatDynamicPlanetPresentation = <
     planet: PlanetBody;
     visual: PlanetVisual;
   }) => void;
-}) => {
+}
+
+export const syncSharedCombatDynamicPlanetPresentation = <
+  PlanetBody extends {
+    id: number;
+    pos: Vec2;
+  },
+  PlanetVisual,
+  TrailVisual,
+>({
+  createTrail,
+  createVisual,
+  disposeTrail,
+  disposeVisual,
+  onPlanetStartedBlackHoleSwallow,
+  planetTrails,
+  planetVisuals,
+  planets,
+  previousPlanetAliveById,
+  resolveAlive,
+  syncTrail,
+  syncVisual,
+  shouldTriggerBlackHoleSwallow,
+}: SharedCombatDynamicPlanetPresentationArgs<
+  PlanetBody,
+  PlanetVisual,
+  TrailVisual
+>) => {
   const activePlanetIds = new Set<number>();
 
   for (const [index, planet] of planets.entries()) {

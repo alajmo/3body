@@ -775,7 +775,6 @@ export function createGameViewport(
                 disposeSunVisual,
                 disposeTrailVisual,
                 renderPlanetsById: simulationState.renderPlanetsById,
-                renderSunsById: simulationState.renderSunsById,
                 renderQuality,
                 renderState: simulationState.renderState,
                 renderedCacheKeysById,

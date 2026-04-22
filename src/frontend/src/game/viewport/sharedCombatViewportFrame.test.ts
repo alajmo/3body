@@ -38,18 +38,110 @@ describe("syncSharedCombatViewportFrame", () => {
     );
 
     const frame = {
-      entity: { caches: null, launchBursts: null, rockets: null },
+      entity: {
+        caches: {
+          blackHole: null,
+          caches: [],
+          nowSec: 1,
+          previousCachesById: new Map(),
+          queueSwallowEffect: vi.fn(),
+        },
+        launchBursts: {
+          burstsByKind: {
+            heavy: [],
+            light: [],
+            seeker: [],
+          },
+          cannonLayout: {
+            flashDurationSec: 0.2,
+          },
+          currentPlayerId: null,
+          nowSec: 1,
+          worldUnitsPerPixel: 2,
+        },
+        rockets: {
+          blackHole: null,
+          nowSec: 1,
+          rockets: [],
+        },
+      },
       presentation: { weapon: { cannon: null, lockRing: null } },
+      transient: {
+        impactBursts: {
+          bursts: [],
+          resolveBurst: () => null,
+        },
+        nowSec: 1,
+      },
+    };
+    const resources = {
+      entity: {
+        caches: {
+          activeCacheIds: new Set<number>(),
+          badgeBaseSize: 12,
+          badgeMaterials: {},
+          badgeScale: 1,
+          cacheVisuals: new Map(),
+          createCacheVisual: vi.fn(),
+          disposeCacheVisual: vi.fn(),
+          getCacheIconKey: vi.fn(),
+          renderedCacheKeysById: new Map(),
+          scene: {
+            add: vi.fn(),
+            remove: vi.fn(),
+          },
+          updateCacheVisualBadge: vi.fn(),
+        },
+        launchBursts: {
+          launchBurstBudget: 1,
+          launchBurstPools: {
+            heavy: {},
+            light: {},
+            seeker: {},
+          },
+          pruneBeforeSync: true,
+          rocketKinds: ["heavy", "light", "seeker"],
+          rocketPools: {
+            heavy: {},
+            light: {},
+            seeker: {},
+          },
+        },
+        rockets: {
+          getSwallowMargin: () => 1,
+          maxRocketTrailSamples: 2,
+          previousRocketsById: new Map(),
+          queueSwallowEffect: vi.fn(),
+          rocketKinds: ["heavy", "light", "seeker"],
+          rocketPools: {
+            heavy: {},
+            light: {},
+            seeker: {},
+          },
+          rocketTrailBudget: 1,
+          rocketTrailStates: new Map(),
+          rocketsByKind: {
+            heavy: [],
+            light: [],
+            seeker: [],
+          },
+        },
+      },
+      presentation: {
+        blackHole: { group: {}, ringMesh: {} },
+        boost: null,
+        cannon: null,
+        gravityPulse: null,
+        lockRing: null,
+        shield: null,
+      },
       transient: {
         blackHoleSwallows: {
           activeEffects: [],
           inactiveVisuals: [],
         },
         impactBursts: {
-          bursts: [],
           maxVisibleBursts: 0,
-          nowSec: 1,
-          resolveBurst: () => null,
           visuals: [],
           z: {
             core: 1,
@@ -57,43 +149,56 @@ describe("syncSharedCombatViewportFrame", () => {
             ring: 3,
           },
         },
-        nowSec: 1,
         planetExplosions: {
           activePlanetExplosions: [],
           inactivePlanetExplosionVisuals: [],
         },
       },
     };
-    const visuals = {
-      blackHole: { group: {}, ringMesh: {} },
-      boost: null,
-      cannon: null,
-      gravityPulse: null,
-      lockRing: null,
-      shield: null,
-    };
 
     const result = syncSharedCombatViewportFrame({
       frame: frame as never,
       nowSec: 4,
-      visuals: visuals as never,
+      resources: resources as never,
     });
 
     expect(
       viewportFrameMocks.syncSharedCombatEntityPresentationFrame,
     ).toHaveBeenCalledWith({
-      frame: frame.entity,
+      frame: {
+        caches: {
+          ...resources.entity.caches,
+          ...frame.entity.caches,
+        },
+        launchBursts: {
+          ...resources.entity.launchBursts,
+          ...frame.entity.launchBursts,
+        },
+        rockets: {
+          ...resources.entity.rockets,
+          ...frame.entity.rockets,
+        },
+      },
     });
     expect(
       viewportFrameMocks.syncSharedCombatPresentationFrame,
     ).toHaveBeenCalledWith({
       frame: frame.presentation,
       nowSec: 4,
-      visuals,
+      visuals: resources.presentation,
     });
     expect(
       viewportFrameMocks.syncSharedCombatTransientPresentation,
-    ).toHaveBeenCalledWith(frame.transient);
+    ).toHaveBeenCalledWith({
+      blackHoleSwallows: resources.transient.blackHoleSwallows,
+      impactBursts: {
+        ...resources.transient.impactBursts,
+        ...frame.transient.impactBursts,
+        nowSec: frame.transient.nowSec,
+      },
+      nowSec: frame.transient.nowSec,
+      planetExplosions: resources.transient.planetExplosions,
+    });
     const entityCallOrder =
       viewportFrameMocks.syncSharedCombatEntityPresentationFrame
         .mock.invocationCallOrder[0];

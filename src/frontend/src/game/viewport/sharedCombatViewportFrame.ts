@@ -1,27 +1,21 @@
 import type { SharedCombatCacheBody } from "./cacheVisuals";
-import type { SharedCombatEntityPresentationFrameState } from "./sharedCombatEntityPresentationFrame";
 import { syncSharedCombatEntityPresentationFrame } from "./sharedCombatEntityPresentationFrame";
-import type {
-  SharedCombatPresentationFrameState,
-  SharedCombatPresentationFrameVisuals,
-} from "./sharedCombatPresentationFrame";
 import { syncSharedCombatPresentationFrame } from "./sharedCombatPresentationFrame";
 import type { SharedCombatRocketBody } from "./sharedCombatRocketPools";
-import type { SharedCombatTransientPresentationFrameState } from "./sharedCombatTransientPresentation";
 import { syncSharedCombatTransientPresentation } from "./sharedCombatTransientPresentation";
+import type {
+  ViewportFrameResources,
+  ViewportFrameState,
+} from "./viewportFrameState";
 
-export interface SharedCombatViewportFrameState<
+export type SharedCombatViewportFrameState<
   CacheBody extends SharedCombatCacheBody,
   Rocket extends SharedCombatRocketBody & { radius: number },
   Burst extends {
     absorbedByShield: boolean;
     color: string;
   },
-> {
-  entity: SharedCombatEntityPresentationFrameState<CacheBody, Rocket>;
-  presentation: SharedCombatPresentationFrameState;
-  transient: SharedCombatTransientPresentationFrameState<Burst>;
-}
+> = ViewportFrameState<CacheBody, Rocket, Burst>;
 
 export const syncSharedCombatViewportFrame = <
   CacheBody extends SharedCombatCacheBody,
@@ -33,23 +27,55 @@ export const syncSharedCombatViewportFrame = <
 >({
   frame,
   nowSec,
-  visuals,
+  resources,
 }: {
   frame: SharedCombatViewportFrameState<CacheBody, Rocket, Burst>;
   nowSec: number;
-  visuals: SharedCombatPresentationFrameVisuals;
+  resources: ViewportFrameResources<CacheBody, Rocket, Burst>;
 }) => {
   syncSharedCombatEntityPresentationFrame({
-    frame: frame.entity,
+    frame: {
+      caches:
+        frame.entity.caches === null || resources.entity.caches === null
+          ? null
+          : {
+              ...resources.entity.caches,
+              ...frame.entity.caches,
+            },
+      launchBursts:
+        frame.entity.launchBursts === null ||
+        resources.entity.launchBursts === null
+          ? null
+          : {
+              ...resources.entity.launchBursts,
+              ...frame.entity.launchBursts,
+            },
+      rockets:
+        frame.entity.rockets === null || resources.entity.rockets === null
+          ? null
+          : {
+              ...resources.entity.rockets,
+              ...frame.entity.rockets,
+            },
+    },
   });
 
   const presentationState = syncSharedCombatPresentationFrame({
     frame: frame.presentation,
     nowSec,
-    visuals,
+    visuals: resources.presentation,
   });
 
-  syncSharedCombatTransientPresentation(frame.transient);
+  syncSharedCombatTransientPresentation({
+    blackHoleSwallows: resources.transient.blackHoleSwallows,
+    impactBursts: {
+      ...resources.transient.impactBursts,
+      ...frame.transient.impactBursts,
+      nowSec: frame.transient.nowSec,
+    },
+    nowSec: frame.transient.nowSec,
+    planetExplosions: resources.transient.planetExplosions,
+  });
 
   return presentationState;
 };

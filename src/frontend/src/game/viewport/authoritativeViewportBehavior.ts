@@ -1,4 +1,11 @@
-import type { AbilitySlot, PlanetPublic, RocketKind, Vec2 } from "@3body/shared";
+import type {
+  AbilitySlot,
+  PlanetPrivateState,
+  PlanetPublic,
+  PlayerId,
+  RocketKind,
+  Vec2,
+} from "@3body/shared";
 import {
   BOOST_SPEC,
   clamp,
@@ -9,6 +16,10 @@ import {
   SNAPSHOT_HZ,
   sub,
 } from "@3body/shared";
+import type {
+  AuthoritativeConnectionState,
+  AuthoritativeMatchPhase,
+} from "../authoritativeMatchRuntime";
 
 const AUTHORITATIVE_SEEKER_LOCK_SELECTION_DISTANCE = 96;
 const DEFAULT_AUTHORITATIVE_AIM_DIR = { x: 1, y: 0 } satisfies Vec2;
@@ -24,6 +35,18 @@ export interface AuthoritativeSeekerLockResolution {
   seekerLockStartedAtSec: number | null;
   seekerLockTarget: PlanetPublic | null;
   seekerLockTargetId: number | null;
+}
+
+export interface AuthoritativeCombatControlStepResolution {
+  aimDir: Vec2 | null;
+  boostAvailable: boolean;
+  dispatchEnabled: boolean;
+  fireTargetId: number | undefined;
+  queuedAbilitySlots: readonly AbilitySlot[];
+  seekerLock: AuthoritativeSeekerLockResolution;
+  sendInput: boolean;
+  sendShieldAim: boolean;
+  shieldActive: boolean;
 }
 
 const AUTHORITATIVE_ABILITY_SLOTS_BY_MASK = [
@@ -251,3 +274,113 @@ export const smoothAuthoritativeCameraAxis = ({
     targetValue,
     1 - Math.exp(-followLerp * frameDeltaSec),
   );
+
+export const resolveAuthoritativeCombatControlStep = ({
+  connectionState,
+  inputSendIntervalMs,
+  inputState,
+  lastBoostAbilitySentAtSec,
+  lastInputSentAtMs,
+  lastShieldAimSentAtMs,
+  nowSec,
+  pendingAbilityRequests,
+  phase,
+  planets,
+  playerId,
+  playerPlanet,
+  previousSeekerLockStartedAtSec,
+  previousSeekerLockTargetId,
+  self,
+  shieldAimSendIntervalMs,
+  timeMs,
+}: {
+  connectionState: AuthoritativeConnectionState;
+  inputSendIntervalMs: number;
+  inputState: {
+    aimWorld: Vec2;
+    selectedRocketKind: RocketKind;
+  };
+  lastBoostAbilitySentAtSec: number;
+  lastInputSentAtMs: number;
+  lastShieldAimSentAtMs: number;
+  nowSec: number;
+  pendingAbilityRequests: AuthoritativePendingAbilityRequests;
+  phase: AuthoritativeMatchPhase;
+  planets: readonly PlanetPublic[] | null;
+  playerId: PlayerId | null;
+  playerPlanet: PlanetPublic | null;
+  previousSeekerLockStartedAtSec: number | null;
+  previousSeekerLockTargetId: number | null;
+  self: PlanetPrivateState | null;
+  shieldAimSendIntervalMs: number;
+  timeMs: number;
+}): AuthoritativeCombatControlStepResolution => {
+  const seekerLock = resolveAuthoritativeSeekerLock({
+    aimWorld: inputState.aimWorld,
+    nowSec,
+    planets,
+    playerPlanet,
+    previousSeekerLockStartedAtSec,
+    previousSeekerLockTargetId,
+    selectedRocketKind: inputState.selectedRocketKind,
+  });
+  const dispatchEnabled =
+    phase === "combat" &&
+    connectionState === "connected" &&
+    planets !== null &&
+    playerId !== null &&
+    self !== null;
+  const boostAvailable = (self?.boostCharges ?? 0) > 0;
+
+  if (!dispatchEnabled || playerPlanet === null) {
+    return {
+      aimDir: null,
+      boostAvailable,
+      dispatchEnabled,
+      fireTargetId: undefined,
+      queuedAbilitySlots: [],
+      seekerLock,
+      sendInput: false,
+      sendShieldAim: false,
+      shieldActive: false,
+    };
+  }
+
+  const aimDir = getAuthoritativeAimDirection({
+    aimWorld: inputState.aimWorld,
+    playerPos: playerPlanet.pos,
+  });
+  const shieldActive =
+    playerPlanet.shieldActive && playerPlanet.shieldLoad > 0;
+
+  return {
+    aimDir,
+    boostAvailable,
+    dispatchEnabled,
+    fireTargetId: resolveAuthoritativeFireTargetId({
+      seekerLockProgress: seekerLock.progress,
+      seekerLockTarget: seekerLock.seekerLockTarget,
+      selectedRocketKind: inputState.selectedRocketKind,
+    }),
+    queuedAbilitySlots: getAuthoritativeQueuedAbilitySlots({
+      boostAvailable,
+      lastBoostAbilitySentAtSec,
+      nowSec,
+      pendingAbilityRequests,
+    }),
+    seekerLock,
+    sendInput: shouldDispatchAuthoritativeInput({
+      inputSendIntervalMs,
+      lastInputSentAtMs,
+      shieldActive,
+      timeMs,
+    }),
+    sendShieldAim: shouldDispatchAuthoritativeShieldAim({
+      lastShieldAimSentAtMs,
+      shieldActive,
+      shieldAimSendIntervalMs,
+      timeMs,
+    }),
+    shieldActive,
+  };
+};
