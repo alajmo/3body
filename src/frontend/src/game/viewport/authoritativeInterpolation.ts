@@ -219,6 +219,7 @@ const syncDebrisInto = (
 ) => {
   target.id = current.id;
   target.kind = current.kind;
+  target.asteroidTier = current.asteroidTier;
   target.ownerPlayerId = current.ownerPlayerId;
   target.ttlUntilTick = current.ttlUntilTick;
   target.radius = current.radius;

@@ -76,6 +76,7 @@ const buildCache = (overrides: Partial<Cache> = {}): Cache => ({
 });
 
 const buildDebris = (overrides: Partial<Debris> = {}): Debris => ({
+  asteroidTier: "large",
   id: 6,
   kind: "debris",
   ownerPlayerId: "player",
@@ -129,6 +130,7 @@ describe("authoritativeInterpolation", () => {
       ],
       debris: [
         buildDebris({
+          asteroidTier: "small",
           pos: { x: 15, y: 17 },
           vel: { x: 2, y: 5 },
         }),
@@ -188,6 +190,7 @@ describe("authoritativeInterpolation", () => {
       kind: "wildcard",
       wildcard: { kind: "gravityPulse" },
     });
+    expect(interpolatedWorld.debris[0]!.asteroidTier).toBe("small");
     expect(interpolatedWorld.debris[0]!.pos).toEqual({ x: 10, y: 12 });
     expect(interpolatedWorld.blackHole?.pos).toEqual({ x: 110, y: -30 });
     expect(interpolatedWorld.neutronStars[0]!.pos).toEqual({ x: 100, y: 110 });

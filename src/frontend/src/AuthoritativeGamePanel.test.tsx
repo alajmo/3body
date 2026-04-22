@@ -93,6 +93,7 @@ describe("AuthoritativeGamePanel", () => {
     getRuntimeTuningDocumentMock.mockReset();
     getRuntimeTuningDocumentMock.mockReturnValue({
       visuals: {
+        displayMode: "default",
         hud: {},
       },
     });
@@ -282,6 +283,34 @@ describe("AuthoritativeGamePanel", () => {
     });
 
     await new Promise((resolve) => window.setTimeout(resolve, 10));
-    expect(combatHudSpy.mock.calls).toHaveLength(renderCountAfterCombatTransition);
+    expect(combatHudSpy.mock.calls).toHaveLength(
+      renderCountAfterCombatTransition,
+    );
+  });
+
+  it("threads the configured display mode into the authoritative viewport and HUD shell", () => {
+    getRuntimeTuningDocumentMock.mockReturnValue({
+      visuals: {
+        displayMode: "vhs",
+        hud: {},
+      },
+    });
+
+    render(<AuthoritativeGamePanel />);
+
+    expect(createAuthoritativeViewportMock).toHaveBeenCalledWith(
+      expect.any(HTMLDivElement),
+      expect.objectContaining({
+        displayMode: "vhs",
+      }),
+    );
+    expect(combatHudSpy.mock.lastCall?.[0]).toEqual(
+      expect.objectContaining({
+        displayMode: "vhs",
+      }),
+    );
+    expect(screen.getByTestId("combat-hud").parentElement).toHaveClass(
+      "hud-root--inside-crt",
+    );
   });
 });

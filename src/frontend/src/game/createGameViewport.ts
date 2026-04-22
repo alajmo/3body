@@ -1,10 +1,8 @@
 import type { RocketKind, Vec2 } from "@3body/shared";
 import { ARENA_RADIUS, FIXED_STEP_SEC } from "@3body/shared";
 import {
-  type Group,
   Matrix4,
   type Mesh,
-  type MeshBasicMaterial,
   OrthographicCamera,
   Quaternion,
   Vector3,
@@ -47,6 +45,7 @@ import {
 } from "./viewport/cacheVisuals";
 import { buildLocalSandboxHudState } from "./viewport/localHud";
 import { createGameViewportInputController } from "./viewport/localInput";
+import type { SharedCombatRocketTrailState } from "./viewport/sharedCombatRocketPools";
 import {
   createLocalSandboxSimulationState,
   decayLocalSandboxFrameEffects,
@@ -68,9 +67,7 @@ import {
 import { disposeLocalViewportDisposables } from "./viewport/localViewportDisposal";
 import { createLocalViewportRenderShell } from "./viewport/localViewportRenderShell";
 import {
-  clearLocalViewportPlanetExplosions,
   createLocalViewportBlackHoleSwallowTracker,
-  queueLocalViewportPlanetExplosion,
   resetLocalViewportSceneState,
   updateLocalViewportScene,
 } from "./viewport/localViewportScene";
@@ -108,6 +105,11 @@ import {
   createGameViewportSandboxSettingsStore,
   sandboxControlsEnabled as sandboxSettingsControlsEnabled,
 } from "./viewport/sandboxSettingsStore";
+import {
+  clearSharedCombatPlanetExplosions,
+  queueSharedCombatPlanetExplosion,
+  type SharedCombatPlanetExplosionState,
+} from "./viewport/sharedCombatPlanetExplosions";
 import {
   areHudStatesEqual,
   type CreateGameViewportOptions,
@@ -192,55 +194,6 @@ const readStoredLocalPlayerName = (): string | undefined => {
     ?.trim();
   return storedName ? storedName : undefined;
 };
-
-interface TrailSample {
-  pos: Vec2;
-  timeSec: number;
-}
-
-interface RocketTrailState {
-  lastSeenSec: number;
-  rocketKind: RocketKind;
-  samples: TrailSample[];
-}
-
-interface PlanetExplosionChunkVisual {
-  baseScale: Vector3;
-  direction: Vec2;
-  driftDistance: number;
-  lateralAmplitude: number;
-  lift: number;
-  mesh: Mesh;
-  radialOffset: number;
-  rotationPhase: Vector3;
-  rotationSpeed: Vector3;
-  tangent: Vec2;
-}
-
-interface PlanetExplosionVisual {
-  chunkMaterials: readonly [MeshBasicMaterial, MeshBasicMaterial];
-  chunks: readonly PlanetExplosionChunkVisual[];
-  coreMaterial: MeshBasicMaterial;
-  coreMesh: Mesh;
-  glowMaterial: MeshBasicMaterial;
-  glowMesh: Mesh;
-  group: Group;
-  ringMaterial: MeshBasicMaterial;
-  ringMesh: Mesh;
-  shockwaveMaterial: MeshBasicMaterial;
-  shockwaveMesh: Mesh;
-}
-
-interface PlanetExplosionState {
-  durationSec: number;
-  origin: Vec2;
-  radius: number;
-  scatterScale: number;
-  shockwaveScale: number;
-  startedAtSec: number;
-  velocity: Vec2;
-  visual: PlanetExplosionVisual;
-}
 
 const getBudgetedCount = (maxCount: number, budget: number): number =>
   budget <= 0 ? 0 : Math.max(1, Math.round(maxCount * budget));
@@ -517,7 +470,7 @@ export function createGameViewport(
 
           const simulationState =
             createLocalSandboxSimulationState(initialState);
-          const activePlanetExplosions: PlanetExplosionState[] = [];
+          const activePlanetExplosions: SharedCombatPlanetExplosionState[] = [];
           const activeBlackHoleSwallowEffects: BlackHoleSwallowState[] = [];
           const inactiveBlackHoleSwallowVisuals =
             createBlackHoleSwallowVisualPool({
@@ -528,7 +481,10 @@ export function createGameViewport(
             });
           const blackHoleSwallowTracker =
             createLocalViewportBlackHoleSwallowTracker(initialState);
-          const rocketTrailStates = new Map<number, RocketTrailState>();
+          const rocketTrailStates = new Map<
+            number,
+            SharedCombatRocketTrailState
+          >();
           const rocketMatrix = new Matrix4();
           const hiddenRocketMatrix = new Matrix4();
           const rocketPosition = new Vector3();
@@ -543,7 +499,7 @@ export function createGameViewport(
           const hiddenRocketScale = new Vector3(0.001, 0.001, 0.001);
 
           clearPlanetExplosions = () => {
-            clearLocalViewportPlanetExplosions({
+            clearSharedCombatPlanetExplosions({
               activePlanetExplosions,
               inactivePlanetExplosionVisuals,
             });
@@ -565,7 +521,6 @@ export function createGameViewport(
           const inputState = inputRuntime.inputState;
           const pointerState = inputRuntime.pointerState;
           const activeCacheIds = new Set<number>();
-          const activeRocketTrailIds = new Set<number>();
           const launchBurstsByKind = {
             heavy: [] as CombatSandboxRocketLaunchBurst[],
             light: [] as CombatSandboxRocketLaunchBurst[],
@@ -698,7 +653,7 @@ export function createGameViewport(
                 inputRuntime,
                 nowSec,
                 onPlanetExplosionRequested: (planet, startedAtSec) => {
-                  queueLocalViewportPlanetExplosion({
+                  queueSharedCombatPlanetExplosion({
                     activePlanetExplosions,
                     inactivePlanetExplosionVisuals,
                     planet,
@@ -771,7 +726,6 @@ export function createGameViewport(
                 activeBoostBursts: simulationState.activeBoostBursts,
                 activeCacheIds,
                 activePlanetExplosions,
-                activeRocketTrailIds,
                 blackHoleGroup,
                 blackHoleRing,
                 boostBurstParticlesPerBurst,

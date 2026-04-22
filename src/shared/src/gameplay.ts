@@ -34,6 +34,7 @@ const SHIELD_LOAD_REFERENCE_DURATION_SEC = 4;
 const UMBRA_DRAG_DURATION_SEC = 2;
 const UMBRA_DRAG_TOTAL_VELOCITY_MULTIPLIER = 0.3;
 const TAU = Math.PI * 2;
+const PREFERRED_LOCAL_PLAYER_ORBIT_INDEX = 4;
 const ARENA_ASTEROID_SPEED = {
   large: 132,
   micro: 248,
@@ -105,6 +106,29 @@ export const createInitialAmmo = (): PlanetPrivateAmmo => ({
   heavy: ROCKET_SPECS.heavy.startAmmo,
   seeker: ROCKET_SPECS.seeker.startAmmo,
 });
+
+export const getPreferredLocalPlayerOrbitIndex = (
+  participantCount: number,
+): number =>
+  Math.min(
+    PREFERRED_LOCAL_PLAYER_ORBIT_INDEX,
+    Math.max(Math.trunc(participantCount) - 1, 0),
+  );
+
+export const getOrbitIndexForPlayerOrder = (
+  playerIndex: number,
+  participantCount: number,
+): number => {
+  const safeParticipantCount = Math.max(Math.trunc(participantCount), 1);
+  const safePlayerIndex = Math.max(Math.trunc(playerIndex), 0);
+  const preferredLocalPlayerIndex =
+    getPreferredLocalPlayerOrbitIndex(safeParticipantCount);
+
+  return (
+    (preferredLocalPlayerIndex + (safePlayerIndex % safeParticipantCount)) %
+    safeParticipantCount
+  );
+};
 
 export const cloneCacheContents = (contents: CacheContents): CacheContents =>
   contents.kind === "wildcard"
@@ -192,10 +216,7 @@ export const sampleBoundaryAsteroidSpawnCount = ({
     return 0;
   }
 
-  const expectedSpawnCount = Math.max(
-    0,
-    tuning[tier].spawnRatePerSec * dtSec,
-  );
+  const expectedSpawnCount = Math.max(0, tuning[tier].spawnRatePerSec * dtSec);
   if (expectedSpawnCount <= 0) {
     return 0;
   }

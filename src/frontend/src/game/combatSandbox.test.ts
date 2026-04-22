@@ -8,6 +8,7 @@ import {
   GRAVITY_PULSE_RADIUS,
   getBlackHoleKillRadiusAtElapsedSec,
   getBlackHoleMassAtElapsedSec,
+  getPreferredLocalPlayerOrbitIndex,
   getOrbitPatternTrack,
   getSeekerLockTicks,
   mulberry32,
@@ -164,8 +165,13 @@ describe("combatSandbox", () => {
     const playerPlanet = state.planets.find(
       (planet) => planet.id === state.player.planetId,
     );
+    const playerPlanetIndex = getPreferredLocalPlayerOrbitIndex(
+      DEFAULT_ORBIT_PRESET.planets.length,
+    );
 
-    expect(playerPlanet?.label).toBe(DEFAULT_ORBIT_PRESET.planets[4]!.label);
+    expect(playerPlanet?.label).toBe(
+      DEFAULT_ORBIT_PRESET.planets[playerPlanetIndex]!.label,
+    );
     expect(state.player.selectedRocketKind).toBe("light");
     expect(state.player.ammo).toEqual({
       heavy: ROCKET_SPECS.heavy.startAmmo,
@@ -1782,9 +1788,9 @@ describe("combatSandbox", () => {
       Math.hypot(state.suns[0]!.pos.x, state.suns[0]!.pos.y),
     );
     expect(next.suns[0]!.vel.x).not.toBeCloseTo(state.suns[0]!.vel.x, 6);
-    expect(Math.hypot(next.suns[0]!.vel.x, next.suns[0]!.vel.y)).toBeGreaterThan(
-      Math.hypot(state.suns[0]!.vel.x, state.suns[0]!.vel.y),
-    );
+    expect(
+      Math.hypot(next.suns[0]!.vel.x, next.suns[0]!.vel.y),
+    ).toBeGreaterThan(Math.hypot(state.suns[0]!.vel.x, state.suns[0]!.vel.y));
   });
 
   it("swallows fixed-pattern suns once the collapse finishes", () => {
@@ -1807,10 +1813,7 @@ describe("combatSandbox", () => {
     expect(getActiveCombatSuns(next.suns)).toHaveLength(0);
     expect(next.blackHole).not.toBeNull();
     expect(next.blackHole!.mass).toBeGreaterThan(
-      getBlackHoleMassAtElapsedSec(
-        state.elapsedSec,
-        GROWING_BLACK_HOLE_SPEC,
-      ),
+      getBlackHoleMassAtElapsedSec(state.elapsedSec, GROWING_BLACK_HOLE_SPEC),
     );
   });
 

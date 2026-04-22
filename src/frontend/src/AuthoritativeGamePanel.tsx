@@ -220,6 +220,7 @@ export function AuthoritativeGamePanel({
 }: {
   className?: string;
 }) {
+  const displayMode = getRuntimeTuningDocument().visuals.displayMode;
   const initialProfilingEnabledRef = useRef<boolean | null>(null);
   if (initialProfilingEnabledRef.current === null) {
     initialProfilingEnabledRef.current = readStoredViewportProfilingEnabled();
@@ -232,13 +233,17 @@ export function AuthoritativeGamePanel({
   const controllerRef = useRef<GameViewportController | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const runtimeRef = useRef(createInitialAuthoritativeMatchRuntimeState());
-  const uiStateRef = useRef<MatchPanelUiState>(snapshotUiState(runtimeRef.current));
+  const uiStateRef = useRef<MatchPanelUiState>(
+    snapshotUiState(runtimeRef.current),
+  );
   const [connectionSessionVersion, setConnectionSessionVersion] = useState(0);
   const [hudState, setHudState] = useState(() => ({
     ...createInitialHudState(),
     profilingEnabled: initialProfilingEnabledRef.current ?? false,
   }));
-  const [uiState, setUiState] = useState<MatchPanelUiState>(() => uiStateRef.current);
+  const [uiState, setUiState] = useState<MatchPanelUiState>(
+    () => uiStateRef.current,
+  );
   const [nowMs, setNowMs] = useState(() => Date.now());
 
   const dispatchRuntimeMessage = (message: ClientMsg): boolean => {
@@ -320,6 +325,7 @@ export function AuthoritativeGamePanel({
 
     return createAuthoritativeViewport(viewportElement, {
       dispatchMessage: dispatchRuntimeMessage,
+      displayMode,
       getPerformanceState: () => authoritativePerformanceStateRef.current,
       getRuntimeState: () => runtimeRef.current,
       onHudStateChange: (nextHudState) => {
@@ -328,7 +334,7 @@ export function AuthoritativeGamePanel({
         });
       },
     });
-  }, []);
+  }, [displayMode]);
 
   useEffect(() => {
     const storage = window.localStorage;
@@ -543,6 +549,7 @@ export function AuthoritativeGamePanel({
           case "fullSnapshot": {
             const message = parsed as FullSnapshotMsg;
             const nowAtMs = performance.now();
+            const phaseChanged = runtimeRef.current.phase !== "combat";
             runtimeRef.current.previousSnapshot = runtimeRef.current.snapshot;
             runtimeRef.current.snapshot = {
               receivedAtMs: nowAtMs,
@@ -550,13 +557,16 @@ export function AuthoritativeGamePanel({
               tick: message.tick,
               world: message.world,
             };
+            runtimeRef.current.phase = "combat";
             socket.send(
               JSON.stringify({
                 tick: message.tick,
                 type: "ackSnapshot",
               }),
             );
-            syncUiState();
+            if (phaseChanged) {
+              syncUiState();
+            }
             return;
           }
 
@@ -567,6 +577,7 @@ export function AuthoritativeGamePanel({
             }
 
             const deltaSnapshot = parsed as DeltaSnapshotMsg;
+            const phaseChanged = runtimeRef.current.phase !== "combat";
             runtimeRef.current.previousSnapshot = currentSnapshot;
             runtimeRef.current.snapshot = {
               receivedAtMs: performance.now(),
@@ -587,7 +598,9 @@ export function AuthoritativeGamePanel({
                 type: "ackSnapshot",
               }),
             );
-            syncUiState();
+            if (phaseChanged) {
+              syncUiState();
+            }
             return;
           }
 
@@ -701,9 +714,12 @@ export function AuthoritativeGamePanel({
   return (
     <div className={className}>
       <div ref={viewportElementRef} className="canvas-root" />
-      <div className="hud-root">
+      <div
+        className={`hud-root${displayMode === "vhs" ? " hud-root--inside-crt" : ""}`}
+      >
         <CombatHud
           controller={controllerRef.current}
+          displayMode={displayMode}
           hud={hudState}
           hudTuning={getRuntimeTuningDocument().visuals.hud}
           showPerformanceTools

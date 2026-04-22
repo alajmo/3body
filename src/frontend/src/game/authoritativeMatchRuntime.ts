@@ -66,6 +66,10 @@ const mergeEntityCollection = <T extends { id: number }>(
   changed: readonly T[] | undefined,
   removed: readonly number[] | undefined,
 ): T[] => {
+  if ((changed?.length ?? 0) === 0 && (removed?.length ?? 0) === 0) {
+    return current as T[];
+  }
+
   const removedIds = new Set(removed ?? []);
   const changedById = new Map((changed ?? []).map((entity) => [entity.id, entity]));
   const next: T[] = [];
@@ -93,44 +97,66 @@ const mergeEntityCollection = <T extends { id: number }>(
 export const applyDeltaSnapshotToWorld = (
   baseWorld: World,
   deltaSnapshot: DeltaSnapshotMsg,
-): World => ({
-  ...baseWorld,
-  suns: mergeEntityCollection(
+): World => {
+  const nextSuns = mergeEntityCollection(
     baseWorld.suns,
     deltaSnapshot.changed.suns,
     deltaSnapshot.removed.suns,
-  ),
-  neutronStars: mergeEntityCollection(
+  );
+  const nextNeutronStars = mergeEntityCollection(
     baseWorld.neutronStars,
     deltaSnapshot.changed.neutronStars,
     deltaSnapshot.removed.neutronStars,
-  ),
-  planets: mergeEntityCollection(
+  );
+  const nextPlanets = mergeEntityCollection(
     baseWorld.planets,
     deltaSnapshot.changed.planets,
     deltaSnapshot.removed.planets,
-  ),
-  rockets: mergeEntityCollection(
+  );
+  const nextRockets = mergeEntityCollection(
     baseWorld.rockets,
     deltaSnapshot.changed.rockets,
     deltaSnapshot.removed.rockets,
-  ),
-  caches: mergeEntityCollection(
+  );
+  const nextCaches = mergeEntityCollection(
     baseWorld.caches,
     deltaSnapshot.changed.caches,
     deltaSnapshot.removed.caches,
-  ),
-  debris: mergeEntityCollection(
+  );
+  const nextDebris = mergeEntityCollection(
     baseWorld.debris,
     deltaSnapshot.changed.debris,
     deltaSnapshot.removed.debris,
-  ),
-  blackHole: deltaSnapshot.removed.blackHole
+  );
+  const nextBlackHole = deltaSnapshot.removed.blackHole
     ? undefined
     : deltaSnapshot.changed.blackHole === undefined
       ? baseWorld.blackHole
-      : (deltaSnapshot.changed.blackHole ?? undefined),
-});
+      : (deltaSnapshot.changed.blackHole ?? undefined);
+
+  if (
+    nextSuns === baseWorld.suns &&
+    nextNeutronStars === baseWorld.neutronStars &&
+    nextPlanets === baseWorld.planets &&
+    nextRockets === baseWorld.rockets &&
+    nextCaches === baseWorld.caches &&
+    nextDebris === baseWorld.debris &&
+    nextBlackHole === baseWorld.blackHole
+  ) {
+    return baseWorld;
+  }
+
+  return {
+    ...baseWorld,
+    suns: nextSuns,
+    neutronStars: nextNeutronStars,
+    planets: nextPlanets,
+    rockets: nextRockets,
+    caches: nextCaches,
+    debris: nextDebris,
+    blackHole: nextBlackHole,
+  };
+};
 
 export const createInitialAuthoritativeMatchRuntimeState =
   (): AuthoritativeMatchRuntimeState => ({

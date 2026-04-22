@@ -13,6 +13,7 @@ import {
   createNeutronStars,
   fromAngle,
   type GameTuningDocument,
+  getOrbitIndexForPlayerOrder,
   getOrbitGameplayPlanet,
   getOrbitGameplaySun,
   getOrbitPatternTrack,
@@ -199,11 +200,14 @@ const createPlanet = (
   tuningDocument: GameTuningDocument,
 ): { planet: PlanetPublic; privateState: PlanetPrivateState } => {
   const orbitTuning = tuningDocument.gameplay.orbits;
+  const planetVisualTuning =
+    tuningDocument.visuals.planets.archetypes[player.archetypeId];
   const leadPlanet = getOrbitGameplayPlanet(orbitTuning, 0);
   const leadAngle = Math.atan2(leadPlanet.pos.y, leadPlanet.pos.x);
   const angleStep = (Math.PI * 2) / Math.max(1, count);
-  const tunedPlanet = getOrbitGameplayPlanet(orbitTuning, index);
-  const resolvedAngle = leadAngle + angleStep * index;
+  const orbitIndex = getOrbitIndexForPlayerOrder(index, count);
+  const tunedPlanet = getOrbitGameplayPlanet(orbitTuning, orbitIndex);
+  const resolvedAngle = leadAngle + angleStep * orbitIndex;
   const tangent = fromAngle(resolvedAngle + Math.PI / 2);
   const templateRadius = Math.max(
     Math.hypot(tunedPlanet.pos.x, tunedPlanet.pos.y),
@@ -231,7 +235,7 @@ const createPlanet = (
       playerId: player.playerId,
       archetype: player.archetypeId,
       hp: PLANET_HP,
-      radius: tunedPlanet.radius,
+      radius: tunedPlanet.radius * planetVisualTuning.bodyScale,
       pos: {
         x: Math.cos(resolvedAngle) * planetRingRadius,
         y: Math.sin(resolvedAngle) * planetRingRadius,

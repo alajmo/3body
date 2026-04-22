@@ -1,6 +1,5 @@
 import type {
   ArchetypeId,
-  AsteroidTier,
   PlanetArchetypeVisualSpec,
   RocketKind,
   Vec2,
@@ -22,10 +21,7 @@ import {
   normalize,
   normalWorld,
   pow,
-  sin,
-  smoothstep,
   uniform,
-  uv,
   vec3,
 } from "three/tsl";
 import {
@@ -33,41 +29,43 @@ import {
   BoxGeometry,
   BufferGeometry,
   CircleGeometry,
-  ConeGeometry,
   Color,
   CylinderGeometry,
   DynamicDrawUsage,
   Float32BufferAttribute,
   Group,
-  IcosahedronGeometry,
-  InstancedMesh,
-  Matrix4,
   Mesh,
   MeshBasicMaterial,
   MeshBasicNodeMaterial,
   PlaneGeometry,
   Points,
   PointsNodeMaterial,
-  Quaternion,
   RingGeometry,
   type Scene,
   SphereGeometry,
   Vector3,
 } from "three/webgpu";
-import {
-  ROCKET_MESH_SILHOUETTES,
-  type RocketMeshSilhouette,
-} from "../rocketMeshSilhouette";
 import type { CombatSandboxState } from "../combatSandbox";
-import { ROCKET_RENDER_INSTANCE_LIMITS } from "../rocketVisibility";
-import { createShieldVisual } from "../shieldVisuals";
-import { createAmbientBoundaryDebrisVisual } from "./ambientBoundaryDebris";
 import {
   createCacheSpriteAssets,
   disposeCacheSpriteAssets,
   type CacheIconKey,
   type CacheVisual,
 } from "./cacheVisuals";
+import {
+  createSharedCombatLaunchBurstPools,
+  type SharedCombatLaunchBurstPoolVisual as RocketLaunchBurstPoolVisual,
+} from "./sharedCombatLaunchBurstPools";
+import {
+  createSharedCombatRocketPools,
+  type SharedCombatRocketPoolVisual as RocketPoolVisual,
+  type SharedCombatRocketRenderProfile as RocketRenderProfile,
+} from "./sharedCombatRocketPools";
+import { createSharedCombatSceneResources } from "./sharedCombatSceneResources";
+import {
+  createSharedCombatBoostBurstVisual,
+  type SharedCombatBoostWakeMaterialResult,
+} from "./sharedCombatBoostVisuals";
 
 interface TrailSample {
   pos: Vec2;
@@ -114,81 +112,6 @@ interface PlanetVisual {
   spinPhase: number;
 }
 
-interface RocketPartMeshes {
-  body: InstancedMesh;
-  canardBottom: InstancedMesh;
-  canardTop: InstancedMesh;
-  engine: InstancedMesh;
-  nose: InstancedMesh;
-  rearFinBottom: InstancedMesh;
-  rearFinTop: InstancedMesh;
-  sensor: InstancedMesh;
-}
-
-interface RocketPoolVisual {
-  activeCount: number;
-  flameMesh: InstancedMesh;
-  flameScale: Vec2;
-  partMeshList: readonly InstancedMesh[];
-  parts: RocketPartMeshes;
-  scale: Vec2;
-  silhouette: RocketMeshSilhouette;
-  trailActiveCount: number;
-  trailCapacity: number;
-  trailMesh: InstancedMesh;
-  trailScale: Vec2;
-}
-
-interface RocketLaunchBurstPoolVisual {
-  activeCount: number;
-  mesh: InstancedMesh;
-  scale: Vec2;
-}
-
-interface DebrisVisual {
-  boundaryAsteroidLayers: Record<AsteroidTier, BoundaryAsteroidLayerVisual>;
-  colorAttribute: Float32BufferAttribute;
-  geometry: BufferGeometry;
-  opacityAttribute: Float32BufferAttribute;
-  points: Points;
-  positionAttribute: Float32BufferAttribute;
-}
-
-interface BoundaryAsteroidLayerVisual {
-  activeCount: number;
-  capacity: number;
-  mesh: InstancedMesh;
-}
-
-interface BoostBurstVisual {
-  geometry: BufferGeometry;
-  opacityAttribute: Float32BufferAttribute;
-  points: Points;
-  positionAttribute: Float32BufferAttribute;
-  wakeVisuals: readonly {
-    basePositions: Float32Array;
-    geometry: PlaneGeometry;
-    material: MeshBasicMaterial;
-    mesh: Mesh;
-    positionAttribute: Float32BufferAttribute;
-  }[];
-}
-
-interface GravityPulseVisual {
-  coreMaterial: MeshBasicMaterial;
-  coreMesh: Mesh;
-  echoMaterial: MeshBasicMaterial;
-  echoMesh: Mesh;
-  ringMaterial: MeshBasicMaterial;
-  ringMesh: Mesh;
-}
-
-interface ImpactBurstVisual {
-  coreMesh: Mesh;
-  glowMesh: Mesh;
-  ringMesh: Mesh;
-}
-
 interface PlanetExplosionChunkVisual {
   baseScale: Vector3;
   direction: Vec2;
@@ -230,21 +153,6 @@ interface PlanetGlowMaterialResult {
   riseStartNode: ReturnType<typeof uniform>;
 }
 
-interface BoostWakeResult {
-  material: MeshBasicMaterial;
-  texture: { dispose: () => void } | null;
-}
-
-interface RocketRenderProfile {
-  bodyScale: Vec2;
-  core: string;
-  flameScale: Vec2;
-  trail: string;
-  trailScale: Vec2;
-}
-
-const BOOST_WAKE_GEOMETRY_SEGMENTS = 12;
-
 const registerDisposables = (
   disposables: Array<{ dispose: () => void }>,
   ...items: Array<{ dispose: () => void } | Array<{ dispose: () => void }>>
@@ -259,13 +167,6 @@ const registerDisposables = (
   }
 };
 
-const createHiddenInstanceMatrix = () =>
-  new Matrix4().compose(
-    new Vector3(1e8, 1e8, 1e8),
-    new Quaternion(),
-    new Vector3(0.001, 0.001, 0.001),
-  );
-
 const tintColor = (
   value: string,
   hueOffset: number,
@@ -275,82 +176,6 @@ const tintColor = (
   const result = new Color(value);
   result.offsetHSL(hueOffset, saturationOffset, lightnessOffset);
   return result;
-};
-
-const BOUNDARY_ASTEROID_TIER_ORDER = [
-  "micro",
-  "small",
-  "large",
-] as const satisfies readonly AsteroidTier[];
-
-const BOUNDARY_ASTEROID_COLOR_BY_TIER = {
-  large: "#ffb87a",
-  micro: "#d7f1ff",
-  small: "#ffd98f",
-} as const satisfies Record<AsteroidTier, string>;
-
-const createBoundaryAsteroidGeometry = (
-  radius: number,
-  seed: number,
-): BufferGeometry => {
-  const baseGeometry = new IcosahedronGeometry(radius, 0);
-  const geometry =
-    baseGeometry.index === null ? baseGeometry : baseGeometry.toNonIndexed();
-  const positionAttribute = geometry.getAttribute(
-    "position",
-  ) as Float32BufferAttribute;
-  const positions = positionAttribute.array as Float32Array;
-
-  for (let offset = 0; offset < positions.length; offset += 3) {
-    const x = positions[offset]!;
-    const y = positions[offset + 1]!;
-    const z = positions[offset + 2]!;
-    const length = Math.hypot(x, y, z) || 1;
-    const nx = x / length;
-    const ny = y / length;
-    const nz = z / length;
-    const hashSeed = nx * 12.9898 + ny * 78.233 + nz * 37.719 + seed * 0.0001;
-    const jitter =
-      0.8 + 0.34 * ((((Math.sin(hashSeed) * 43758.5453) % 1) + 1) % 1);
-    const ridge = 0.92 + 0.16 * Math.abs(nx * 0.66 - ny * 0.28 + nz * 0.58);
-    const stretchX = 0.9 + 0.2 * Math.abs(nx);
-    const stretchY = 0.88 + 0.24 * Math.abs(ny);
-    const stretchZ = 0.86 + 0.22 * Math.abs(nz);
-
-    positions[offset] = nx * radius * jitter * ridge * stretchX;
-    positions[offset + 1] = ny * radius * jitter * ridge * stretchY;
-    positions[offset + 2] = nz * radius * jitter * ridge * stretchZ;
-  }
-
-  positionAttribute.needsUpdate = true;
-  geometry.computeVertexNormals();
-  return geometry;
-};
-
-const createBoundaryAsteroidMaterial = (
-  accentColor: string,
-): MeshBasicNodeMaterial => {
-  const material = new MeshBasicNodeMaterial();
-  const accent = tintColor(accentColor, 0.01, -0.03, 0.18);
-
-  {
-    const lightDir = normalize(vec3(-0.38, 0.61, 0.7));
-    const viewDir = vec3(0, 0, 1);
-    const halfDir = normalize(lightDir.add(viewDir));
-    const n = normalize(normalWorld);
-    const nDotL = max(dot(n, lightDir), float(0));
-    const lambert = pow(nDotL.mul(0.5).add(0.5), float(1.6));
-    const shading = mix(float(0.24), float(1.04), lambert);
-    const nDotH = max(dot(n, halfDir), float(0));
-    const spec = pow(nDotH, float(20)).mul(0.12);
-    const rim = pow(float(1).sub(max(dot(n, viewDir), float(0))), float(2.9));
-    material.colorNode = color("#505860")
-      .mul(shading)
-      .add(color(`#${accent.getHexString()}`).mul(rim.mul(0.14)))
-      .add(color("#edf5ff").mul(spec));
-  }
-
-  return material;
 };
 
 export const createLocalViewportVisualResources = ({
@@ -409,7 +234,7 @@ export const createLocalViewportVisualResources = ({
   createBlackHoleCoreMaterial: () => MeshBasicNodeMaterial;
   createBlackHoleLensMaterial: () => MeshBasicNodeMaterial;
   createBlackHoleRingMaterial: () => MeshBasicNodeMaterial;
-  createBoostWakeMaterial: () => BoostWakeResult;
+  createBoostWakeMaterial: () => SharedCombatBoostWakeMaterialResult;
   createNeutronStarCoreMaterial: (seed: number) => MeshBasicNodeMaterial;
   createNeutronStarHaloMaterial: (seed: number) => MeshBasicNodeMaterial;
   createNeutronStarJetMaterial: (seed: number) => MeshBasicNodeMaterial;
@@ -702,364 +527,78 @@ export const createLocalViewportVisualResources = ({
     },
   });
 
-  const rocketPools = rocketWeaponKinds.reduce(
-    (pools, rocketKind) => {
-      const profile = rocketRenderProfiles[rocketKind];
-      const silhouette = ROCKET_MESH_SILHOUETTES[rocketKind];
-      const rocketBodyGeometry = new CylinderGeometry(0.56, 0.92, 1, 18, 1);
-      rocketBodyGeometry.name = "rocketBody";
-      rocketBodyGeometry.rotateZ(-Math.PI / 2);
-      const rocketNoseGeometry = new ConeGeometry(1, 1, 18);
-      rocketNoseGeometry.name = "rocketNose";
-      rocketNoseGeometry.rotateZ(-Math.PI / 2);
-      const rocketEngineGeometry = new CylinderGeometry(0.78, 0.9, 1, 18, 1);
-      rocketEngineGeometry.name = "rocketEngine";
-      rocketEngineGeometry.rotateZ(-Math.PI / 2);
-      const rocketFinGeometry = new BoxGeometry(1, 1, 0.18);
-      rocketFinGeometry.name = "rocketFin";
-      const rocketCanardGeometry = new BoxGeometry(1, 1, 0.14);
-      rocketCanardGeometry.name = "rocketCanard";
-      const rocketSensorGeometry = new SphereGeometry(1, 20, 14);
-      rocketSensorGeometry.name = "rocketSensor";
-      const rocketTrailGeometry = new PlaneGeometry(1, 1);
-      rocketTrailGeometry.name = "rocketTrail";
-      const rocketFlameGeometry = new PlaneGeometry(1, 1);
-      rocketFlameGeometry.name = "rocketFlame";
-      const material = createRocketMaterial(profile.core, profile.trail);
-      const trailMaterial = createRocketTrailMaterial(
-        profile.core,
-        profile.trail,
-      );
-      const flameMaterial = createRocketFlameMaterial(
-        profile.core,
-        profile.trail,
-      );
-      const finMaterial = new MeshBasicMaterial({
-        color: tintColor(profile.core, 0, -0.16, -0.24),
-      });
-      const canardMaterial = new MeshBasicMaterial({
-        color: tintColor(profile.trail, -0.01, 0.02, 0.18),
-      });
-      const engineMaterial = new MeshBasicMaterial({
-        color: tintColor(profile.core, 0, -0.24, -0.34),
-      });
-      const sensorMaterial = new MeshBasicMaterial({
-        blending: AdditiveBlending,
-        color: tintColor(profile.trail, -0.02, -0.04, 0.34),
-        opacity: 0.86,
-        transparent: true,
-      });
-      material.name = `rocketBody:${rocketKind}`;
-      finMaterial.name = `rocketFin:${rocketKind}`;
-      canardMaterial.name = `rocketCanard:${rocketKind}`;
-      engineMaterial.name = `rocketEngine:${rocketKind}`;
-      sensorMaterial.name = `rocketSensor:${rocketKind}`;
-      trailMaterial.name = `rocketTrail:${rocketKind}`;
-      flameMaterial.name = `rocketFlame:${rocketKind}`;
-      const hiddenInit = createHiddenInstanceMatrix();
-      const rocketInstanceCapacity = ROCKET_RENDER_INSTANCE_LIMITS[rocketKind];
-      const initializeRocketMesh = (
-        geometry: BufferGeometry,
-        materialValue: MeshBasicMaterial | MeshBasicNodeMaterial,
-        instanceCount: number,
-        name: string,
-        renderOrder: number,
-      ) => {
-        const mesh = new InstancedMesh(geometry, materialValue, instanceCount);
-        mesh.instanceMatrix.setUsage(DynamicDrawUsage);
-        for (let index = 0; index < instanceCount; index += 1) {
-          mesh.setMatrixAt(index, hiddenInit);
-        }
-        mesh.instanceMatrix.needsUpdate = true;
-        mesh.count = 0;
-        mesh.visible = false;
-        mesh.frustumCulled = false;
-        mesh.renderOrder = renderOrder;
-        mesh.name = name;
-        return mesh;
-      };
-      const parts = {
-        body: initializeRocketMesh(
-          rocketBodyGeometry,
-          material,
-          rocketInstanceCapacity,
-          `rocketBodyPool:${rocketKind}`,
-          10,
-        ),
-        canardBottom: initializeRocketMesh(
-          rocketCanardGeometry,
-          canardMaterial,
-          rocketInstanceCapacity,
-          `rocketCanardBottomPool:${rocketKind}`,
-          8,
-        ),
-        canardTop: initializeRocketMesh(
-          rocketCanardGeometry,
-          canardMaterial,
-          rocketInstanceCapacity,
-          `rocketCanardTopPool:${rocketKind}`,
-          8,
-        ),
-        engine: initializeRocketMesh(
-          rocketEngineGeometry,
-          engineMaterial,
-          rocketInstanceCapacity,
-          `rocketEnginePool:${rocketKind}`,
-          9,
-        ),
-        nose: initializeRocketMesh(
-          rocketNoseGeometry,
-          material,
-          rocketInstanceCapacity,
-          `rocketNosePool:${rocketKind}`,
-          12,
-        ),
-        rearFinBottom: initializeRocketMesh(
-          rocketFinGeometry,
-          finMaterial,
-          rocketInstanceCapacity,
-          `rocketRearFinBottomPool:${rocketKind}`,
-          7,
-        ),
-        rearFinTop: initializeRocketMesh(
-          rocketFinGeometry,
-          finMaterial,
-          rocketInstanceCapacity,
-          `rocketRearFinTopPool:${rocketKind}`,
-          7,
-        ),
-        sensor: initializeRocketMesh(
-          rocketSensorGeometry,
-          sensorMaterial,
-          rocketInstanceCapacity,
-          `rocketSensorPool:${rocketKind}`,
-          11,
-        ),
-      } satisfies RocketPartMeshes;
-      const partMeshList = [
-        parts.rearFinTop,
-        parts.rearFinBottom,
-        parts.canardTop,
-        parts.canardBottom,
-        parts.engine,
-        parts.body,
-        parts.sensor,
-        parts.nose,
-      ] as const;
-      const trailMesh = initializeRocketMesh(
-        rocketTrailGeometry,
-        trailMaterial,
-        rocketTrailInstanceLimits[rocketKind],
-        `rocketTrailPool:${rocketKind}`,
-        6,
-      );
-      const flameMesh = initializeRocketMesh(
-        rocketFlameGeometry,
-        flameMaterial,
-        rocketInstanceCapacity,
-        `rocketFlamePool:${rocketKind}`,
-        5,
-      );
-      trailMesh.name = `rocketTrailPool:${rocketKind}`;
-      flameMesh.name = `rocketFlamePool:${rocketKind}`;
-      scene.add(trailMesh, flameMesh, ...partMeshList);
-      registerDisposables(
-        disposables,
-        rocketBodyGeometry,
-        rocketNoseGeometry,
-        rocketEngineGeometry,
-        rocketFinGeometry,
-        rocketCanardGeometry,
-        rocketSensorGeometry,
-        rocketTrailGeometry,
-        rocketFlameGeometry,
-        material,
-        finMaterial,
-        canardMaterial,
-        engineMaterial,
-        sensorMaterial,
-        trailMaterial,
-        flameMaterial,
-      );
-
-      pools[rocketKind] = {
-        activeCount: 0,
-        flameMesh,
-        flameScale: profile.flameScale,
-        partMeshList,
-        parts,
-        scale: profile.bodyScale,
-        silhouette,
-        trailActiveCount: 0,
-        trailCapacity: rocketTrailInstanceLimits[rocketKind],
-        trailMesh,
-        trailScale: profile.trailScale,
-      };
-
-      return pools;
-    },
-    {} as Record<RocketKind, RocketPoolVisual>,
-  );
-  const rocketLaunchBurstPools = rocketWeaponKinds.reduce(
-    (pools, rocketKind) => {
-      const profile = rocketRenderProfiles[rocketKind];
-
-      const rocketLaunchBurstGeometry = new PlaneGeometry(1, 1);
-      rocketLaunchBurstGeometry.name = "rocketLaunchBurst";
-      const material = createRocketLaunchBurstMaterial(
-        profile.core,
-        profile.trail,
-      );
-      material.name = `rocketLaunchBurst:${rocketKind}`;
-      const mesh = new InstancedMesh(
-        rocketLaunchBurstGeometry,
-        material,
-        launchBurstInstanceLimits[rocketKind],
-      );
-      mesh.instanceMatrix.setUsage(DynamicDrawUsage);
-      const hiddenInit = createHiddenInstanceMatrix();
-      for (
-        let index = 0;
-        index < launchBurstInstanceLimits[rocketKind];
-        index += 1
-      ) {
-        mesh.setMatrixAt(index, hiddenInit);
-      }
-      mesh.instanceMatrix.needsUpdate = true;
-      mesh.count = 0;
-      mesh.visible = false;
-      mesh.frustumCulled = false;
-      mesh.renderOrder = 21;
-      mesh.name = `rocketLaunchBurstPool:${rocketKind}`;
-      scene.add(mesh);
-      registerDisposables(disposables, rocketLaunchBurstGeometry, material);
-
-      pools[rocketKind] = {
-        activeCount: 0,
-        mesh,
-        scale: profile.trailScale,
-      };
-
-      return pools;
-    },
-    {} as Record<RocketKind, RocketLaunchBurstPoolVisual>,
-  );
-
-  const debrisGeometry = new BufferGeometry();
-  const debrisPositions = new Float32Array(debrisSampleLimit * 3);
-  const debrisColors = new Float32Array(debrisSampleLimit * 3);
-  const debrisOpacity = new Float32Array(debrisSampleLimit);
-  const debrisPositionAttribute = new Float32BufferAttribute(
-    debrisPositions,
-    3,
-  );
-  const debrisColorAttribute = new Float32BufferAttribute(debrisColors, 3);
-  const debrisOpacityAttribute = new Float32BufferAttribute(debrisOpacity, 1);
-  debrisPositionAttribute.setUsage(DynamicDrawUsage);
-  debrisColorAttribute.setUsage(DynamicDrawUsage);
-  debrisOpacityAttribute.setUsage(DynamicDrawUsage);
-  debrisGeometry.setAttribute("position", debrisPositionAttribute);
-  debrisGeometry.setAttribute("debrisColor", debrisColorAttribute);
-  debrisGeometry.setAttribute("debrisOpacity", debrisOpacityAttribute);
-  debrisGeometry.setDrawRange(0, 0);
-
-  const debrisMaterial = new PointsNodeMaterial({
-    transparent: true,
-    depthWrite: false,
-    blending: AdditiveBlending,
+  const { disposables: sharedRocketPoolDisposables, rocketPools } =
+    createSharedCombatRocketPools({
+      createRocketFlameMaterial,
+      createRocketMaterial,
+      createRocketTrailMaterial,
+      rocketKinds: rocketWeaponKinds,
+      rocketRenderProfiles,
+      rocketTrailInstanceLimits,
+      scene,
+    });
+  disposables.push(...sharedRocketPoolDisposables);
+  const {
+    disposables: sharedLaunchBurstDisposables,
+    launchBurstPools: rocketLaunchBurstPools,
+  } = createSharedCombatLaunchBurstPools({
+    createRocketLaunchBurstMaterial,
+    launchBurstInstanceLimits,
+    rocketKinds: rocketWeaponKinds,
+    rocketRenderProfiles,
+    scene,
   });
-  debrisMaterial.colorNode = attribute("debrisColor", "vec3");
-  debrisMaterial.opacityNode = attribute("debrisOpacity", "float");
-  debrisMaterial.size = 10;
-  debrisMaterial.alphaTest = 0.01;
-  const debrisPoints = new Points(debrisGeometry, debrisMaterial);
-  debrisPoints.renderOrder = 10;
-  debrisPoints.position.z = 2;
-  debrisPoints.frustumCulled = false;
-  const boundaryAsteroidGeometry = createBoundaryAsteroidGeometry(1, 0x73a9d1);
-  const hiddenInit = createHiddenInstanceMatrix();
-  const createBoundaryAsteroidLayer = (
-    tier: AsteroidTier,
-  ): BoundaryAsteroidLayerVisual => {
-    const material = createBoundaryAsteroidMaterial(
-      BOUNDARY_ASTEROID_COLOR_BY_TIER[tier],
-    );
-    const mesh = new InstancedMesh(
-      boundaryAsteroidGeometry,
-      material,
-      debrisSampleLimit,
-    );
-    mesh.instanceMatrix.setUsage(DynamicDrawUsage);
-    for (let index = 0; index < debrisSampleLimit; index += 1) {
-      mesh.setMatrixAt(index, hiddenInit);
-    }
-    mesh.instanceMatrix.needsUpdate = true;
-    mesh.count = 0;
-    mesh.visible = false;
-    mesh.frustumCulled = false;
-    mesh.renderOrder = 11;
-    mesh.position.z = 2.05;
-    mesh.name = `boundaryAsteroid:${tier}`;
+  disposables.push(...sharedLaunchBurstDisposables);
 
-    return {
-      activeCount: 0,
-      capacity: debrisSampleLimit,
-      mesh,
-    };
-  };
-  const boundaryAsteroidLayers: Record<
-    AsteroidTier,
-    BoundaryAsteroidLayerVisual
-  > = {
-    large: createBoundaryAsteroidLayer("large"),
-    micro: createBoundaryAsteroidLayer("micro"),
-    small: createBoundaryAsteroidLayer("small"),
-  };
-  scene.add(
-    debrisPoints,
-    ...BOUNDARY_ASTEROID_TIER_ORDER.map(
-      (tier) => boundaryAsteroidLayers[tier].mesh,
-    ),
-  );
-  const debrisVisual = {
-    boundaryAsteroidLayers,
-    colorAttribute: debrisColorAttribute,
-    geometry: debrisGeometry,
-    opacityAttribute: debrisOpacityAttribute,
-    points: debrisPoints,
-    positionAttribute: debrisPositionAttribute,
-  } satisfies DebrisVisual;
-  registerDisposables(
-    disposables,
-    debrisGeometry,
-    debrisMaterial,
-    boundaryAsteroidGeometry,
-    BOUNDARY_ASTEROID_TIER_ORDER.map(
-      (tier) =>
-        boundaryAsteroidLayers[tier].mesh.material as MeshBasicNodeMaterial,
-    ),
-  );
-
-  const boundaryDebrisVisual = createAmbientBoundaryDebrisVisual({
-    renderOrder: -11,
-    z: -5,
+  const {
+    blackHoleGroup,
+    blackHoleRing,
+    boundaryDebrisVisual,
+    debrisVisual,
+    disposables: sharedSceneDisposables,
+    gravityPulseVisual,
+    impactBurstVisuals,
+    inactivePlanetExplosionVisuals,
+    lockRingLockedUniform,
+    lockRingMesh,
+    lockRingProgressUniform,
+    lockRingTimeUniform,
+    shieldArcOpacityUniform,
+    shieldPanelOpacityUniform,
+    shieldCrestOpacityUniform,
+    shieldGlowOpacityUniform,
+    shieldGroup,
+  } = createSharedCombatSceneResources({
+    boundaryAsteroidMeshNamePrefix: "boundaryAsteroid",
+    createBlackHoleCoreMaterial,
+    createBlackHoleLensMaterial,
+    createBlackHoleRingMaterial,
+    createPlanetExplosionVisual,
+    debrisSampleLimit,
+    getBlackHoleCoreRadius,
+    getBlackHoleLensRadius,
+    getBlackHoleRingRadius,
+    gravityPulseColors: {
+      core: `#${tintColor(wildcardColor, 0.02, 0.08, 0.18).getHexString()}`,
+      echo: `#${tintColor(wildcardColor, -0.05, 0.06, 0.1).getHexString()}`,
+      ring: `#${tintColor(wildcardColor, -0.02, 0.18, 0.16).getHexString()}`,
+    },
+    gravityPulseRenderOrders: {
+      core: 12.4,
+      echo: 12.7,
+      ring: 12.9,
+    },
+    impactBurstLimit,
+    lockRingAccentColor: weaponColors.seeker.accent,
+    planetExplosionLimit,
+    scene,
+    shieldArcDeg: SHIELD_SPEC.arcDeg,
+    shieldColor,
+    shieldGlowOuterScale,
+    shieldInnerScale,
+    shieldOuterScale,
   });
-  boundaryDebrisVisual.fallingGroup.position.z = 2.08;
-  for (const layer of boundaryDebrisVisual.fallingLayers) {
-    layer.mesh.renderOrder = 11;
-  }
-  scene.add(
-    boundaryDebrisVisual.bandGroup,
-    boundaryDebrisVisual.fallingGroup,
-    boundaryDebrisVisual.points,
-  );
-  registerDisposables(
-    disposables,
-    boundaryDebrisVisual.bandGeometries,
-    boundaryDebrisVisual.bandMaterials,
-    boundaryDebrisVisual.geometry,
-    boundaryDebrisVisual.points.material as { dispose: () => void },
-  );
+  registerDisposables(disposables, sharedSceneDisposables);
 
   const cannonMetalMaterial = new MeshBasicNodeMaterial();
   {
@@ -1182,321 +721,14 @@ export const createLocalViewportVisualResources = ({
   reticleDotMesh.position.z = 7.5;
   scene.add(reticleDotMesh);
 
-  const lockRingProgressUniform = uniform(0);
-  const lockRingLockedUniform = uniform(0);
-  const lockRingTimeUniform = uniform(0);
-  const lockRingMaterial = new MeshBasicNodeMaterial({
-    depthWrite: false,
-    transparent: true,
-  });
-  {
-    const ringUv = uv();
-    const softEdge = float(0.006);
-    const maskFactor = float(1).sub(
-      smoothstep(
-        lockRingProgressUniform.sub(softEdge),
-        lockRingProgressUniform.add(softEdge),
-        ringUv.x,
-      ),
-    );
-    const chargingColor = color("#ffb347");
-    const lockedColor = color(weaponColors.seeker.accent);
-    const pulse = sin(lockRingTimeUniform.mul(float(11)))
-      .mul(0.22)
-      .add(1);
-    const chargingBrightness = float(0.85);
-    const lockedBrightness = pulse.mul(1.15);
-    const brightness = mix(
-      chargingBrightness,
-      lockedBrightness,
-      lockRingLockedUniform,
-    );
-    const ringTint = mix(chargingColor, lockedColor, lockRingLockedUniform);
-    lockRingMaterial.colorNode = ringTint.mul(brightness);
-    lockRingMaterial.opacityNode = maskFactor.mul(
-      mix(float(0.85), float(0.95), lockRingLockedUniform),
-    );
-  }
-  const lockRingMesh = new Mesh(
-    new RingGeometry(1, 1.12, 96, 1, -Math.PI / 2, Math.PI * 2),
-    lockRingMaterial,
-  );
-  lockRingMesh.visible = false;
-  lockRingMesh.renderOrder = 13;
-  lockRingMesh.position.z = 5.5;
-  scene.add(lockRingMesh);
-
-  const {
-    shieldArcMaterial,
-    shieldArcMesh,
-    shieldArcOpacityUniform,
-    shieldPanelMaterial,
-    shieldPanelMesh,
-    shieldPanelOpacityUniform,
-    shieldCrestMaterial,
-    shieldCrestMesh,
-    shieldCrestOpacityUniform,
-    shieldGlowMaterial,
-    shieldGlowMesh,
-    shieldGlowOpacityUniform,
-    shieldGroup,
-  } = createShieldVisual({
-    arcDeg: SHIELD_SPEC.arcDeg,
-    glowOuterScale: shieldGlowOuterScale,
-    innerScale: shieldInnerScale,
-    outerScale: shieldOuterScale,
-    shieldColor,
-  });
-  shieldGroup.visible = false;
-  scene.add(shieldGroup);
-
-  const boostBurstGeometry = new BufferGeometry();
-  const boostBurstPositions = new Float32Array(boostBurstSampleLimit * 3);
-  const boostBurstOpacity = new Float32Array(boostBurstSampleLimit);
-  const boostBurstPositionAttribute = new Float32BufferAttribute(
-    boostBurstPositions,
-    3,
-  );
-  const boostBurstOpacityAttribute = new Float32BufferAttribute(
-    boostBurstOpacity,
-    1,
-  );
-  boostBurstPositionAttribute.setUsage(DynamicDrawUsage);
-  boostBurstOpacityAttribute.setUsage(DynamicDrawUsage);
-  boostBurstGeometry.setAttribute("position", boostBurstPositionAttribute);
-  boostBurstGeometry.setAttribute(
-    "boostBurstOpacity",
-    boostBurstOpacityAttribute,
-  );
-  boostBurstGeometry.setDrawRange(0, 0);
-
-  const boostBurstMaterial = new PointsNodeMaterial({
-    transparent: true,
-    depthWrite: false,
-    blending: AdditiveBlending,
-  });
-  boostBurstMaterial.colorNode = color(boostColor);
-  boostBurstMaterial.opacityNode = attribute("boostBurstOpacity", "float");
-  boostBurstMaterial.size = 14;
-  boostBurstMaterial.alphaTest = 0.01;
-
-  const boostBurstPoints = new Points(boostBurstGeometry, boostBurstMaterial);
-  boostBurstPoints.frustumCulled = false;
-  boostBurstPoints.renderOrder = 13;
-  boostBurstPoints.position.z = 2.2;
-  boostBurstPoints.visible = false;
-  scene.add(boostBurstPoints);
-
-  const boostWakeTemplate = createBoostWakeMaterial();
-  const boostWakeVisuals = Array.from({ length: ROOM_CAPACITY }, (_, index) => {
-    const geometry = new PlaneGeometry(1, 1, BOOST_WAKE_GEOMETRY_SEGMENTS, 1);
-    geometry.translate(0.5, 0, 0);
-    const material =
-      index === 0
-        ? boostWakeTemplate.material
-        : boostWakeTemplate.material.clone();
-    const positionAttribute = geometry.getAttribute(
-      "position",
-    ) as Float32BufferAttribute;
-    positionAttribute.setUsage(DynamicDrawUsage);
-    const mesh = new Mesh(geometry, material);
-    mesh.frustumCulled = false;
-    mesh.renderOrder = 11.8;
-    mesh.position.z = 2.26;
-    mesh.visible = false;
-    scene.add(mesh);
-    return {
-      basePositions: Float32Array.from(
-        positionAttribute.array as ArrayLike<number>,
-      ),
-      geometry,
-      material,
-      mesh,
-      positionAttribute,
-    };
-  });
-  const boostBurstVisual = {
-    geometry: boostBurstGeometry,
-    opacityAttribute: boostBurstOpacityAttribute,
-    points: boostBurstPoints,
-    positionAttribute: boostBurstPositionAttribute,
-    wakeVisuals: boostWakeVisuals,
-  } satisfies BoostBurstVisual;
-
-  const impactFlashGeometry = new CircleGeometry(1, 48);
-  const impactRingGeometry = new RingGeometry(0.72, 1, 56);
-  const gravityPulseCoreGeometry = new CircleGeometry(1, 56);
-  const gravityPulseRingGeometry = new RingGeometry(0.9, 1, 72);
-  const impactBurstVisuals = Array.from({ length: impactBurstLimit }, () => {
-    const glowMaterial = new MeshBasicMaterial({
-      depthWrite: false,
-      opacity: 0,
-      transparent: true,
-      blending: AdditiveBlending,
+  const { disposables: boostBurstDisposables, visual: boostBurstVisual } =
+    createSharedCombatBoostBurstVisual({
+      boostColor,
+      createBoostWakeMaterial,
+      sampleLimit: boostBurstSampleLimit,
+      scene,
+      wakeCount: ROOM_CAPACITY,
     });
-    const coreMaterial = new MeshBasicMaterial({
-      depthWrite: false,
-      opacity: 0,
-      transparent: true,
-      blending: AdditiveBlending,
-    });
-    const ringMaterial = new MeshBasicMaterial({
-      depthWrite: false,
-      opacity: 0,
-      transparent: true,
-      blending: AdditiveBlending,
-    });
-    const glowMesh = new Mesh(impactFlashGeometry, glowMaterial);
-    const coreMesh = new Mesh(impactFlashGeometry, coreMaterial);
-    const ringMesh = new Mesh(impactRingGeometry, ringMaterial);
-    glowMesh.visible = false;
-    coreMesh.visible = false;
-    ringMesh.visible = false;
-    glowMesh.renderOrder = 12.5;
-    ringMesh.renderOrder = 13.2;
-    coreMesh.renderOrder = 13.4;
-    glowMesh.position.z = 2.55;
-    ringMesh.position.z = 2.75;
-    coreMesh.position.z = 2.65;
-    scene.add(glowMesh, ringMesh, coreMesh);
-    disposables.push(glowMaterial, coreMaterial, ringMaterial);
-
-    return {
-      coreMesh,
-      glowMesh,
-      ringMesh,
-    } satisfies ImpactBurstVisual;
-  });
-  registerDisposables(disposables, impactFlashGeometry, impactRingGeometry);
-
-  const gravityPulseCoreMaterial = new MeshBasicMaterial({
-    color: tintColor(wildcardColor, 0.02, 0.08, 0.18),
-    depthWrite: false,
-    opacity: 0,
-    transparent: true,
-    blending: AdditiveBlending,
-  });
-  const gravityPulseRingMaterial = new MeshBasicMaterial({
-    color: tintColor(wildcardColor, -0.02, 0.18, 0.16),
-    depthWrite: false,
-    opacity: 0,
-    transparent: true,
-    blending: AdditiveBlending,
-  });
-  const gravityPulseEchoMaterial = new MeshBasicMaterial({
-    color: tintColor(wildcardColor, -0.05, 0.06, 0.1),
-    depthWrite: false,
-    opacity: 0,
-    transparent: true,
-    blending: AdditiveBlending,
-  });
-  const gravityPulseCoreMesh = new Mesh(
-    gravityPulseCoreGeometry,
-    gravityPulseCoreMaterial,
-  );
-  const gravityPulseRingMesh = new Mesh(
-    gravityPulseRingGeometry,
-    gravityPulseRingMaterial,
-  );
-  const gravityPulseEchoMesh = new Mesh(
-    gravityPulseRingGeometry,
-    gravityPulseEchoMaterial,
-  );
-  gravityPulseCoreMesh.visible = false;
-  gravityPulseRingMesh.visible = false;
-  gravityPulseEchoMesh.visible = false;
-  gravityPulseCoreMesh.renderOrder = 12.4;
-  gravityPulseRingMesh.renderOrder = 12.9;
-  gravityPulseEchoMesh.renderOrder = 12.7;
-  gravityPulseCoreMesh.position.z = 2.2;
-  gravityPulseRingMesh.position.z = 2.35;
-  gravityPulseEchoMesh.position.z = 2.3;
-  scene.add(gravityPulseCoreMesh, gravityPulseRingMesh, gravityPulseEchoMesh);
-  const gravityPulseVisual = {
-    coreMaterial: gravityPulseCoreMaterial,
-    coreMesh: gravityPulseCoreMesh,
-    echoMaterial: gravityPulseEchoMaterial,
-    echoMesh: gravityPulseEchoMesh,
-    ringMaterial: gravityPulseRingMaterial,
-    ringMesh: gravityPulseRingMesh,
-  } satisfies GravityPulseVisual;
-  registerDisposables(
-    disposables,
-    gravityPulseCoreGeometry,
-    gravityPulseRingGeometry,
-    gravityPulseCoreMaterial,
-    gravityPulseRingMaterial,
-    gravityPulseEchoMaterial,
-  );
-
-  const planetExplosionFragmentGeometries = [
-    new BoxGeometry(1, 1, 1, 3, 3, 3),
-    new BoxGeometry(1, 1, 1, 2, 3, 2),
-    new SphereGeometry(1, 10, 10),
-  ] satisfies readonly BufferGeometry[];
-  const planetExplosionVisuals = Array.from(
-    { length: planetExplosionLimit },
-    () =>
-      createPlanetExplosionVisual(
-        scene,
-        impactFlashGeometry,
-        impactRingGeometry,
-        planetExplosionFragmentGeometries,
-      ),
-  );
-  const inactivePlanetExplosionVisuals = [...planetExplosionVisuals];
-  registerDisposables(disposables, planetExplosionFragmentGeometries);
-  registerDisposables(
-    disposables,
-    planetExplosionVisuals.flatMap((visual) => [
-      visual.coreMaterial,
-      visual.glowMaterial,
-      visual.ringMaterial,
-      visual.shockwaveMaterial,
-      ...visual.chunkMaterials,
-    ]),
-  );
-
-  const blackHoleGroup = new Group();
-  blackHoleGroup.visible = false;
-  blackHoleGroup.position.set(0, 0, 4);
-
-  const blackHoleLens = new Mesh(
-    new CircleGeometry(1, 72),
-    createBlackHoleLensMaterial(),
-  );
-  blackHoleLens.scale.set(
-    getBlackHoleLensRadius(),
-    getBlackHoleLensRadius(),
-    1,
-  );
-  blackHoleLens.position.z = -2;
-  blackHoleLens.renderOrder = 4;
-
-  const blackHoleRing = new Mesh(
-    new RingGeometry(0.42, 1, 96),
-    createBlackHoleRingMaterial(),
-  );
-  blackHoleRing.scale.set(
-    getBlackHoleRingRadius(),
-    getBlackHoleRingRadius(),
-    1,
-  );
-  blackHoleRing.renderOrder = 5;
-
-  const blackHoleCore = new Mesh(
-    new CircleGeometry(1, 72),
-    createBlackHoleCoreMaterial(),
-  );
-  blackHoleCore.scale.set(
-    getBlackHoleCoreRadius(),
-    getBlackHoleCoreRadius(),
-    1,
-  );
-  blackHoleCore.renderOrder = 6;
-
-  blackHoleGroup.add(blackHoleLens, blackHoleRing, blackHoleCore);
-  scene.add(blackHoleGroup);
 
   registerDisposables(
     disposables,
@@ -1518,27 +750,7 @@ export const createLocalViewportVisualResources = ({
     reticleRingMaterial,
     reticleDotMesh.geometry,
     reticleDotMaterial,
-    lockRingMesh.geometry,
-    lockRingMaterial,
-    shieldGlowMesh.geometry,
-    shieldGlowMaterial,
-    shieldArcMesh.geometry,
-    shieldArcMaterial,
-    shieldPanelMesh.geometry,
-    shieldPanelMaterial,
-    shieldCrestMesh.geometry,
-    shieldCrestMaterial,
-    boostBurstGeometry,
-    boostBurstMaterial,
-    ...boostWakeVisuals.map((visual) => visual.geometry),
-    ...boostWakeVisuals.map((visual) => visual.material),
-    ...(boostWakeTemplate.texture === null ? [] : [boostWakeTemplate.texture]),
-    blackHoleLens.geometry,
-    blackHoleLens.material,
-    blackHoleRing.geometry,
-    blackHoleRing.material,
-    blackHoleCore.geometry,
-    blackHoleCore.material,
+    boostBurstDisposables,
   );
 
   return {

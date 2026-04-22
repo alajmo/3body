@@ -1,7 +1,7 @@
 import type { AbilitySlot } from "@3body/shared";
 import { lerp } from "@3body/shared";
 
-export interface AuthoritativePendingAbilityRequests {
+interface AuthoritativePendingAbilityRequests {
   boost: boolean;
   gravityPulse: boolean;
   shield: boolean;

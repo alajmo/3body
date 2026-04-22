@@ -1,17 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
-  collectVisibleBoostWakeBursts,
-  getBoostWakeBendAmount,
-  getBoostWakeCurveOffset,
-} from "./localViewportScene";
+  collectSharedCombatVisibleBoostWakeBursts,
+  getSharedCombatBoostWakeBendAmount,
+  getSharedCombatBoostWakeCurveOffset,
+  pruneSharedCombatBoostBursts,
+  queueSharedCombatBoostBurst,
+} from "./sharedCombatBoostVisuals";
 
-describe("collectVisibleBoostWakeBursts", () => {
+describe("collectSharedCombatVisibleBoostWakeBursts", () => {
   it("keeps a single wake per planet and preserves the furthest progress", () => {
     const bursts = [
       {
         direction: { x: 1, y: 0 },
         origin: { x: 10, y: 0 },
-        planetArchetype: "terra",
         planetId: 101,
         radius: 18,
         startedAtSec: 0,
@@ -20,7 +21,6 @@ describe("collectVisibleBoostWakeBursts", () => {
       {
         direction: { x: 0, y: 1 },
         origin: { x: 24, y: 8 },
-        planetArchetype: "terra",
         planetId: 101,
         radius: 22,
         startedAtSec: 0.24,
@@ -28,10 +28,10 @@ describe("collectVisibleBoostWakeBursts", () => {
       },
     ] as const;
 
-    const visibleWakeBursts = collectVisibleBoostWakeBursts({
+    const visibleWakeBursts = collectSharedCombatVisibleBoostWakeBursts({
       bursts,
+      getBodyById: () => null,
       nowSec: 0.3,
-      planetsById: new Map(),
     });
 
     expect(visibleWakeBursts).toHaveLength(1);
@@ -43,12 +43,11 @@ describe("collectVisibleBoostWakeBursts", () => {
   });
 
   it("blends wake direction across overlapping bursts for the same planet", () => {
-    const visibleWakeBursts = collectVisibleBoostWakeBursts({
+    const visibleWakeBursts = collectSharedCombatVisibleBoostWakeBursts({
       bursts: [
         {
           direction: { x: 1, y: 0 },
           origin: { x: 10, y: 0 },
-          planetArchetype: "terra",
           planetId: 101,
           radius: 18,
           startedAtSec: 0,
@@ -57,15 +56,14 @@ describe("collectVisibleBoostWakeBursts", () => {
         {
           direction: { x: 0, y: 1 },
           origin: { x: 24, y: 8 },
-          planetArchetype: "terra",
           planetId: 101,
           radius: 22,
           startedAtSec: 0.24,
           tick: 11,
         },
       ],
+      getBodyById: () => null,
       nowSec: 0.3,
-      planetsById: new Map(),
     });
 
     expect(visibleWakeBursts).toHaveLength(1);
@@ -77,12 +75,11 @@ describe("collectVisibleBoostWakeBursts", () => {
   });
 
   it("uses the live direction override for the matching planet", () => {
-    const visibleWakeBursts = collectVisibleBoostWakeBursts({
+    const visibleWakeBursts = collectSharedCombatVisibleBoostWakeBursts({
       bursts: [
         {
           direction: { x: 1, y: 0 },
           origin: { x: 10, y: 0 },
-          planetArchetype: "terra",
           planetId: 101,
           radius: 18,
           startedAtSec: 0.12,
@@ -93,8 +90,8 @@ describe("collectVisibleBoostWakeBursts", () => {
         direction: { x: 0, y: 1 },
         planetId: 101,
       },
+      getBodyById: () => null,
       nowSec: 0.24,
-      planetsById: new Map(),
     });
 
     expect(visibleWakeBursts).toHaveLength(1);
@@ -102,12 +99,11 @@ describe("collectVisibleBoostWakeBursts", () => {
   });
 
   it("keeps separate wakes for different planets", () => {
-    const visibleWakeBursts = collectVisibleBoostWakeBursts({
+    const visibleWakeBursts = collectSharedCombatVisibleBoostWakeBursts({
       bursts: [
         {
           direction: { x: 1, y: 0 },
           origin: { x: 0, y: 0 },
-          planetArchetype: "terra",
           planetId: 101,
           radius: 18,
           startedAtSec: 0.12,
@@ -116,15 +112,14 @@ describe("collectVisibleBoostWakeBursts", () => {
         {
           direction: { x: 0, y: 1 },
           origin: { x: 40, y: 20 },
-          planetArchetype: "ignis",
           planetId: 202,
           radius: 20,
           startedAtSec: 0.18,
           tick: 11,
         },
       ],
+      getBodyById: () => null,
       nowSec: 0.24,
-      planetsById: new Map(),
     });
 
     expect(visibleWakeBursts).toHaveLength(2);
@@ -134,14 +129,14 @@ describe("collectVisibleBoostWakeBursts", () => {
   });
 });
 
-describe("getBoostWakeBendAmount", () => {
+describe("getSharedCombatBoostWakeBendAmount", () => {
   it("returns negative bend for a left turn and positive bend for a right turn", () => {
-    const leftTurnBend = getBoostWakeBendAmount({
+    const leftTurnBend = getSharedCombatBoostWakeBendAmount({
       baseDirection: { x: 1, y: 0 },
       currentDirection: { x: 0, y: 1 },
       progress: 1,
     });
-    const rightTurnBend = getBoostWakeBendAmount({
+    const rightTurnBend = getSharedCombatBoostWakeBendAmount({
       baseDirection: { x: 1, y: 0 },
       currentDirection: { x: 0, y: -1 },
       progress: 1,
@@ -152,7 +147,7 @@ describe("getBoostWakeBendAmount", () => {
   });
 
   it("keeps the bend subtle early in the wake", () => {
-    const earlyBend = getBoostWakeBendAmount({
+    const earlyBend = getSharedCombatBoostWakeBendAmount({
       baseDirection: { x: 1, y: 0 },
       currentDirection: { x: 0, y: 1 },
       progress: 0,
@@ -162,7 +157,7 @@ describe("getBoostWakeBendAmount", () => {
   });
 });
 
-describe("getBoostWakeCurveOffset", () => {
+describe("getSharedCombatBoostWakeCurveOffset", () => {
   it("keeps the wake head fixed while the tail follows older aim", () => {
     const directionSamples = [
       { x: 0, y: 1 },
@@ -170,7 +165,7 @@ describe("getBoostWakeCurveOffset", () => {
     ] as const;
 
     expect(
-      getBoostWakeCurveOffset({
+      getSharedCombatBoostWakeCurveOffset({
         currentDirection: { x: 0, y: 1 },
         directionSamples,
         tailProgress: 0,
@@ -179,12 +174,92 @@ describe("getBoostWakeCurveOffset", () => {
     ).toBe(0);
 
     expect(
-      getBoostWakeCurveOffset({
+      getSharedCombatBoostWakeCurveOffset({
         currentDirection: { x: 0, y: 1 },
         directionSamples,
         tailProgress: 1,
         wakeProgress: 1,
       }),
     ).toBeLessThan(-1);
+  });
+});
+
+describe("boost burst queue and pruning", () => {
+  it("caps the active burst list to the requested maximum", () => {
+    const activeBursts = [] as Array<{
+      direction: { x: number; y: number };
+      origin: { x: number; y: number };
+      planetId: number;
+      radius: number;
+      startedAtSec: number;
+      tick: number;
+    }>;
+
+    queueSharedCombatBoostBurst({
+      activeBursts,
+      burst: {
+        direction: { x: 1, y: 0 },
+        origin: { x: 0, y: 0 },
+        planetId: 1,
+        radius: 10,
+        startedAtSec: 0,
+        tick: 1,
+      },
+      maxActiveBursts: 2,
+    });
+    queueSharedCombatBoostBurst({
+      activeBursts,
+      burst: {
+        direction: { x: 0, y: 1 },
+        origin: { x: 1, y: 1 },
+        planetId: 2,
+        radius: 10,
+        startedAtSec: 0.1,
+        tick: 2,
+      },
+      maxActiveBursts: 2,
+    });
+    queueSharedCombatBoostBurst({
+      activeBursts,
+      burst: {
+        direction: { x: -1, y: 0 },
+        origin: { x: 2, y: 2 },
+        planetId: 3,
+        radius: 10,
+        startedAtSec: 0.2,
+        tick: 3,
+      },
+      maxActiveBursts: 2,
+    });
+
+    expect(activeBursts.map((burst) => burst.planetId)).toEqual([2, 3]);
+  });
+
+  it("drops expired bursts from the front of the active list", () => {
+    const activeBursts = [
+      {
+        direction: { x: 1, y: 0 },
+        origin: { x: 0, y: 0 },
+        planetId: 1,
+        radius: 10,
+        startedAtSec: 0,
+        tick: 1,
+      },
+      {
+        direction: { x: 0, y: 1 },
+        origin: { x: 1, y: 1 },
+        planetId: 2,
+        radius: 10,
+        startedAtSec: 0.3,
+        tick: 2,
+      },
+    ];
+
+    pruneSharedCombatBoostBursts({
+      activeBursts,
+      nowSec: 0.55,
+    });
+
+    expect(activeBursts.map((burst) => burst.planetId)).toEqual([2]);
   });
 });

@@ -1,0 +1,8 @@
+{
+  "$schema": "./node_modules/knip/schema.json",
+  "workspaces": {
+    "src/frontend": {
+      "entry": ["src/orbit-pattern-gallery.ts"]
+    }
+  }
+}

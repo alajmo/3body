@@ -10,14 +10,14 @@ const MAX_FRAME_DELTA_SEC = 0.1;
 const MAX_STEPS_PER_FRAME = 12;
 const SUN_DISTANCE_HEADROOM = 1.2;
 
-export const SHOWCASE_ORBIT_OVERVIEW_DISPLAY_RADIUS = 520;
-export const SHOWCASE_ORBIT_OVERVIEW_RELEASE_DELAY_SEC = 8;
+const SHOWCASE_ORBIT_OVERVIEW_DISPLAY_RADIUS = 520;
+const SHOWCASE_ORBIT_OVERVIEW_RELEASE_DELAY_SEC = 8;
 
-export type ShowcaseOrbitOverviewSandboxState = ReturnType<
+type ShowcaseOrbitOverviewSandboxState = ReturnType<
   typeof createOrbitSandboxState
 >;
 
-export interface ShowcaseOrbitOverviewSimulationState {
+interface ShowcaseOrbitOverviewSimulationState {
   accumulatorSec: number;
   currentState: ShowcaseOrbitOverviewSandboxState;
   previousFrameTimeSec: number | null;

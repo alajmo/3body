@@ -123,7 +123,7 @@ export const getBlackHoleVisualRadius = (killRadius: number): number => {
   );
 };
 
-export const hideBlackHoleSwallowVisual = (visual: BlackHoleSwallowVisual) => {
+const hideBlackHoleSwallowVisual = (visual: BlackHoleSwallowVisual) => {
   visual.sprite.visible = false;
   visual.material.opacity = 0;
   visual.material.rotation = 0;

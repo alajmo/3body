@@ -1,5 +1,4 @@
-import type { CacheContents } from "@3body/shared";
-import type { CombatSandboxCache } from "../combatSandbox";
+import type { CacheContents, Vec2 } from "@3body/shared";
 import {
   CanvasTexture,
   Group,
@@ -47,6 +46,28 @@ export interface CacheVisual {
   key: CacheIconKey;
   pulseRate: number;
   wobbleRate: number;
+}
+
+export interface SharedCombatCacheBody {
+  contents: CacheContents;
+  id: number;
+  pos: Vec2;
+  radius: number;
+}
+
+export interface SharedCombatTrackedCacheBody {
+  pos: Vec2;
+  radius: number;
+}
+
+export interface SharedCombatBlackHoleBody {
+  killRadius: number;
+  pos: Vec2;
+}
+
+interface SharedCombatCacheSceneHost {
+  add: (object: Group) => void;
+  remove: (object: Group) => void;
 }
 
 const CACHE_ICON_LAYOUT = {
@@ -105,9 +126,7 @@ const CACHE_ICON_PRESENTATION: Record<
 };
 
 export const getCacheIconKey = (contents: CacheContents): CacheIconKey =>
-  contents.kind === "wildcard"
-    ? "wildcardGravityPulse"
-    : contents.kind;
+  contents.kind === "wildcard" ? "wildcardGravityPulse" : contents.kind;
 
 const fillRoundedRect = (
   context: CanvasRenderingContext2D,
@@ -487,8 +506,8 @@ export const disposeCacheSpriteAssets = (assets: CacheSpriteAssets) => {
   }
 };
 
-export const createCacheVisual = (
-  cache: CombatSandboxCache,
+export const createCacheVisual = <CacheBody extends SharedCombatCacheBody>(
+  cache: CacheBody,
   badgeMaterials: CacheSpriteMaterialMap,
 ): CacheVisual => {
   const key = getCacheIconKey(cache.contents);
@@ -520,4 +539,79 @@ export const updateCacheVisualBadge = (
 
   visual.badgeSprite.material = badgeMaterials[key].material;
   visual.key = key;
+};
+
+export const syncSharedCombatCacheVisuals = <
+  CacheBody extends SharedCombatCacheBody,
+>({
+  activeCacheIds,
+  badgeBaseSize,
+  badgeMaterials,
+  badgeScale,
+  cacheVisuals,
+  caches,
+  createCacheVisual,
+  disposeCacheVisual,
+  getCacheIconKey,
+  nowSec,
+  renderedCacheKeysById,
+  scene,
+  updateCacheVisualBadge,
+}: {
+  activeCacheIds: Set<number>;
+  badgeBaseSize: number;
+  badgeMaterials: CacheSpriteMaterialMap;
+  badgeScale: number;
+  cacheVisuals: Map<number, CacheVisual>;
+  caches: readonly CacheBody[];
+  createCacheVisual: (
+    cache: CacheBody,
+    badgeMaterials: CacheSpriteMaterialMap,
+  ) => CacheVisual;
+  disposeCacheVisual?: ((visual: CacheVisual) => void) | undefined;
+  getCacheIconKey: (contents: CacheBody["contents"]) => CacheIconKey;
+  nowSec: number;
+  renderedCacheKeysById?: Map<number, CacheIconKey> | undefined;
+  scene: SharedCombatCacheSceneHost;
+  updateCacheVisualBadge: (
+    visual: CacheVisual,
+    badgeMaterials: CacheSpriteMaterialMap,
+    key: CacheIconKey,
+  ) => void;
+}) => {
+  activeCacheIds.clear();
+
+  for (const cache of caches) {
+    activeCacheIds.add(cache.id);
+    let visual = cacheVisuals.get(cache.id);
+    if (visual === undefined) {
+      visual = createCacheVisual(cache, badgeMaterials);
+      cacheVisuals.set(cache.id, visual);
+      scene.add(visual.group);
+    }
+
+    const key = getCacheIconKey(cache.contents);
+    renderedCacheKeysById?.set(cache.id, key);
+    updateCacheVisualBadge(visual, badgeMaterials, key);
+    visual.group.position.set(
+      cache.pos.x,
+      cache.pos.y + Math.sin(nowSec * 1.8 + visual.bobPhase) * 6,
+      3.5,
+    );
+    visual.group.rotation.z =
+      Math.sin(nowSec * visual.wobbleRate + visual.bobPhase) * 0.08;
+    const pulse =
+      1 + Math.sin(nowSec * visual.pulseRate + visual.bobPhase) * 0.04;
+    const badgeSize = getCacheArenaBadgeSize(badgeBaseSize, badgeScale) * pulse;
+    visual.badgeSprite.scale.set(badgeSize, badgeSize, 1);
+  }
+
+  for (const [cacheId, visual] of cacheVisuals) {
+    if (!activeCacheIds.has(cacheId)) {
+      scene.remove(visual.group);
+      disposeCacheVisual?.(visual);
+      cacheVisuals.delete(cacheId);
+      renderedCacheKeysById?.delete(cacheId);
+    }
+  }
 };

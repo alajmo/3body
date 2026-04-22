@@ -58,6 +58,7 @@ import {
   getBoundaryAsteroidExplosionPieces,
   getBoundaryAsteroidExplosionSpeedVariance,
   getBoundaryAsteroidImpactRadius,
+  getPreferredLocalPlayerOrbitIndex,
   getUmbraDragDurationTicks,
   getUmbraDragStepMultiplier,
   getOrbitPatternDistanceScaleAtElapsedSec,
@@ -113,9 +114,6 @@ export {
 } from "./combatSandboxInterpolation";
 
 const LIGHT_RELOCK_DISTANCE = 96;
-
-// Use a calmer outer-orbit body for the local player so combat starts are playable.
-const PLAYER_PLANET_INDEX = 4;
 const DEFAULT_ROCKET_PLANET_IMPACT_RADIUS_MULTIPLIER = 1;
 const PLANET_IMPACT_TTL_SEC = 0.32;
 const ROCKET_LAUNCH_BURST_TTL_SEC = 0.2;
@@ -820,7 +818,10 @@ const stepCombatSuns = (
             starMotion,
             swallowedAtSec,
             blackHoleSpec,
-          ).map((sunSeed) => [sunSeed.id, createCombatSunFromSeed(sunSeed)] as const),
+          ).map(
+            (sunSeed) =>
+              [sunSeed.id, createCombatSunFromSeed(sunSeed)] as const,
+          ),
         )
       : new Map(
           stepSuns(
@@ -1921,9 +1922,8 @@ export const createSandboxState = (
     runtimePreset.planets.length,
   );
   const planetSeeds = runtimePreset.planets.slice(0, participantCount);
-  const playerPlanetIndex = Math.min(
-    PLAYER_PLANET_INDEX,
-    Math.max(planetSeeds.length - 1, 0),
+  const playerPlanetIndex = getPreferredLocalPlayerOrbitIndex(
+    planetSeeds.length,
   );
   const playerPlanetId = planetSeeds[playerPlanetIndex]!.id;
   const botDifficulty = options.botDifficulty ?? LOCAL_BOT_DIFFICULTY;

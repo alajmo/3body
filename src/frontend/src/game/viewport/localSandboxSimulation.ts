@@ -45,6 +45,7 @@ import type { GameViewportInputRuntimeState } from "./localInput";
 import { createViewportPerformanceProfiler } from "./performanceProfiler";
 import { createRuntimeStatsTracker } from "./runtimeStats";
 import { getRuntimeTuningDocument } from "../runtimeTuning";
+import type { SharedCombatBoostBurstState } from "./sharedCombatBoostVisuals";
 
 const MAX_FRAME_DELTA_SEC = 0.1;
 const MAX_STEPS_PER_FRAME = 12;
@@ -59,16 +60,6 @@ interface LocalSandboxKillFeedEntry {
   id: number;
   startedAtSec: number;
   text: string;
-}
-
-interface LocalSandboxBoostBurstState {
-  direction: Vec2;
-  origin: Vec2;
-  planetArchetype: CombatSandboxPlanet["archetype"];
-  planetId: number;
-  radius: number;
-  startedAtSec: number;
-  tick: number;
 }
 
 export interface LocalSandboxGravityPulseState {
@@ -160,7 +151,7 @@ export const createLocalSandboxSimulationState = (
 ) => {
   const state = {
     accumulatorSec: 0,
-    activeBoostBursts: [] as LocalSandboxBoostBurstState[],
+    activeBoostBursts: [] as SharedCombatBoostBurstState[],
     activeGravityPulse: null as LocalSandboxGravityPulseState | null,
     cameraShake: 0,
     currentState: initialState,
@@ -592,7 +583,6 @@ export const runLocalSandboxSimulationFrame = ({
           simulationState.activeBoostBursts.push({
             direction: normalizeVec2(controller.lastBoostAimDir),
             origin: { x: boostedPlanet.pos.x, y: boostedPlanet.pos.y },
-            planetArchetype: boostedPlanet.archetype,
             planetId: boostedPlanet.id,
             radius: boostedPlanet.radius,
             startedAtSec: nowSec,
