@@ -196,6 +196,75 @@ it obvious that there is one combat renderer and multiple runtimes.
 
 Use a staged migration. The order matters.
 
+## Current Status (April 22, 2026)
+
+This section is the working handoff status for the refactor. The architecture
+above is still the target. The notes below describe what has already landed,
+what is only partially complete, and what the next useful seam is.
+
+### What is done
+
+- The authoritative route now uses the same display-mode/post-processing render
+  shell direction as sandbox. The original "authoritative route has no display
+  mode" gap is no longer the main blocker.
+- Shared renderer-side helpers now cover a meaningful portion of the combat
+  presentation stack, including:
+  - background parallax
+  - cannon presentation
+  - sun / neutron star / planet visual modules
+  - planet trail visuals
+  - dynamic celestial add/remove/special-case sync
+  - shared entity/presentation/transient frame sync wrappers
+  - authoritative cosmetic/event translation for hits, boosts, black-hole
+    swallows, immediate fire, shield feedback, and gravity pulse feedback
+- The local sandbox path has already been moved further toward shared visual
+  modules, especially around celestial visuals and frame sync orchestration.
+- Authoritative-only cosmetic feedback is now more clearly isolated as runtime
+  adapter behavior instead of being mixed directly into renderer-specific code.
+
+### What is partially done
+
+- Shared scene/resource bootstrap extraction is underway, but both routes still
+  allocate and orchestrate too much directly inside
+  `createGameViewport()` / `createAuthoritativeViewport()`.
+- Shared scene sync extraction is underway, but both routes still compose
+  shared helpers manually instead of flowing through one explicit shared combat
+  viewport / scene-sync layer.
+- Transient event unification is meaningfully improved, but it still happens
+  through route-specific plumbing instead of one normalized frame-state/event
+  contract.
+
+### What is still missing
+
+- An explicit shared `ViewportFrameState` contract.
+- One shared scene sync that consumes that frame-state for both local and
+  authoritative modes.
+- A clear runtime-adapter boundary where:
+  - local sandbox emits normalized frame-state from local simulation
+  - authoritative mode emits normalized frame-state from interpolation,
+    prediction, protocol events, and allowed local-owner cosmetic intent
+- Thin viewport entry points:
+  - `createGameViewport()` should become a thin local-runtime wrapper
+  - `createAuthoritativeViewport()` should become a thin authoritative-runtime
+    wrapper
+- Final collapse toward one shared combat viewport API.
+
+### Current Best Next Step
+
+Do not keep doing helper-by-helper cleanup indefinitely.
+
+The next useful move is:
+
+1. Finish extracting the remaining authoritative control/aim/lock/input
+   decision logic from `createAuthoritativeViewport()`.
+2. Then stop and introduce the explicit shared `ViewportFrameState` contract.
+3. Adapt both local and authoritative runtimes to emit that normalized shape.
+4. Move scene updates behind one shared combat viewport / scene-sync layer.
+
+The remaining inline authoritative seam at the time of this update is the
+control/aim/lock/input-throttling block in `createAuthoritativeViewport()`.
+That is a good final cleanup step before the frame-state pivot.
+
 ## Phase 0: Freeze the Direction
 
 Before code movement:
@@ -480,22 +549,32 @@ The work is in a good place when these are true.
 
 - `/` uses the same display mode and post-processing path as `/sandbox`.
 
+Status on April 22, 2026: effectively done.
+
 ### Milestone B
 
 - `/` and `/sandbox` allocate scene resources through the same shared bootstrap.
+
+Status on April 22, 2026: partially done.
 
 ### Milestone C
 
 - both routes produce the same normalized frame-state shape.
 
+Status on April 22, 2026: not done.
+
 ### Milestone D
 
 - both routes update the scene through the same sync function.
+
+Status on April 22, 2026: partially done, but not done.
 
 ### Milestone E
 
 - `createGameViewport()` and `createAuthoritativeViewport()` are thin wrappers
   around one shared combat viewport.
+
+Status on April 22, 2026: not done.
 
 ## Validation
 

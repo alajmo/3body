@@ -48,6 +48,11 @@ export interface SharedCombatBoostDirectionOverride {
   planetId: number;
 }
 
+export interface SharedCombatBoostPresentationBody
+  extends SharedCombatBoostBody {
+  id: number;
+}
+
 export interface SharedCombatBoostWakeVisual {
   basePositions: Float32Array;
   geometry: PlaneGeometry;
@@ -497,6 +502,74 @@ export const pruneSharedCombatBoostBursts = ({
   ) {
     activeBursts.shift();
   }
+};
+
+export const getSharedCombatHeldBoostDirectionOverride = ({
+  aimTarget,
+  body,
+  heldBoosting,
+}: {
+  aimTarget: Vec2;
+  body: SharedCombatBoostPresentationBody | null;
+  heldBoosting: boolean;
+}): SharedCombatBoostDirectionOverride | null => {
+  if (!heldBoosting || body === null || body.alive === false) {
+    return null;
+  }
+
+  const aimDelta = add(aimTarget, scaleVec2(body.pos, -1));
+  if (len(aimDelta) <= 0.001) {
+    return null;
+  }
+
+  return {
+    direction: normalizeVec2(aimDelta),
+    planetId: body.id,
+  };
+};
+
+export const syncSharedCombatBoostPresentation = ({
+  activeBursts,
+  aimTarget,
+  boostVisual,
+  getBodyById = () => null,
+  heldBoosting,
+  maxParticlesPerBurst,
+  nowSec,
+  playerBody,
+}: {
+  activeBursts: SharedCombatBoostBurstState[];
+  aimTarget: Vec2;
+  boostVisual: SharedCombatBoostBurstVisual | null;
+  getBodyById?: (planetId: number) => SharedCombatBoostBody | null;
+  heldBoosting: boolean;
+  maxParticlesPerBurst: number;
+  nowSec: number;
+  playerBody: SharedCombatBoostPresentationBody | null;
+}): SharedCombatBoostDirectionOverride | null => {
+  pruneSharedCombatBoostBursts({
+    activeBursts,
+    nowSec,
+  });
+
+  const directionOverride = getSharedCombatHeldBoostDirectionOverride({
+    aimTarget,
+    body: playerBody,
+    heldBoosting,
+  });
+
+  if (boostVisual !== null) {
+    syncSharedCombatBoostBurstVisual({
+      boostVisual,
+      bursts: activeBursts,
+      directionOverride,
+      getBodyById,
+      maxParticlesPerBurst,
+      nowSec,
+    });
+  }
+
+  return directionOverride;
 };
 
 export const syncSharedCombatBoostBurstVisual = ({

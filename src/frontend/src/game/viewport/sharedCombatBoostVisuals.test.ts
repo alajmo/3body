@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   collectSharedCombatVisibleBoostWakeBursts,
+  getSharedCombatHeldBoostDirectionOverride,
   getSharedCombatBoostWakeBendAmount,
   getSharedCombatBoostWakeCurveOffset,
   pruneSharedCombatBoostBursts,
   queueSharedCombatBoostBurst,
+  syncSharedCombatBoostPresentation,
 } from "./sharedCombatBoostVisuals";
 
 describe("collectSharedCombatVisibleBoostWakeBursts", () => {
@@ -261,5 +263,70 @@ describe("boost burst queue and pruning", () => {
     });
 
     expect(activeBursts.map((burst) => burst.planetId)).toEqual([2]);
+  });
+});
+
+describe("shared boost presentation helpers", () => {
+  it("derives a held-boost override from the focused living body", () => {
+    expect(
+      getSharedCombatHeldBoostDirectionOverride({
+        aimTarget: { x: 22, y: 14 },
+        body: {
+          alive: true,
+          id: 7,
+          pos: { x: 10, y: 10 },
+          radius: 18,
+        },
+        heldBoosting: true,
+      }),
+    ).toEqual({
+      direction: {
+        x: 12 / Math.hypot(12, 4),
+        y: 4 / Math.hypot(12, 4),
+      },
+      planetId: 7,
+    });
+  });
+
+  it("prunes expired bursts before syncing boost presentation", () => {
+    const activeBursts = [
+      {
+        direction: { x: 1, y: 0 },
+        origin: { x: 0, y: 0 },
+        planetId: 1,
+        radius: 10,
+        startedAtSec: 0,
+        tick: 1,
+      },
+      {
+        direction: { x: 0, y: 1 },
+        origin: { x: 1, y: 1 },
+        planetId: 2,
+        radius: 10,
+        startedAtSec: 0.3,
+        tick: 2,
+      },
+    ];
+
+    const directionOverride = syncSharedCombatBoostPresentation({
+      activeBursts,
+      aimTarget: { x: 4, y: 1 },
+      boostVisual: null,
+      heldBoosting: true,
+      maxParticlesPerBurst: 0,
+      nowSec: 0.55,
+      playerBody: {
+        alive: true,
+        id: 2,
+        pos: { x: 1, y: 1 },
+        radius: 10,
+      },
+    });
+
+    expect(activeBursts.map((burst) => burst.planetId)).toEqual([2]);
+    expect(directionOverride).toEqual({
+      direction: { x: 1, y: 0 },
+      planetId: 2,
+    });
   });
 });

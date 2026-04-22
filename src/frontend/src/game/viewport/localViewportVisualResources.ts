@@ -4,13 +4,7 @@ import type {
   RocketKind,
   Vec2,
 } from "@3body/shared";
-import {
-  ROOM_CAPACITY,
-  SHIELD_SPEC,
-  getSunVisualProfile,
-  mulberry32,
-} from "@3body/shared";
-import { getRuntimeTuningDocument } from "../runtimeTuning";
+import { getSunVisualProfile, ROOM_CAPACITY, SHIELD_SPEC } from "@3body/shared";
 import {
   attribute,
   color,
@@ -26,91 +20,60 @@ import {
 } from "three/tsl";
 import {
   AdditiveBlending,
-  BoxGeometry,
-  BufferGeometry,
+  type BufferGeometry,
   CircleGeometry,
   Color,
-  CylinderGeometry,
-  DynamicDrawUsage,
-  Float32BufferAttribute,
-  Group,
+  type Group,
   Mesh,
   MeshBasicMaterial,
   MeshBasicNodeMaterial,
   PlaneGeometry,
-  Points,
-  PointsNodeMaterial,
   RingGeometry,
   type Scene,
   SphereGeometry,
-  Vector3,
+  type Vector3,
 } from "three/webgpu";
 import type { CombatSandboxState } from "../combatSandbox";
+import { getRuntimeTuningDocument } from "../runtimeTuning";
 import {
-  createCacheSpriteAssets,
-  disposeCacheSpriteAssets,
   type CacheIconKey,
   type CacheVisual,
+  createCacheSpriteAssets,
+  disposeCacheSpriteAssets,
 } from "./cacheVisuals";
+import {
+  createSharedCombatBoostBurstVisual,
+  type SharedCombatBoostWakeMaterialResult,
+} from "./sharedCombatBoostVisuals";
+import { createSharedCombatCannonVisual } from "./sharedCombatCannonVisual";
+import {
+  createSharedCombatNeutronStarVisual,
+  createSharedCombatSunVisual,
+  disposeSharedCombatNeutronStarVisual,
+  disposeSharedCombatSunVisual,
+  type SharedCombatNeutronStarVisual as NeutronStarVisual,
+  type SharedCombatSunVisual as SunVisual,
+} from "./sharedCombatCelestialVisuals";
 import {
   createSharedCombatLaunchBurstPools,
   type SharedCombatLaunchBurstPoolVisual as RocketLaunchBurstPoolVisual,
 } from "./sharedCombatLaunchBurstPools";
+import {
+  createSharedCombatPlanetTrailVisual,
+  disposeSharedCombatPlanetTrailVisual,
+  type SharedCombatPlanetTrailVisual as TrailVisual,
+} from "./sharedCombatPlanetTrails";
+import {
+  createSharedCombatPlanetVisual,
+  disposeSharedCombatPlanetVisual,
+  type SharedCombatPlanetVisual as PlanetVisual,
+} from "./sharedCombatPlanetVisuals";
 import {
   createSharedCombatRocketPools,
   type SharedCombatRocketPoolVisual as RocketPoolVisual,
   type SharedCombatRocketRenderProfile as RocketRenderProfile,
 } from "./sharedCombatRocketPools";
 import { createSharedCombatSceneResources } from "./sharedCombatSceneResources";
-import {
-  createSharedCombatBoostBurstVisual,
-  type SharedCombatBoostWakeMaterialResult,
-} from "./sharedCombatBoostVisuals";
-
-interface TrailSample {
-  pos: Vec2;
-  timeSec: number;
-}
-
-interface TrailVisual {
-  geometry: BufferGeometry;
-  opacityAttribute: Float32BufferAttribute;
-  points: Points;
-  positionAttribute: Float32BufferAttribute;
-  samples: TrailSample[];
-}
-
-interface SunVisual {
-  coreMesh: Mesh;
-  glowMesh: Mesh;
-  rotationSpeed: number;
-  warpMesh: Mesh;
-}
-
-interface NeutronStarVisual {
-  coreMesh: Mesh;
-  group: Group;
-  haloMesh: Mesh;
-  jetMeshA: Mesh;
-  jetMeshB: Mesh;
-  lensMesh: Mesh;
-  phase: number;
-  spinSpeed: number;
-}
-
-interface PlanetVisual {
-  glowContactStartNode: ReturnType<typeof uniform>;
-  glowFadeStartNode: ReturnType<typeof uniform>;
-  glowMesh: Mesh;
-  glowOpacityUniform: ReturnType<typeof uniform>;
-  glowRiseEndNode: ReturnType<typeof uniform>;
-  glowRiseStartNode: ReturnType<typeof uniform>;
-  mesh: Mesh;
-  rotationSpeed: number;
-  surfaceOpacityUniform: ReturnType<typeof uniform>;
-  spinAxis: Vector3;
-  spinPhase: number;
-}
 
 interface PlanetExplosionChunkVisual {
   baseScale: Vector3;
@@ -341,176 +304,145 @@ export const createLocalViewportVisualResources = ({
     planetGeometrySegments,
   );
   const sunTuning = getRuntimeTuningDocument().visuals.suns;
-  const sunVisuals = initialState.suns.map((sun, index) => {
-    const profile = getSunVisualProfile(sunTuning, index);
-    const coreMaterial = createSunCoreMaterial(
-      profile.color,
-      profile.glowColor,
-      sun.id,
-      profile.coreBrightness,
-    );
-    const glowMaterial = createSunGlowMaterial(
-      profile.glowColor,
-      sun.id,
-      profile.glowBrightness,
-    );
-    const warpMaterial = createWarpMaterial(profile.glowColor, sun.id);
-    const coreMesh = new Mesh(sunGeometry, coreMaterial);
-    const glowMesh = new Mesh(sunGeometry, glowMaterial);
-    const warpMesh = new Mesh(warpGeometry, warpMaterial);
-
-    coreMesh.renderOrder = -8;
-    glowMesh.renderOrder = -10;
-    warpMesh.renderOrder = -12;
-    glowMesh.position.z = -2;
-    warpMesh.position.z = -4;
-    scene.add(warpMesh, glowMesh, coreMesh);
-    disposables.push(coreMaterial, glowMaterial, warpMaterial);
-
-    return {
-      coreMesh,
-      glowMesh,
-      rotationSpeed: 0.12 + index * 0.05,
-      warpMesh,
-    } satisfies SunVisual;
-  });
-
-  const neutronStarVisuals = initialState.neutronStars.map((star, index) => {
-    const group = new Group();
-    const coreMesh = new Mesh(
+  const createSunVisual = ({
+    index,
+    sun,
+    sunProfile = getSunVisualProfile(sunTuning, index),
+  }: {
+    index: number;
+    sun: { id: number };
+    sunProfile?: ReturnType<typeof getSunVisualProfile>;
+  }) =>
+    createSharedCombatSunVisual({
+      createSunCoreMaterial,
+      createSunGlowMaterial,
+      createWarpMaterial,
+      scene,
       sunGeometry,
-      createNeutronStarCoreMaterial(star.id),
-    );
-    const haloMesh = new Mesh(
-      glowGeometry,
-      createNeutronStarHaloMaterial(star.id),
-    );
-    const lensMesh = new Mesh(
-      glowGeometry,
-      createNeutronStarLensMaterial(star.id),
-    );
-    const jetMeshA = new Mesh(
-      neutronStarJetGeometry,
-      createNeutronStarJetMaterial(star.id),
-    );
-    const jetMeshB = new Mesh(
-      neutronStarJetGeometry,
-      createNeutronStarJetMaterial(star.id + 0.37),
-    );
-
-    coreMesh.renderOrder = -6;
-    haloMesh.renderOrder = -7;
-    lensMesh.renderOrder = -8;
-    jetMeshA.renderOrder = -7;
-    jetMeshB.renderOrder = -7;
-    haloMesh.position.z = -1.6;
-    lensMesh.position.z = -2.4;
-    jetMeshA.position.z = -1.2;
-    jetMeshB.position.z = -1.2;
-    group.add(lensMesh, haloMesh, jetMeshA, jetMeshB, coreMesh);
-    scene.add(group);
-    disposables.push(
-      coreMesh.material as { dispose: () => void },
-      haloMesh.material as { dispose: () => void },
-      lensMesh.material as { dispose: () => void },
-      jetMeshA.material as { dispose: () => void },
-      jetMeshB.material as { dispose: () => void },
-    );
-
-    return {
-      coreMesh,
-      group,
-      haloMesh,
-      jetMeshA,
-      jetMeshB,
-      lensMesh,
-      phase: index * 0.91 + star.id * 0.0008,
-      spinSpeed: 0.22 + index * 0.04,
-    } satisfies NeutronStarVisual;
-  });
-
-  const planetVisuals = initialState.planets.map((planet, index) => {
-    const archetypeVisuals =
-      getRuntimeTuningDocument().visuals.planets.archetypes[planet.archetype];
-    const forestProfile = getPlanetForestProfile(planet.archetype, planet.id);
-    const material = createPlanetMaterial(
-      archetypeVisuals,
-      planet.id * 0.173,
-      forestProfile,
-    );
-    material.transparent = true;
-    const glowMaterial = createPlanetGlowMaterial(
-      archetypeVisuals.color,
-      planet.id * 0.173,
-      archetypeVisuals.auraScale,
-      archetypeVisuals.auraGap,
-    );
-    const mesh = new Mesh(planetGeometry, material);
-    const glowMesh = new Mesh(glowGeometry, glowMaterial.material);
-    const spinAxis = createPlanetSpinAxis(planet.id);
-    const spinPhase =
-      mulberry32(Math.imul(planet.id + 1, 0x85ebca6b) >>> 0)() * Math.PI * 2;
-
-    mesh.setRotationFromAxisAngle(spinAxis, spinPhase);
-    mesh.renderOrder = -2;
-    glowMesh.position.z = 0.16;
-    glowMesh.renderOrder = -1;
-    scene.add(mesh, glowMesh);
-    disposables.push(material, glowMaterial.material);
-
-    return {
-      glowContactStartNode: glowMaterial.contactStartNode,
-      glowFadeStartNode: glowMaterial.fadeStartNode,
-      glowMesh,
-      glowOpacityUniform: glowMaterial.opacityUniform,
-      glowRiseEndNode: glowMaterial.riseEndNode,
-      glowRiseStartNode: glowMaterial.riseStartNode,
-      mesh,
-      rotationSpeed: 0.28 + index * 0.045,
-      surfaceOpacityUniform: material.opacityUniform,
-      spinAxis,
-      spinPhase,
-    } satisfies PlanetVisual;
-  });
-
-  const trailVisuals = initialState.planets.map((planet) => {
-    const geometry = new BufferGeometry();
-    const positions = new Float32Array(maxTrailSamples * 3);
-    const opacities = new Float32Array(maxTrailSamples);
-    const positionAttribute = new Float32BufferAttribute(positions, 3);
-    const opacityAttribute = new Float32BufferAttribute(opacities, 1);
-    positionAttribute.setUsage(DynamicDrawUsage);
-    opacityAttribute.setUsage(DynamicDrawUsage);
-    geometry.setAttribute("position", positionAttribute);
-    geometry.setAttribute("trailOpacity", opacityAttribute);
-    geometry.setDrawRange(0, 0);
-
-    const material = new PointsNodeMaterial({
-      transparent: true,
-      depthWrite: false,
-      blending: AdditiveBlending,
+      sunId: sun.id,
+      sunProfile,
+      warpGeometry,
     });
+  const sunVisuals = new Map<number, SunVisual>(
+    initialState.suns.map((sun, index) => [
+      sun.id,
+      createSunVisual({
+        index,
+        sun,
+      }),
+    ]),
+  );
+
+  const createNeutronStarVisual = ({
+    neutronStar,
+  }: {
+    neutronStar: { id: number };
+  }) =>
+    createSharedCombatNeutronStarVisual({
+      createNeutronStarCoreMaterial,
+      createNeutronStarHaloMaterial,
+      createNeutronStarJetMaterial,
+      createNeutronStarLensMaterial,
+      glowGeometry,
+      neutronStarId: neutronStar.id,
+      ribbonGeometry: neutronStarJetGeometry,
+      scene,
+      sunGeometry,
+    });
+  const neutronStarVisuals = new Map<number, NeutronStarVisual>(
+    initialState.neutronStars.map((neutronStar) => [
+      neutronStar.id,
+      createNeutronStarVisual({
+        neutronStar,
+      }),
+    ]),
+  );
+
+  const createPlanetVisual = ({
+    index,
+    planet,
+  }: {
+    index: number;
+    planet: { archetype: ArchetypeId; id: number };
+  }) => {
     const archetypeVisuals =
       getRuntimeTuningDocument().visuals.planets.archetypes[planet.archetype];
-    material.colorNode = color(archetypeVisuals.trailColor);
-    material.opacityNode = attribute("trailOpacity", "float");
-    material.size = planetTrailPointSize;
-    material.alphaTest = 0.01;
+    return createSharedCombatPlanetVisual({
+      archetypeVisuals,
+      createPlanetGlowMaterial,
+      createPlanetMaterial,
+      createPlanetSpinAxis,
+      getPlanetForestProfile,
+      glowGeometry,
+      planet,
+      planetGeometry,
+      planetIndex: index,
+      scene,
+    });
+  };
+  const planetVisuals = new Map<number, PlanetVisual>(
+    initialState.planets.map((planet, index) => [
+      planet.id,
+      createPlanetVisual({
+        index,
+        planet,
+      }),
+    ]),
+  );
 
-    const points = new Points(geometry, material);
-    points.frustumCulled = false;
-    points.position.z = -1;
-    points.renderOrder = -3;
+  const createTrailVisual = ({
+    planet,
+  }: {
+    planet: { archetype: ArchetypeId };
+  }) => {
+    const archetypeVisuals =
+      getRuntimeTuningDocument().visuals.planets.archetypes[planet.archetype];
+    const trail = createSharedCombatPlanetTrailVisual({
+      dynamicDraw: true,
+      maxTrailSamples,
+      trailColor: archetypeVisuals.trailColor,
+      trailPointSize: planetTrailPointSize,
+      z: -1,
+    });
+    scene.add(trail.points);
+    return trail;
+  };
+  const trailVisuals = new Map<number, TrailVisual>(
+    initialState.planets.map((planet) => [
+      planet.id,
+      createTrailVisual({
+        planet,
+      }),
+    ]),
+  );
+  disposables.push({
+    dispose: () => {
+      for (const visual of sunVisuals.values()) {
+        disposeSharedCombatSunVisual(visual);
+      }
+      sunVisuals.clear();
 
-    disposables.push(geometry, material);
+      for (const visual of neutronStarVisuals.values()) {
+        disposeSharedCombatNeutronStarVisual(visual);
+      }
+      neutronStarVisuals.clear();
 
-    return {
-      geometry,
-      opacityAttribute,
-      points,
-      positionAttribute,
-      samples: [],
-    } satisfies TrailVisual;
+      for (const visual of planetVisuals.values()) {
+        disposeSharedCombatPlanetVisual(visual);
+      }
+      planetVisuals.clear();
+
+      for (const trail of trailVisuals.values()) {
+        disposeSharedCombatPlanetTrailVisual(trail);
+      }
+      trailVisuals.clear();
+
+      sunGeometry.dispose();
+      glowGeometry.dispose();
+      warpGeometry.dispose();
+      neutronStarJetGeometry.dispose();
+      planetGeometry.dispose();
+    },
   });
   const cacheSpriteAssets = createCacheSpriteAssets(hostElement.ownerDocument);
   const cacheVisuals = new Map<number, CacheVisual>();
@@ -641,49 +573,16 @@ export const createLocalViewportVisualResources = ({
     blending: AdditiveBlending,
   });
 
-  const cannonStemGeometry = new CylinderGeometry(1, 1, 1, 16).rotateZ(
-    -Math.PI / 2,
-  );
-  const cannonBreechGeometry = new BoxGeometry(1, 1, 1);
-  const cannonBarrelGeometry = new CylinderGeometry(1, 1, 1, 20).rotateZ(
-    -Math.PI / 2,
-  );
-  const cannonBarrelBandGeometry = new CylinderGeometry(1, 1, 1, 20).rotateZ(
-    -Math.PI / 2,
-  );
-  const cannonMuzzleGeometry = new CylinderGeometry(1, 1, 1, 22).rotateZ(
-    -Math.PI / 2,
-  );
-  const cannonFlashGeometry = new SphereGeometry(1, 18, 12);
-
-  const cannonStemMesh = new Mesh(cannonStemGeometry, cannonMetalMaterial);
-  cannonStemMesh.renderOrder = 14;
-  const cannonBreechMesh = new Mesh(cannonBreechGeometry, cannonMetalMaterial);
-  cannonBreechMesh.renderOrder = 15;
-  const cannonBarrelMesh = new Mesh(cannonBarrelGeometry, cannonMetalMaterial);
-  cannonBarrelMesh.renderOrder = 16;
-  const cannonBarrelBandMesh = new Mesh(
-    cannonBarrelBandGeometry,
-    cannonAccentMaterial,
-  );
-  cannonBarrelBandMesh.renderOrder = 17;
-  const cannonMuzzleMesh = new Mesh(cannonMuzzleGeometry, cannonAccentMaterial);
-  cannonMuzzleMesh.renderOrder = 18;
-  const cannonFlashMesh = new Mesh(cannonFlashGeometry, cannonFlashMaterial);
-  cannonFlashMesh.renderOrder = 20;
-  cannonFlashMesh.visible = false;
-  const cannonGroup = new Group();
-  cannonGroup.visible = false;
-  cannonGroup.position.z = 6;
-  cannonGroup.add(
-    cannonStemMesh,
-    cannonBreechMesh,
-    cannonBarrelMesh,
-    cannonBarrelBandMesh,
-    cannonMuzzleMesh,
-    cannonFlashMesh,
-  );
-  scene.add(cannonGroup);
+  const { disposables: cannonDisposables, visual: cannonVisual } =
+    createSharedCombatCannonVisual({
+      accentMaterial: cannonAccentMaterial,
+      flashMaterial: cannonFlashMaterial,
+      metalMaterial: cannonMetalMaterial,
+      scene,
+      setAccentColor: (value: string) => {
+        cannonAccentTint.value.set(value);
+      },
+    });
   const cannonFireState = {
     flashStartSec: -Infinity,
     lastAmmo: {
@@ -732,17 +631,7 @@ export const createLocalViewportVisualResources = ({
 
   registerDisposables(
     disposables,
-    sunGeometry,
-    glowGeometry,
-    warpGeometry,
-    neutronStarJetGeometry,
-    planetGeometry,
-    cannonStemGeometry,
-    cannonBreechGeometry,
-    cannonBarrelGeometry,
-    cannonBarrelBandGeometry,
-    cannonMuzzleGeometry,
-    cannonFlashGeometry,
+    cannonDisposables,
     cannonMetalMaterial,
     cannonAccentMaterial,
     cannonFlashMaterial,
@@ -759,16 +648,8 @@ export const createLocalViewportVisualResources = ({
     boostBurstVisual,
     cacheSpriteAssets,
     cacheVisuals,
-    cannonAccentTint,
-    cannonBarrelBandMesh,
-    cannonBarrelMesh,
-    cannonBreechMesh,
     cannonFireState,
-    cannonFlashMaterial,
-    cannonFlashMesh,
-    cannonGroup,
-    cannonMuzzleMesh,
-    cannonStemMesh,
+    cannonVisual,
     boundaryDebrisVisual,
     debrisVisual,
     gravityPulseVisual,
@@ -778,6 +659,14 @@ export const createLocalViewportVisualResources = ({
     lockRingMesh,
     lockRingProgressUniform,
     lockRingTimeUniform,
+    createNeutronStarVisual,
+    createPlanetVisual,
+    createSunVisual,
+    createTrailVisual,
+    disposeNeutronStarVisual: disposeSharedCombatNeutronStarVisual,
+    disposePlanetVisual: disposeSharedCombatPlanetVisual,
+    disposeSunVisual: disposeSharedCombatSunVisual,
+    disposeTrailVisual: disposeSharedCombatPlanetTrailVisual,
     planetVisuals,
     renderedCacheKeysById,
     reticleDotMesh,

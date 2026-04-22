@@ -125,6 +125,16 @@ export interface SharedCombatCannonPresentation {
   z: number;
 }
 
+export interface SharedCombatAimedCannonPresentation
+  extends Omit<SharedCombatCannonPresentation, "aimAngle"> {
+  aimTarget: Vec2;
+}
+
+export interface SharedCombatImmediateShieldFeedbackState {
+  aimDir: Vec2;
+  startedAtSec: number;
+}
+
 export const hideSharedCombatGravityPulseVisual = (
   visual: SharedCombatGravityPulseVisual,
 ) => {
@@ -198,6 +208,38 @@ export const updateSharedCombatGravityPulseVisual = ({
   visual.coreMaterial.opacity = fade * (0.28 + (1 - progress) * 0.3);
   visual.ringMaterial.opacity = fade * 0.96;
   visual.echoMaterial.opacity = fade * 0.56;
+};
+
+export const syncSharedCombatGravityPulsePresentation = ({
+  durationSec,
+  nowSec,
+  pulse,
+  visibleWorldHeight,
+  visual,
+  z,
+}: {
+  durationSec: number;
+  nowSec: number;
+  pulse: SharedCombatGravityPulseState | null;
+  visibleWorldHeight: number;
+  visual: SharedCombatGravityPulseVisual | null;
+  z: SharedCombatGravityPulseDepths;
+}): SharedCombatGravityPulseState | null => {
+  if (visual === null) {
+    return pulse;
+  }
+
+  const nextPulse =
+    pulse !== null && nowSec - pulse.startedAtSec > durationSec ? null : pulse;
+  updateSharedCombatGravityPulseVisual({
+    durationSec,
+    nowSec,
+    pulse: nextPulse,
+    visibleWorldHeight,
+    visual,
+    z,
+  });
+  return nextPulse;
 };
 
 export const getSharedCombatShieldHitReact = ({
@@ -296,6 +338,168 @@ export const syncSharedCombatShieldVisual = ({
   visual.crestOpacityUniform.value = state.crestOpacity;
 };
 
+export const syncSharedCombatPlayerShieldPresentation = ({
+  active,
+  activeAimDir,
+  bursts,
+  immediateFeedback = null,
+  immediateFeedbackDurationSec = 0,
+  nowSec,
+  planet,
+  shieldRadius,
+  visual,
+}: {
+  active: boolean;
+  activeAimDir: Vec2 | null;
+  bursts: readonly SharedCombatShieldImpactBurst[];
+  immediateFeedback?: SharedCombatImmediateShieldFeedbackState | null;
+  immediateFeedbackDurationSec?: number;
+  nowSec: number;
+  planet: {
+    id: number;
+    pos: Vec2;
+    shieldLoad: number;
+    shieldMaxLoad: number;
+  } | null;
+  shieldRadius: number;
+  visual: SharedCombatShieldVisual | null;
+}): SharedCombatImmediateShieldFeedbackState | null => {
+  if (visual === null) {
+    return immediateFeedback;
+  }
+
+  if (planet === null) {
+    syncSharedCombatShieldVisual({
+      state: null,
+      visual,
+    });
+    return immediateFeedback;
+  }
+
+  let nextImmediateFeedback = immediateFeedback;
+  if (active) {
+    nextImmediateFeedback = null;
+  }
+
+  const immediateShieldAgeSec =
+    nextImmediateFeedback === null
+      ? Number.POSITIVE_INFINITY
+      : nowSec - nextImmediateFeedback.startedAtSec;
+  const immediateShieldVisible =
+    nextImmediateFeedback !== null &&
+    immediateShieldAgeSec >= 0 &&
+    immediateShieldAgeSec <= immediateFeedbackDurationSec;
+
+  if (!active && !immediateShieldVisible) {
+    syncSharedCombatShieldVisual({
+      state: null,
+      visual,
+    });
+    if (
+      nextImmediateFeedback !== null &&
+      immediateShieldAgeSec > immediateFeedbackDurationSec
+    ) {
+      nextImmediateFeedback = null;
+    }
+    return nextImmediateFeedback;
+  }
+
+  const shieldAimDir = active
+    ? activeAimDir
+    : (nextImmediateFeedback?.aimDir ?? null);
+  if (shieldAimDir === null) {
+    syncSharedCombatShieldVisual({
+      state: null,
+      visual,
+    });
+    return nextImmediateFeedback;
+  }
+
+  const shieldLoadRatio =
+    planet.shieldMaxLoad > 0
+      ? clamp(planet.shieldLoad / planet.shieldMaxLoad, 0, 1)
+      : 0;
+  const pulse = 1 + Math.sin(nowSec * 8.2) * 0.035;
+  const shieldAngle = Math.atan2(shieldAimDir.y, shieldAimDir.x);
+
+  if (active) {
+    const shieldHitReact = getSharedCombatShieldHitReact({
+      bursts,
+      nowSec,
+      planetId: planet.id,
+      shieldRadius,
+    });
+    syncSharedCombatShieldVisual({
+      state: {
+        arcOpacity: clamp(
+          0.16 +
+            shieldLoadRatio * 0.3 +
+            Math.sin(nowSec * 7.6) * 0.05 +
+            shieldHitReact.arcBoost,
+          0,
+          1,
+        ),
+        center: add(planet.pos, shieldHitReact.offset),
+        crestOpacity: clamp(
+          0.16 +
+            shieldLoadRatio * 0.36 +
+            Math.sin(nowSec * 10.8) * 0.06 +
+            shieldHitReact.arcBoost * 0.88,
+          0,
+          1,
+        ),
+        glowOpacity: clamp(
+          0.05 +
+            shieldLoadRatio * 0.11 +
+            Math.sin(nowSec * 9.4) * 0.03 +
+            shieldHitReact.glowBoost,
+          0,
+          1,
+        ),
+        panelOpacity: clamp(
+          0.18 +
+            shieldLoadRatio * 0.42 +
+            Math.sin(nowSec * 9.8) * 0.05 +
+            shieldHitReact.arcBoost * 0.84,
+          0,
+          1,
+        ),
+        radius: shieldRadius * pulse * shieldHitReact.scale,
+        rotation: shieldAngle + shieldHitReact.rotation,
+        z: 0,
+      },
+      visual,
+    });
+    return nextImmediateFeedback;
+  }
+
+  const immediateShieldFade =
+    1 -
+    clamp(
+      immediateShieldAgeSec / Math.max(immediateFeedbackDurationSec, 1e-6),
+      0,
+      1,
+    );
+  syncSharedCombatShieldVisual({
+    state: {
+      arcOpacity: clamp(0.14 + immediateShieldFade * 0.34, 0, 1),
+      center: planet.pos,
+      crestOpacity: clamp(0.1 + immediateShieldFade * 0.3, 0, 1),
+      glowOpacity: clamp(
+        0.04 + immediateShieldFade * 0.18 + Math.sin(nowSec * 10.2) * 0.02,
+        0,
+        1,
+      ),
+      panelOpacity: clamp(0.12 + immediateShieldFade * 0.28, 0, 1),
+      radius: shieldRadius * pulse * (1 + immediateShieldFade * 0.06),
+      rotation: shieldAngle,
+      z: 0,
+    },
+    visual,
+  });
+  return nextImmediateFeedback;
+};
+
 export const getSharedCombatLockRingScale = ({
   baseRadius,
   locked,
@@ -373,9 +577,7 @@ export const syncSharedCombatCannonVisual = ({
   visual: SharedCombatCannonVisual;
 }) => {
   if (!state.visible) {
-    visual.group.visible = false;
-    visual.flashMesh.visible = false;
-    visual.flashMaterial.opacity = 0;
+    hideSharedCombatCannonVisual(visual);
     return;
   }
 
@@ -465,6 +667,54 @@ export const syncSharedCombatCannonVisual = ({
   visual.flashMaterial.color.set(state.flashAccent);
   visual.flashMesh.position.set(barrelEnd + flashLength * 0.26, 0, 0);
   visual.flashMesh.scale.set(flashLength, flashWidth, flashWidth);
+};
+
+export const hideSharedCombatCannonVisual = (
+  visual: SharedCombatCannonVisual,
+) => {
+  visual.group.visible = false;
+  visual.flashMesh.visible = false;
+  visual.flashMaterial.opacity = 0;
+};
+
+export const syncSharedCombatPlayerWeaponPresentation = ({
+  cannon,
+  cannonVisual,
+  lockRing,
+  lockRingVisual,
+}: {
+  cannon: SharedCombatAimedCannonPresentation | null;
+  cannonVisual: SharedCombatCannonVisual | null;
+  lockRing: SharedCombatLockRingPresentation | null;
+  lockRingVisual: SharedCombatLockRingVisual | null;
+}) => {
+  if (cannonVisual !== null) {
+    if (cannon === null || !cannon.visible) {
+      hideSharedCombatCannonVisual(cannonVisual);
+    } else {
+      syncSharedCombatCannonVisual({
+        state: {
+          ...cannon,
+          aimAngle: Math.atan2(
+            cannon.aimTarget.y - cannon.position.y,
+            cannon.aimTarget.x - cannon.position.x,
+          ),
+        },
+        visual: cannonVisual,
+      });
+    }
+  }
+
+  if (lockRingVisual !== null) {
+    if (cannon === null || !cannon.visible || lockRing === null) {
+      hideSharedCombatLockRingVisual(lockRingVisual);
+    } else {
+      syncSharedCombatLockRingVisual({
+        state: lockRing,
+        visual: lockRingVisual,
+      });
+    }
+  }
 };
 
 export const hideSharedCombatImpactBurstVisual = (

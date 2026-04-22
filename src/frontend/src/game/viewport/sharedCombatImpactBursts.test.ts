@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { SharedCombatImpactBurstVisual } from "./sharedCombatSceneResources";
 import {
   pruneSharedCombatImpactBursts,
+  styleSharedCombatImpactBurstVisual,
   syncSharedCombatImpactBurstPool,
 } from "./sharedCombatImpactBursts";
 
@@ -17,8 +18,24 @@ const createMockVector = () => ({
 });
 
 const createMockColor = () => ({
+  copy(value: { getHexString?: () => string; value?: string }) {
+    this.value =
+      "getHexString" in value && typeof value.getHexString === "function"
+        ? `#${value.getHexString()}`
+        : (value.value ?? "");
+    return this;
+  },
+  lerp(value: { getHexString?: () => string; value?: string }, alpha: number) {
+    const nextValue =
+      "getHexString" in value && typeof value.getHexString === "function"
+        ? `#${value.getHexString()}`
+        : (value.value ?? "");
+    this.value = `${this.value}|${nextValue}|${alpha}`;
+    return this;
+  },
   set(value: string) {
     this.value = value;
+    return this;
   },
   value: "",
 });
@@ -104,5 +121,44 @@ describe("syncSharedCombatImpactBurstPool", () => {
     ).toBe("#44ccff");
     expect(visuals[1]!.glowMesh.visible).toBe(false);
     expect(visuals[1]!.glowMaterial.opacity).toBe(0);
+  });
+});
+
+describe("styleSharedCombatImpactBurstVisual", () => {
+  it("applies the shared sandbox-style tinting for impact bursts", () => {
+    const visual = createMockImpactBurstVisual();
+
+    styleSharedCombatImpactBurstVisual({
+      absorbedByShield: false,
+      burstColor: "#44ccff",
+      visual,
+    });
+
+    expect(
+      (visual.glowMaterial.color as unknown as { value: string }).value,
+    ).toContain("#");
+    expect(
+      (visual.ringMaterial.color as unknown as { value: string }).value,
+    ).toContain("#");
+    expect(
+      (visual.coreMaterial.color as unknown as { value: string }).value,
+    ).toContain("#fff5dd");
+  });
+
+  it("switches shield-absorbed bursts to the shared shield color treatment", () => {
+    const visual = createMockImpactBurstVisual();
+
+    styleSharedCombatImpactBurstVisual({
+      absorbedByShield: true,
+      burstColor: "#ff7733",
+      visual,
+    });
+
+    expect(
+      (visual.glowMaterial.color as unknown as { value: string }).value,
+    ).not.toContain("#ff7733");
+    expect(
+      (visual.ringMaterial.color as unknown as { value: string }).value,
+    ).not.toContain("#ff7733");
   });
 });
