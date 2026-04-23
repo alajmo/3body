@@ -10,7 +10,7 @@ import {
   InstancedMesh,
   Matrix4,
   MeshBasicMaterial,
-  MeshBasicNodeMaterial,
+  type MeshBasicNodeMaterial,
   PlaneGeometry,
   Quaternion,
   SphereGeometry,
@@ -23,6 +23,7 @@ import {
   type RocketMeshSilhouette,
 } from "../rocketMeshSilhouette";
 import { ROCKET_RENDER_INSTANCE_LIMITS } from "../rocketVisibility";
+import { getViewportBudgetedCount } from "./renderQuality";
 
 const ROCKET_TRAIL_DURATION_SEC = 0.18;
 const ROCKET_TRAIL_SAMPLE_DISTANCE = 18;
@@ -87,9 +88,6 @@ export interface SharedCombatRocketTrailState {
   rocketKind: RocketKind;
   samples: SharedCombatRocketTrailSample[];
 }
-
-const getBudgetedCount = (maxCount: number, budget: number): number =>
-  budget <= 0 ? 0 : Math.max(1, Math.round(maxCount * budget));
 
 const createHiddenInstanceMatrix = () =>
   new Matrix4().compose(
@@ -296,7 +294,7 @@ export const getSharedCombatRocketTrailInstanceLimits = (
   };
 };
 
-export const pruneSharedCombatRocketTrailStates = ({
+const pruneSharedCombatRocketTrailStates = ({
   maxSamples,
   nowSec,
   trailsById,
@@ -640,7 +638,7 @@ export const syncSharedCombatRocketPools = <
     const renderFlameScale = pool.flameScale;
     const previousCount = pool.activeCount;
     const previousTrailCount = pool.trailActiveCount;
-    const trailCapacity = getBudgetedCount(
+    const trailCapacity = getViewportBudgetedCount(
       pool.trailCapacity,
       rocketTrailBudget,
     );

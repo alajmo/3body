@@ -1,16 +1,13 @@
-import type {
-  CombatSandboxPlanet,
-  CombatSandboxState,
-} from "../combatSandbox";
 import type { Group, Mesh } from "three/webgpu";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { UpdateLocalViewportCombatSceneParams } from "./localViewportCombatScene";
+import type { CombatSandboxPlanet, CombatSandboxState } from "../combatSandbox";
+import type { UpdateLocalViewportRuntimeSharedSceneParams as UpdateLocalViewportCombatSceneParams } from "./localViewportRuntimeAdapter";
 
 const localCombatSceneMocks = vi.hoisted(() => ({
   buildLocalViewportFrameBundle: vi.fn(),
   getCannonWorldLayout: vi.fn(),
   getLocalSandboxLockProgress: vi.fn(),
-  syncSharedCombatScene: vi.fn(),
+  updateSharedCombatViewport: vi.fn(),
 }));
 
 vi.mock("../rocketVisibility", () => ({
@@ -27,18 +24,21 @@ vi.mock("./localSandboxSimulation", async () => {
 });
 
 vi.mock("./localViewportFrameAdapter", () => ({
-  buildLocalViewportFrameBundle: localCombatSceneMocks.buildLocalViewportFrameBundle,
+  buildLocalViewportFrameBundle:
+    localCombatSceneMocks.buildLocalViewportFrameBundle,
 }));
 
-vi.mock("./sharedCombatSceneSync", async () => {
-  const actual = await vi.importActual("./sharedCombatSceneSync");
+vi.mock("./sharedCombatViewport", async () => {
+  const actual = await vi.importActual("./sharedCombatViewport");
   return {
     ...actual,
-    syncSharedCombatScene: localCombatSceneMocks.syncSharedCombatScene,
+    updateSharedCombatViewport:
+      localCombatSceneMocks.updateSharedCombatViewport,
   };
 });
 
-import { updateLocalViewportCombatScene } from "./localViewportCombatScene";
+import { updateLocalViewportRuntimeSharedScene as updateLocalViewportCombatScene } from "./localViewportRuntimeAdapter";
+import { createLocalViewportSceneState } from "./localViewportSceneState";
 
 const createPlanet = (
   overrides: Partial<CombatSandboxPlanet> = {},
@@ -122,11 +122,29 @@ const createState = () => {
 const createParams = (): UpdateLocalViewportCombatSceneParams => {
   const { currentState, playerPlanet, renderState, targetPlanet } =
     createState();
+  const blackHoleSwallowTracker = {
+    previousCachesById: new Map(),
+    previousNeutronStarsById: new Map(),
+    previousPlanetAliveById: new Map(),
+    previousRocketsById: new Map(),
+    previousSunsById: new Map(),
+    previousSunSwallowedAtById: new Map(),
+  };
+  const sceneState = createLocalViewportSceneState({
+    blackHoleSwallowTracker,
+    cacheVisuals: new Map(),
+    maps: {
+      neutronStarVisuals: new Map(),
+      planetVisuals: new Map(),
+      sunVisuals: new Map(),
+    },
+    renderedCacheKeysById: new Map(),
+    weaponKinds: ["heavy", "light", "seeker"],
+  });
 
   return {
     activeBlackHoleSwallowEffects: [],
     activeBoostBursts: [],
-    activeCacheIds: new Set<number>(),
     activeGravityPulse: null,
     activePlanetExplosions: [],
     background: {
@@ -137,22 +155,16 @@ const createParams = (): UpdateLocalViewportCombatSceneParams => {
     },
     blackHoleGroup: {} as Group,
     blackHoleRing: {} as Mesh,
-    blackHoleSwallowTracker: {
-      previousCachesById: new Map(),
-      previousNeutronStarsById: new Map(),
-      previousPlanetAliveById: new Map(),
-      previousRocketsById: new Map(),
-      previousSunsById: new Map(),
-      previousSunSwallowedAtById: new Map(),
-    },
     boostBurstParticlesPerBurst: 32,
-    boostBurstVisual: null as unknown as UpdateLocalViewportCombatSceneParams["boostBurstVisual"],
+    boostBurstVisual:
+      null as unknown as UpdateLocalViewportCombatSceneParams["boostBurstVisual"],
     cacheBadgeScale: 1,
     cacheSpriteAssets: {
-      badgeMaterials: {} as UpdateLocalViewportCombatSceneParams["cacheSpriteAssets"]["badgeMaterials"],
-      iconMaterials: {} as UpdateLocalViewportCombatSceneParams["cacheSpriteAssets"]["iconMaterials"],
+      badgeMaterials:
+        {} as UpdateLocalViewportCombatSceneParams["cacheSpriteAssets"]["badgeMaterials"],
+      iconMaterials:
+        {} as UpdateLocalViewportCombatSceneParams["cacheSpriteAssets"]["iconMaterials"],
     },
-    cacheVisuals: new Map(),
     cameraState: {
       visibleWorldHeight: 900,
     },
@@ -164,22 +176,22 @@ const createParams = (): UpdateLocalViewportCombatSceneParams => {
         seeker: 3,
       },
     },
-    cannonVisual: null as unknown as UpdateLocalViewportCombatSceneParams["cannonVisual"],
+    cannonVisual:
+      null as unknown as UpdateLocalViewportCombatSceneParams["cannonVisual"],
     controlsEnabled: true,
     createCacheVisual: vi.fn(),
     createNeutronStarVisual: vi.fn(),
     createPlanetVisual: vi.fn(),
     createSunVisual: vi.fn(),
-    createTrailVisual: vi.fn(),
     currentState,
     disposeCacheVisual: vi.fn(),
     disposeNeutronStarVisual: vi.fn(),
     disposePlanetVisual: vi.fn(),
     disposeSunVisual: vi.fn(),
-    disposeTrailVisual: vi.fn(),
     getCacheIconKey: vi.fn(),
     gravityPulseDurationSec: 0.95,
-    gravityPulseVisual: null as unknown as UpdateLocalViewportCombatSceneParams["gravityPulseVisual"],
+    gravityPulseVisual:
+      null as unknown as UpdateLocalViewportCombatSceneParams["gravityPulseVisual"],
     hostElement: {
       clientHeight: 450,
     } as HTMLDivElement,
@@ -189,11 +201,6 @@ const createParams = (): UpdateLocalViewportCombatSceneParams => {
     inputState: {
       aimWorld: { x: 50, y: 60 },
       selectedRocketKind: "seeker",
-    },
-    launchBurstsByKind: {
-      heavy: [],
-      light: [],
-      seeker: [],
     },
     lockRingVisual: {
       lockedUniform: { value: 0 },
@@ -218,27 +225,25 @@ const createParams = (): UpdateLocalViewportCombatSceneParams => {
       rocketTrailBudget: 0.7,
     } as UpdateLocalViewportCombatSceneParams["renderQuality"],
     renderState,
-    renderedCacheKeysById: new Map(),
     rocketLaunchBurstPools: {
-      heavy: {} as UpdateLocalViewportCombatSceneParams["rocketLaunchBurstPools"]["heavy"],
-      light: {} as UpdateLocalViewportCombatSceneParams["rocketLaunchBurstPools"]["light"],
-      seeker: {} as UpdateLocalViewportCombatSceneParams["rocketLaunchBurstPools"]["seeker"],
+      heavy:
+        {} as UpdateLocalViewportCombatSceneParams["rocketLaunchBurstPools"]["heavy"],
+      light:
+        {} as UpdateLocalViewportCombatSceneParams["rocketLaunchBurstPools"]["light"],
+      seeker:
+        {} as UpdateLocalViewportCombatSceneParams["rocketLaunchBurstPools"]["seeker"],
     },
     rocketPools: {
       heavy: {} as UpdateLocalViewportCombatSceneParams["rocketPools"]["heavy"],
       light: {} as UpdateLocalViewportCombatSceneParams["rocketPools"]["light"],
-      seeker: {} as UpdateLocalViewportCombatSceneParams["rocketPools"]["seeker"],
-    },
-    rocketTrailStates: new Map(),
-    rocketsByKind: {
-      heavy: [],
-      light: [],
-      seeker: [],
+      seeker:
+        {} as UpdateLocalViewportCombatSceneParams["rocketPools"]["seeker"],
     },
     scene: {
       add: vi.fn(),
       remove: vi.fn(),
     },
+    sceneState,
     shieldVisual: {
       arcOpacityUniform: { value: 0 },
       crestOpacityUniform: { value: 0 },
@@ -246,10 +251,6 @@ const createParams = (): UpdateLocalViewportCombatSceneParams => {
       group: {} as Group,
       panelOpacityUniform: { value: 0 },
     },
-    sunVisuals: new Map(),
-    neutronStarVisuals: new Map(),
-    planetVisuals: new Map(),
-    trailVisuals: new Map(),
     updateCacheVisualBadge: vi.fn(),
     weaponKinds: ["heavy", "light", "seeker"],
   };
@@ -346,7 +347,7 @@ describe("updateLocalViewportCombatScene", () => {
         },
       },
     });
-    localCombatSceneMocks.syncSharedCombatScene.mockReturnValue({
+    localCombatSceneMocks.updateSharedCombatViewport.mockReturnValue({
       gravityPulse: null,
       shieldImmediateFeedback: null,
     });
@@ -382,13 +383,47 @@ describe("updateLocalViewportCombatScene", () => {
         }),
       }),
     );
-    expect(localCombatSceneMocks.syncSharedCombatScene).toHaveBeenCalledWith(
+    expect(
+      localCombatSceneMocks.updateSharedCombatViewport,
+    ).toHaveBeenCalledWith(
       expect.objectContaining({
         background: params.background,
-        viewport: expect.objectContaining({
-          nowSec: 2,
-        }),
       }),
     );
+  });
+
+  it("keeps sandbox impact bursts on the sandbox elapsed clock", () => {
+    const params = createParams();
+    const targetPlanet = params.renderPlanetsById.get(7);
+    if (targetPlanet === undefined) {
+      throw new Error("missing test target planet");
+    }
+    const impactBurst = {
+      absorbedByShield: false,
+      color: "#ffcc66",
+      id: 501,
+      normal: { x: -1, y: 0 },
+      planetId: targetPlanet.id,
+      rocketKind: "light",
+      sourceKind: "rocket",
+      startedAtSec: 1.25,
+      startedAtTick: 40,
+      ttlUntilTick: 60,
+    } as const;
+    params.renderState.impactBursts = [impactBurst];
+
+    updateLocalViewportCombatScene(params);
+
+    const buildArgs =
+      localCombatSceneMocks.buildLocalViewportFrameBundle.mock.calls[0]?.[0];
+    expect(buildArgs?.transient.impactBursts.nowSec).toBe(
+      params.renderState.elapsedSec,
+    );
+    expect(buildArgs?.transient.impactBursts.nowSec).not.toBe(
+      params.background.nowSec,
+    );
+    expect(
+      buildArgs?.transient.impactBursts.resolveBurst(impactBurst)?.startedAtSec,
+    ).toBe(impactBurst.startedAtSec);
   });
 });

@@ -6,7 +6,6 @@ import type {
 } from "@3body/shared";
 import { getSunVisualProfile, ROOM_CAPACITY, SHIELD_SPEC } from "@3body/shared";
 import {
-  attribute,
   color,
   dot,
   float,
@@ -35,17 +34,8 @@ import {
 } from "three/webgpu";
 import type { CombatSandboxState } from "../combatSandbox";
 import { getRuntimeTuningDocument } from "../runtimeTuning";
-import {
-  type CacheIconKey,
-  type CacheVisual,
-  createCacheSpriteAssets,
-  disposeCacheSpriteAssets,
-} from "./cacheVisuals";
-import {
-  createSharedCombatBoostBurstVisual,
-  type SharedCombatBoostWakeMaterialResult,
-} from "./sharedCombatBoostVisuals";
-import { createSharedCombatCannonVisual } from "./sharedCombatCannonVisual";
+import type { CacheVisual } from "./cacheVisuals";
+import type { SharedCombatBoostWakeMaterialResult } from "./sharedCombatBoostVisuals";
 import {
   createSharedCombatNeutronStarVisual,
   createSharedCombatSunVisual,
@@ -55,25 +45,12 @@ import {
   type SharedCombatSunVisual as SunVisual,
 } from "./sharedCombatCelestialVisuals";
 import {
-  createSharedCombatLaunchBurstPools,
-  type SharedCombatLaunchBurstPoolVisual as RocketLaunchBurstPoolVisual,
-} from "./sharedCombatLaunchBurstPools";
-import {
-  createSharedCombatPlanetTrailVisual,
-  disposeSharedCombatPlanetTrailVisual,
-  type SharedCombatPlanetTrailVisual as TrailVisual,
-} from "./sharedCombatPlanetTrails";
-import {
   createSharedCombatPlanetVisual,
   disposeSharedCombatPlanetVisual,
   type SharedCombatPlanetVisual as PlanetVisual,
 } from "./sharedCombatPlanetVisuals";
-import {
-  createSharedCombatRocketPools,
-  type SharedCombatRocketPoolVisual as RocketPoolVisual,
-  type SharedCombatRocketRenderProfile as RocketRenderProfile,
-} from "./sharedCombatRocketPools";
-import { createSharedCombatSceneResources } from "./sharedCombatSceneResources";
+import type { SharedCombatRocketRenderProfile as RocketRenderProfile } from "./sharedCombatRocketPools";
+import { createSharedCombatViewportVisualResources } from "./sharedCombatViewportResources";
 
 interface PlanetExplosionChunkVisual {
   baseScale: Vector3;
@@ -164,6 +141,7 @@ export const createLocalViewportVisualResources = ({
   createSunGlowMaterial,
   createWarpMaterial,
   boostBurstSampleLimit,
+  blackHoleSwallowCapacity,
   debrisSampleLimit,
   disposeCacheVisual,
   disposables,
@@ -174,10 +152,8 @@ export const createLocalViewportVisualResources = ({
   impactBurstLimit,
   initialState,
   launchBurstInstanceLimits,
-  maxTrailSamples,
   planetExplosionLimit,
   planetGeometrySegments,
-  planetTrailPointSize,
   rocketTrailInstanceLimits,
   rocketWeaponKinds,
   rocketRenderProfiles,
@@ -261,6 +237,7 @@ export const createLocalViewportVisualResources = ({
     seed: number,
   ) => MeshBasicNodeMaterial;
   boostBurstSampleLimit: number;
+  blackHoleSwallowCapacity: number;
   debrisSampleLimit: number;
   disposeCacheVisual: (visual: CacheVisual) => void;
   disposables: Array<{ dispose: () => void }>;
@@ -271,10 +248,8 @@ export const createLocalViewportVisualResources = ({
   impactBurstLimit: number;
   initialState: CombatSandboxState;
   launchBurstInstanceLimits: Record<RocketKind, number>;
-  maxTrailSamples: number;
   planetExplosionLimit: number;
   planetGeometrySegments: number;
-  planetTrailPointSize: number;
   rocketTrailInstanceLimits: Record<RocketKind, number>;
   rocketWeaponKinds: readonly RocketKind[];
   rocketRenderProfiles: Record<RocketKind, RocketRenderProfile>;
@@ -390,31 +365,6 @@ export const createLocalViewportVisualResources = ({
     ]),
   );
 
-  const createTrailVisual = ({
-    planet,
-  }: {
-    planet: { archetype: ArchetypeId };
-  }) => {
-    const archetypeVisuals =
-      getRuntimeTuningDocument().visuals.planets.archetypes[planet.archetype];
-    const trail = createSharedCombatPlanetTrailVisual({
-      dynamicDraw: true,
-      maxTrailSamples,
-      trailColor: archetypeVisuals.trailColor,
-      trailPointSize: planetTrailPointSize,
-      z: -1,
-    });
-    scene.add(trail.points);
-    return trail;
-  };
-  const trailVisuals = new Map<number, TrailVisual>(
-    initialState.planets.map((planet) => [
-      planet.id,
-      createTrailVisual({
-        planet,
-      }),
-    ]),
-  );
   disposables.push({
     dispose: () => {
       for (const visual of sunVisuals.values()) {
@@ -432,11 +382,6 @@ export const createLocalViewportVisualResources = ({
       }
       planetVisuals.clear();
 
-      for (const trail of trailVisuals.values()) {
-        disposeSharedCombatPlanetTrailVisual(trail);
-      }
-      trailVisuals.clear();
-
       sunGeometry.dispose();
       glowGeometry.dispose();
       warpGeometry.dispose();
@@ -444,94 +389,6 @@ export const createLocalViewportVisualResources = ({
       planetGeometry.dispose();
     },
   });
-  const cacheSpriteAssets = createCacheSpriteAssets(hostElement.ownerDocument);
-  const cacheVisuals = new Map<number, CacheVisual>();
-  const renderedCacheKeysById = new Map<number, CacheIconKey>();
-  disposables.push({
-    dispose: () => {
-      for (const visual of cacheVisuals.values()) {
-        scene.remove(visual.group);
-        disposeCacheVisual(visual);
-      }
-      cacheVisuals.clear();
-      renderedCacheKeysById.clear();
-      disposeCacheSpriteAssets(cacheSpriteAssets);
-    },
-  });
-
-  const { disposables: sharedRocketPoolDisposables, rocketPools } =
-    createSharedCombatRocketPools({
-      createRocketFlameMaterial,
-      createRocketMaterial,
-      createRocketTrailMaterial,
-      rocketKinds: rocketWeaponKinds,
-      rocketRenderProfiles,
-      rocketTrailInstanceLimits,
-      scene,
-    });
-  disposables.push(...sharedRocketPoolDisposables);
-  const {
-    disposables: sharedLaunchBurstDisposables,
-    launchBurstPools: rocketLaunchBurstPools,
-  } = createSharedCombatLaunchBurstPools({
-    createRocketLaunchBurstMaterial,
-    launchBurstInstanceLimits,
-    rocketKinds: rocketWeaponKinds,
-    rocketRenderProfiles,
-    scene,
-  });
-  disposables.push(...sharedLaunchBurstDisposables);
-
-  const {
-    blackHoleGroup,
-    blackHoleRing,
-    boundaryDebrisVisual,
-    debrisVisual,
-    disposables: sharedSceneDisposables,
-    gravityPulseVisual,
-    impactBurstVisuals,
-    inactivePlanetExplosionVisuals,
-    lockRingLockedUniform,
-    lockRingMesh,
-    lockRingProgressUniform,
-    lockRingTimeUniform,
-    shieldArcOpacityUniform,
-    shieldPanelOpacityUniform,
-    shieldCrestOpacityUniform,
-    shieldGlowOpacityUniform,
-    shieldGroup,
-  } = createSharedCombatSceneResources({
-    boundaryAsteroidMeshNamePrefix: "boundaryAsteroid",
-    createBlackHoleCoreMaterial,
-    createBlackHoleLensMaterial,
-    createBlackHoleRingMaterial,
-    createPlanetExplosionVisual,
-    debrisSampleLimit,
-    getBlackHoleCoreRadius,
-    getBlackHoleLensRadius,
-    getBlackHoleRingRadius,
-    gravityPulseColors: {
-      core: `#${tintColor(wildcardColor, 0.02, 0.08, 0.18).getHexString()}`,
-      echo: `#${tintColor(wildcardColor, -0.05, 0.06, 0.1).getHexString()}`,
-      ring: `#${tintColor(wildcardColor, -0.02, 0.18, 0.16).getHexString()}`,
-    },
-    gravityPulseRenderOrders: {
-      core: 12.4,
-      echo: 12.7,
-      ring: 12.9,
-    },
-    impactBurstLimit,
-    lockRingAccentColor: weaponColors.seeker.accent,
-    planetExplosionLimit,
-    scene,
-    shieldArcDeg: SHIELD_SPEC.arcDeg,
-    shieldColor,
-    shieldGlowOuterScale,
-    shieldInnerScale,
-    shieldOuterScale,
-  });
-  registerDisposables(disposables, sharedSceneDisposables);
-
   const cannonMetalMaterial = new MeshBasicNodeMaterial();
   {
     const lightDir = normalize(vec3(-0.35, 0.82, 0.45));
@@ -573,16 +430,85 @@ export const createLocalViewportVisualResources = ({
     blending: AdditiveBlending,
   });
 
-  const { disposables: cannonDisposables, visual: cannonVisual } =
-    createSharedCombatCannonVisual({
+  const {
+    blackHoleGroup,
+    blackHoleRing,
+    boostBurstVisual,
+    boundaryDebrisVisual,
+    cacheSpriteAssets,
+    cacheVisuals,
+    cannonVisual,
+    debrisVisual,
+    gravityPulseVisual,
+    impactBurstVisuals,
+    inactiveBlackHoleSwallowVisuals,
+    inactivePlanetExplosionVisuals,
+    lockRingLockedUniform,
+    lockRingMesh,
+    lockRingProgressUniform,
+    lockRingTimeUniform,
+    renderedCacheKeysById,
+    rocketLaunchBurstPools,
+    rocketPools,
+    shieldArcOpacityUniform,
+    shieldPanelOpacityUniform,
+    shieldCrestOpacityUniform,
+    shieldGlowOpacityUniform,
+    shieldGroup,
+  } = createSharedCombatViewportVisualResources({
+    blackHoleSwallowCapacity,
+    boostBurstSampleLimit,
+    boostColor,
+    boundaryAsteroidMeshNamePrefix: "boundaryAsteroid",
+    cannon: {
       accentMaterial: cannonAccentMaterial,
       flashMaterial: cannonFlashMaterial,
       metalMaterial: cannonMetalMaterial,
-      scene,
       setAccentColor: (value: string) => {
         cannonAccentTint.value.set(value);
       },
-    });
+    },
+    createBlackHoleCoreMaterial,
+    createBlackHoleLensMaterial,
+    createBlackHoleRingMaterial,
+    createBoostWakeMaterial,
+    createPlanetExplosionVisual,
+    createRocketFlameMaterial,
+    createRocketLaunchBurstMaterial,
+    createRocketMaterial,
+    createRocketTrailMaterial,
+    debrisSampleLimit,
+    disposeCacheVisual,
+    disposables,
+    document: hostElement.ownerDocument,
+    getBlackHoleCoreRadius,
+    getBlackHoleLensRadius,
+    getBlackHoleRingRadius,
+    gravityPulseColors: {
+      core: `#${tintColor(wildcardColor, 0.02, 0.08, 0.18).getHexString()}`,
+      echo: `#${tintColor(wildcardColor, -0.05, 0.06, 0.1).getHexString()}`,
+      ring: `#${tintColor(wildcardColor, -0.02, 0.18, 0.16).getHexString()}`,
+    },
+    gravityPulseRenderOrders: {
+      core: 12.4,
+      echo: 12.7,
+      ring: 12.9,
+    },
+    impactBurstLimit,
+    launchBurstInstanceLimits,
+    lockRingAccentColor: weaponColors.seeker.accent,
+    planetExplosionLimit,
+    rocketKinds: rocketWeaponKinds,
+    rocketRenderProfiles,
+    rocketTrailInstanceLimits,
+    scene,
+    shieldArcDeg: SHIELD_SPEC.arcDeg,
+    shieldColor,
+    shieldGlowOuterScale,
+    shieldInnerScale,
+    shieldOuterScale,
+    wakeCount: ROOM_CAPACITY,
+  });
   const cannonFireState = {
     flashStartSec: -Infinity,
     lastAmmo: {
@@ -620,26 +546,12 @@ export const createLocalViewportVisualResources = ({
   reticleDotMesh.position.z = 7.5;
   scene.add(reticleDotMesh);
 
-  const { disposables: boostBurstDisposables, visual: boostBurstVisual } =
-    createSharedCombatBoostBurstVisual({
-      boostColor,
-      createBoostWakeMaterial,
-      sampleLimit: boostBurstSampleLimit,
-      scene,
-      wakeCount: ROOM_CAPACITY,
-    });
-
   registerDisposables(
     disposables,
-    cannonDisposables,
-    cannonMetalMaterial,
-    cannonAccentMaterial,
-    cannonFlashMaterial,
     reticleRingMesh.geometry,
     reticleRingMaterial,
     reticleDotMesh.geometry,
     reticleDotMaterial,
-    boostBurstDisposables,
   );
 
   return {
@@ -655,6 +567,7 @@ export const createLocalViewportVisualResources = ({
     gravityPulseVisual,
     impactBurstVisuals,
     inactivePlanetExplosionVisuals,
+    inactiveBlackHoleSwallowVisuals,
     lockRingLockedUniform,
     lockRingMesh,
     lockRingProgressUniform,
@@ -662,11 +575,9 @@ export const createLocalViewportVisualResources = ({
     createNeutronStarVisual,
     createPlanetVisual,
     createSunVisual,
-    createTrailVisual,
     disposeNeutronStarVisual: disposeSharedCombatNeutronStarVisual,
     disposePlanetVisual: disposeSharedCombatPlanetVisual,
     disposeSunVisual: disposeSharedCombatSunVisual,
-    disposeTrailVisual: disposeSharedCombatPlanetTrailVisual,
     planetVisuals,
     renderedCacheKeysById,
     reticleDotMesh,
@@ -680,6 +591,5 @@ export const createLocalViewportVisualResources = ({
     shieldGroup,
     sunVisuals,
     neutronStarVisuals,
-    trailVisuals,
   };
 };

@@ -10,7 +10,7 @@ import {
   type Scene,
 } from "three/webgpu";
 import {
-  getCannonWorldLayout,
+  type getCannonWorldLayout,
   getMinScreenAxisScale,
   ROCKET_MIN_SCREEN_WIDTH_PX,
 } from "../rocketVisibility";
@@ -18,6 +18,7 @@ import type {
   SharedCombatRocketPoolVisual,
   SharedCombatRocketRenderProfile,
 } from "./sharedCombatRocketPools";
+import { getViewportBudgetedCount } from "./renderQuality";
 import {
   getSharedCombatLaunchBurstDuration,
   getSharedCombatLaunchBurstLayout,
@@ -40,9 +41,6 @@ export interface SharedCombatLaunchBurstPoolVisual {
   mesh: InstancedMesh;
   scale: Vec2;
 }
-
-const getBudgetedCount = (maxCount: number, budget: number): number =>
-  budget <= 0 ? 0 : Math.max(1, Math.round(maxCount * budget));
 
 const createHiddenInstanceMatrix = () =>
   new Matrix4().compose(HIDDEN_POSITION, HIDDEN_ROTATION, HIDDEN_SCALE);
@@ -237,7 +235,10 @@ export const syncSharedCombatLaunchBurstPools = ({
       worldUnitsPerPixel,
     );
     const previousCount = pool.activeCount;
-    const visibleCapacity = getBudgetedCount(pool.capacity, launchBurstBudget);
+    const visibleCapacity = getViewportBudgetedCount(
+      pool.capacity,
+      launchBurstBudget,
+    );
     let nextCount = 0;
 
     for (const burst of burstsByKind[rocketKind]) {
@@ -278,7 +279,11 @@ export const syncSharedCombatLaunchBurstPools = ({
       }
     }
 
-    const clearedTail = hideInstancedMeshRange(pool.mesh, nextCount, previousCount);
+    const clearedTail = hideInstancedMeshRange(
+      pool.mesh,
+      nextCount,
+      previousCount,
+    );
     pool.activeCount = nextCount;
     pool.mesh.count = nextCount;
     pool.mesh.visible = nextCount > 0;

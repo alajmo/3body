@@ -336,8 +336,7 @@ const createFallingShard = ({
     FALLING_PATH_TARGET_RADIUS_RATIO[kind].highDrift,
     driftAlpha,
   );
-  const targetRadius =
-    innerRadius * rng() * maxTargetRadiusRatio;
+  const targetRadius = innerRadius * rng() * maxTargetRadiusRatio;
   const targetAngle = spawnAngle + (rng() - 0.5) * 0.7;
   const targetX = Math.cos(targetAngle) * targetRadius;
   const targetY = Math.sin(targetAngle) * targetRadius;
@@ -350,11 +349,9 @@ const createFallingShard = ({
   const headedX = dirX / dirLength + tangentX * tangentNudge;
   const headedY = dirY / dirLength + tangentY * tangentNudge;
   const headedLength = Math.hypot(headedX, headedY) || 1;
-  const speed = lerp(
-    FALLING_SHARD_SPEED[kind].min,
-    FALLING_SHARD_SPEED[kind].max,
-    rng(),
-  ) * lerp(0.82, 1.18, driftAlpha);
+  const speed =
+    lerp(FALLING_SHARD_SPEED[kind].min, FALLING_SHARD_SPEED[kind].max, rng()) *
+    lerp(0.82, 1.18, driftAlpha);
   const sizeAlpha = rng();
   const sizeRange =
     kind === "primary" ? BASE_SHARD_SCALE.primary : BASE_SHARD_SCALE.secondary;

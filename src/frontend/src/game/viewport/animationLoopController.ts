@@ -63,7 +63,9 @@ export const createViewportAnimationLoopController = ({
 
   if (IntersectionObserverCtor !== undefined) {
     intersectionObserver = new IntersectionObserverCtor((entries) => {
-      const entry = entries.find((candidate) => candidate.target === hostElement);
+      const entry = entries.find(
+        (candidate) => candidate.target === hostElement,
+      );
       if (entry === undefined) {
         return;
       }

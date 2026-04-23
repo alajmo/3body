@@ -82,6 +82,22 @@ npm run build
 
 Produces `src/frontend/dist/` (static site) and `src/backend/dist/3body-server` (compiled Bun binary, linux-x64).
 
+Run the full production build locally:
+
+```sh
+HOST=127.0.0.1 PORT=8080 DATA_DIR=.data ./src/backend/dist/3body-server
+```
+
+Then open:
+
+```text
+http://localhost:8080/
+```
+
+The Bun server serves `/ws`, `/api`, and the built frontend from
+`src/frontend/dist/`. Use `STATIC_DIR=/path/to/dist` if the frontend files live
+elsewhere.
+
 ## Deploy
 
 Starter deployment templates live in `deploy/`:

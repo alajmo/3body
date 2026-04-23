@@ -10,6 +10,7 @@ export * from "./orbitPatternCatalog";
 export * from "./orbitPatternTracks";
 export * from "./physics";
 export * from "./protocol";
+export * from "./protocolCodec";
 export * from "./rng";
 export * from "./tuning";
 export * from "./vec2";

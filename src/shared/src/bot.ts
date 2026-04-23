@@ -3,6 +3,8 @@ import {
   buildCombatAiDebugState,
   buildCombatAiPerception,
   buildCombatAiPlan,
+  type CombatAiBlackboard,
+  type CombatAiSelfState,
   chooseCombatAiIntent,
   cloneCombatAiBlackboard,
   createCombatAiBlackboard,
@@ -16,9 +18,8 @@ import {
   shouldRefreshIntent,
   shouldRefreshPerception,
   updateCombatAiExecutionState,
-  type CombatAiBlackboard,
-  type CombatAiSelfState,
 } from "./ai/index";
+import { SIM_HZ } from "./constants";
 import type {
   EntityId,
   PlanetPrivateState,
@@ -96,7 +97,7 @@ const normalizeDir = (dir: Vec2, fallback: Vec2 = DEFAULT_DIR): Vec2 => {
 
 const placeholderSelfState = (): CombatAiSelfState => ({
   tick: 0,
-  tickHz: 120,
+  tickHz: SIM_HZ,
   difficulty: "normal",
   arenaRadius: 2000,
   planetId: -1 as EntityId,

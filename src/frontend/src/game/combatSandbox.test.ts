@@ -8,8 +8,8 @@ import {
   GRAVITY_PULSE_RADIUS,
   getBlackHoleKillRadiusAtElapsedSec,
   getBlackHoleMassAtElapsedSec,
-  getPreferredLocalPlayerOrbitIndex,
   getOrbitPatternTrack,
+  getPreferredLocalPlayerOrbitIndex,
   getSeekerLockTicks,
   mulberry32,
   PLANET_HP,
@@ -1394,6 +1394,29 @@ describe("combatSandbox", () => {
         radius: 24,
       },
     ];
+    state.debris = [
+      {
+        asteroidTier: "small",
+        color: "#94a3b8",
+        id: 703,
+        kind: "debris",
+        ownerPlayerId: undefined,
+        pos: { x: 640, y: 320 },
+        radius: 18,
+        ttlUntilTick: state.tick + 120,
+        vel: { x: 0, y: 0 },
+      },
+      {
+        color: "#facc15",
+        id: 704,
+        kind: "debris",
+        ownerPlayerId: undefined,
+        pos: { x: 640, y: 352 },
+        radius: 8,
+        ttlUntilTick: state.tick + 120,
+        vel: { x: 0, y: 0 },
+      },
+    ];
 
     const next = stepSandbox(
       state,
@@ -1414,6 +1437,12 @@ describe("combatSandbox", () => {
     expect(
       Math.hypot(next.caches[0]!.vel.x, next.caches[0]!.vel.y),
     ).toBeGreaterThan(0);
+    const pushedAsteroid = next.debris.find((piece) => piece.id === 703)!;
+    const cosmeticShard = next.debris.find((piece) => piece.id === 704)!;
+    expect(
+      Math.hypot(pushedAsteroid.vel.x, pushedAsteroid.vel.y),
+    ).toBeGreaterThan(0);
+    expect(cosmeticShard.vel).toEqual({ x: 0, y: 0 });
   });
 
   it("reaches adjacent planets at default sandbox orbit spacing", () => {

@@ -1,24 +1,20 @@
 import type { Vec2 } from "@3body/shared";
-import { clamp, lerp } from "@3body/shared";
-import type { Mesh, OrthographicCamera, WebGPURenderer } from "three/webgpu";
+import { lerp } from "@3body/shared";
+import type { Mesh, OrthographicCamera } from "three/webgpu";
 import type { CombatSandboxPlanet } from "../combatSandbox";
 import { getRuntimeTuningDocument } from "../runtimeTuning";
-import { syncBackdropFrame } from "../showcaseVisuals";
 import { getBlackHoleVisualRadius } from "./blackHoleVisuals";
 import { getViewportCameraShakeOffsets } from "./cameraShake";
 import {
-  getViewportHostSize,
-  syncViewportRendererSize,
-  type ViewportRendererSizeState,
-} from "./rendererSizing";
+  applyViewportCameraFrame,
+  type ViewportCameraFrameState,
+} from "./viewportCameraFrame";
 
-export const LOCAL_VIEWPORT_CAMERA_DISTANCE = 100;
 const CAMERA_FOLLOW_LERP = 6.4;
 const CAMERA_ZOOM_LERP = 5.2;
-const BACKDROP_OVERDRAW = 1.35;
 const STAGE_CAMERA_PADDING = 520;
 
-export interface LocalViewportCameraState {
+export interface LocalViewportCameraState extends ViewportCameraFrameState {
   centerX: number;
   centerY: number;
   renderCenterX: number;
@@ -128,86 +124,6 @@ export const createLocalViewportCameraState = ({
   visibleWorldHeight: getLocalViewportCameraHeights(cameraWorldHeightOverride)
     .followWorldHeight,
 });
-
-export const applyLocalViewportCameraFrame = ({
-  backdropMesh,
-  camera,
-  cameraState,
-  hostElement,
-}: {
-  backdropMesh: Mesh | null;
-  camera: OrthographicCamera | null;
-  cameraState: LocalViewportCameraState;
-  hostElement: HTMLDivElement;
-}) => {
-  if (camera === null) {
-    return;
-  }
-
-  const { aspect } = getViewportHostSize(hostElement);
-  const worldHalfHeight = cameraState.visibleWorldHeight / 2;
-  const worldHalfWidth = worldHalfHeight * aspect;
-  const renderCenterX = cameraState.centerX + cameraState.shakeOffsetX;
-  const renderCenterY = cameraState.centerY + cameraState.shakeOffsetY;
-
-  cameraState.renderCenterX = renderCenterX;
-  cameraState.renderCenterY = renderCenterY;
-
-  camera.left = -worldHalfWidth;
-  camera.right = worldHalfWidth;
-  camera.top = worldHalfHeight;
-  camera.bottom = -worldHalfHeight;
-  camera.position.set(
-    renderCenterX,
-    renderCenterY,
-    LOCAL_VIEWPORT_CAMERA_DISTANCE,
-  );
-  camera.lookAt(renderCenterX, renderCenterY, 0);
-  camera.updateProjectionMatrix();
-
-  syncBackdropFrame({
-    backdropMesh,
-    centerX: renderCenterX,
-    centerY: renderCenterY,
-    height: worldHalfHeight * 2 * BACKDROP_OVERDRAW,
-    width: worldHalfWidth * 2 * BACKDROP_OVERDRAW,
-  });
-};
-
-export const resizeLocalViewportCamera = ({
-  backdropMesh,
-  camera,
-  cameraState,
-  hostElement,
-  maxPixelRatio,
-  renderer,
-  sizeState,
-}: {
-  backdropMesh: Mesh | null;
-  camera: OrthographicCamera | null;
-  cameraState: LocalViewportCameraState;
-  hostElement: HTMLDivElement;
-  maxPixelRatio: number;
-  renderer: WebGPURenderer | null;
-  sizeState: ViewportRendererSizeState;
-}) => {
-  if (renderer === null || camera === null) {
-    return;
-  }
-
-  syncViewportRendererSize({
-    hostElement,
-    maxPixelRatio,
-    renderer,
-    sizeState,
-  });
-  applyLocalViewportCameraFrame({
-    backdropMesh,
-    camera,
-    cameraState,
-    hostElement,
-  });
-};
 
 export const getLocalViewportCameraFrame = ({
   aspect = 1,
@@ -320,7 +236,7 @@ export const syncLocalViewportCameraToFrame = ({
   cameraState.visibleWorldHeight = frame.visibleWorldHeight;
   cameraState.centerX = frame.centerX;
   cameraState.centerY = frame.centerY;
-  applyLocalViewportCameraFrame({
+  applyViewportCameraFrame({
     backdropMesh,
     camera,
     cameraState,
@@ -380,36 +296,10 @@ export const updateLocalViewportCamera = ({
   cameraState.shakeOffsetX = shakeOffsets.x;
   cameraState.shakeOffsetY = shakeOffsets.y;
 
-  applyLocalViewportCameraFrame({
+  applyViewportCameraFrame({
     backdropMesh,
     camera,
     cameraState,
     hostElement,
   });
-};
-
-export const screenToLocalViewportWorld = ({
-  cameraState,
-  clientX,
-  clientY,
-  renderer,
-}: {
-  cameraState: LocalViewportCameraState;
-  clientX: number;
-  clientY: number;
-  renderer: WebGPURenderer;
-}): Vec2 => {
-  const rect = renderer.domElement.getBoundingClientRect();
-  const width = Math.max(1, rect.width);
-  const height = Math.max(1, rect.height);
-  const aspect = width / height;
-  const halfHeight = cameraState.visibleWorldHeight / 2;
-  const halfWidth = halfHeight * aspect;
-  const normalizedX = clamp((clientX - rect.left) / width, 0, 1);
-  const normalizedY = clamp((clientY - rect.top) / height, 0, 1);
-
-  return {
-    x: cameraState.renderCenterX + lerp(-halfWidth, halfWidth, normalizedX),
-    y: cameraState.renderCenterY + lerp(halfHeight, -halfHeight, normalizedY),
-  };
 };

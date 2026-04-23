@@ -2,7 +2,7 @@ import type { RocketKind } from "@3body/shared";
 import { add, clamp, scale, type Vec2 } from "@3body/shared";
 import {
   getCannonMuzzleDistanceFromLayout,
-  getCannonWorldLayout,
+  type getCannonWorldLayout,
   getLaunchBurstHandoffDuration,
   getRocketVisibleDistanceThreshold,
 } from "../rocketVisibility";
@@ -18,14 +18,14 @@ export interface SharedCombatLaunchBurstState {
   startedAtSec: number;
 }
 
-export interface SharedCombatLaunchBurstLayout {
+interface SharedCombatLaunchBurstLayout {
   angle: number;
   center: Vec2;
   length: number;
   width: number;
 }
 
-export interface SharedCombatLaunchBurstScale {
+interface SharedCombatLaunchBurstScale {
   x: number;
   y: number;
 }

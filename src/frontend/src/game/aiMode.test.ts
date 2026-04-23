@@ -3,26 +3,27 @@ import {
   BLACK_HOLE_SPEC,
   BOOST_SPEC,
   buildCombatAiPlan,
+  type CombatBotContext,
   cloneGameTuningDocument,
-  DEFAULT_GAME_TUNING,
-  len,
-  PLANET_HP,
-  ROCKET_SPECS,
-  SHIELD_SPEC,
   createCombatBotMemory,
+  DEFAULT_GAME_TUNING,
   decideCombatAi,
   decideCombatBot,
-  type CombatBotContext,
+  len,
+  PLANET_HP,
   type PlanetPrivateState,
   type PlanetPublic,
+  ROCKET_SPECS,
+  SHIELD_SPEC,
+  SIM_HZ,
   type World,
 } from "@3body/shared";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  type CombatSandboxStepInput,
   createSandboxState,
   getSandboxDebugSnapshot,
   stepSandbox,
-  type CombatSandboxStepInput,
 } from "./combatSandbox";
 import { DEFAULT_ORBIT_PRESET } from "./orbitPresets";
 import {
@@ -107,7 +108,7 @@ const createContext = ({
 }): CombatBotContext => ({
   difficulty,
   tick,
-  tickHz: 120,
+  tickHz: SIM_HZ,
   world,
   self,
   privateState,
@@ -131,60 +132,52 @@ beforeEach(() => {
 });
 
 describe("AI mode", () => {
-  it(
-    "uses boost in the opening window of an observer sandbox match",
-    () => {
-      let state = createSandboxState(DEFAULT_ORBIT_PRESET, {
-        botDifficulty: "hard",
-        participantCount: 7,
-        playerBehavior: "bot",
-      });
+  it("uses boost in the opening window of an observer sandbox match", () => {
+    let state = createSandboxState(DEFAULT_ORBIT_PRESET, {
+      botDifficulty: "hard",
+      participantCount: 7,
+      playerBehavior: "bot",
+    });
 
-      for (let step = 0; step < 6 * 120; step += 1) {
-        state = stepSandbox(state, createStepInput(), DISABLED_BLACK_HOLE_SPEC);
+    for (let step = 0; step < 6 * SIM_HZ; step += 1) {
+      state = stepSandbox(state, createStepInput(), DISABLED_BLACK_HOLE_SPEC);
+    }
+
+    const boostedControllers = [
+      ...(state.playerBot === null ? [] : [state.player]),
+      ...state.bots,
+    ].filter((controller) => controller.lastBoostTick !== null);
+    const firstBoostTick = boostedControllers.reduce(
+      (best, controller) =>
+        controller.lastBoostTick === null
+          ? best
+          : Math.min(best, controller.lastBoostTick),
+      Number.POSITIVE_INFINITY,
+    );
+
+    expect(boostedControllers.length).toBeGreaterThanOrEqual(2);
+    expect(firstBoostTick).toBeLessThanOrEqual(2 * SIM_HZ);
+  }, 15_000);
+
+  it("opens with offensive rocket pressure in the observer sandbox exchange", () => {
+    let state = createSandboxState(DEFAULT_ORBIT_PRESET, {
+      botDifficulty: "hard",
+      participantCount: 7,
+      playerBehavior: "bot",
+    });
+    const observedKinds = new Set<string>();
+
+    for (let step = 0; step < 12 * SIM_HZ; step += 1) {
+      state = stepSandbox(state, createStepInput(), DISABLED_BLACK_HOLE_SPEC);
+      for (const burst of state.launchBursts) {
+        observedKinds.add(burst.rocketKind);
       }
+    }
 
-      const boostedControllers = [
-        ...(state.playerBot === null ? [] : [state.player]),
-        ...state.bots,
-      ].filter((controller) => controller.lastBoostTick !== null);
-      const firstBoostTick = boostedControllers.reduce(
-        (best, controller) =>
-          controller.lastBoostTick === null
-            ? best
-            : Math.min(best, controller.lastBoostTick),
-        Number.POSITIVE_INFINITY,
-      );
-
-      expect(boostedControllers.length).toBeGreaterThanOrEqual(2);
-      expect(firstBoostTick).toBeLessThanOrEqual(240);
-    },
-    15_000,
-  );
-
-  it(
-    "opens with offensive rocket pressure in the observer sandbox exchange",
-    () => {
-      let state = createSandboxState(DEFAULT_ORBIT_PRESET, {
-        botDifficulty: "hard",
-        participantCount: 7,
-        playerBehavior: "bot",
-      });
-      const observedKinds = new Set<string>();
-
-      for (let step = 0; step < 12 * 120; step += 1) {
-        state = stepSandbox(state, createStepInput(), DISABLED_BLACK_HOLE_SPEC);
-        for (const burst of state.launchBursts) {
-          observedKinds.add(burst.rocketKind);
-        }
-      }
-
-      expect(Array.from(observedKinds)).toEqual(
-        expect.arrayContaining(["heavy"]),
-      );
-    },
-    15_000,
-  );
+    expect(Array.from(observedKinds)).toEqual(
+      expect.arrayContaining(["heavy"]),
+    );
+  }, 15_000);
 
   it("holds fire when a target is actively shielding the lane", () => {
     const self = createPlanet({

@@ -8,14 +8,13 @@ const {
   networkGamePageSpy,
   notFoundPageSpy,
   viewportSoakPageSpy,
-} =
-  vi.hoisted(() => ({
-    editPageSpy: vi.fn(),
-    gamePageSpy: vi.fn(),
-    networkGamePageSpy: vi.fn(),
-    notFoundPageSpy: vi.fn(),
-    viewportSoakPageSpy: vi.fn(),
-  }));
+} = vi.hoisted(() => ({
+  editPageSpy: vi.fn(),
+  gamePageSpy: vi.fn(),
+  networkGamePageSpy: vi.fn(),
+  notFoundPageSpy: vi.fn(),
+  viewportSoakPageSpy: vi.fn(),
+}));
 
 vi.mock("./EditPage", () => ({
   EditPage: () => {

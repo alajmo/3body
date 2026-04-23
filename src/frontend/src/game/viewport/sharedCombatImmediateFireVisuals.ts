@@ -34,9 +34,7 @@ export interface SharedCombatImmediateFireFeedbackVisual {
   ghost: SharedCombatRocketVisual;
 }
 
-export const hideSharedCombatRocketVisual = (
-  visual: SharedCombatRocketVisual,
-) => {
+const hideSharedCombatRocketVisual = (visual: SharedCombatRocketVisual) => {
   visual.group.visible = false;
 };
 

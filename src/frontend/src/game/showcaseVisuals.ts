@@ -395,7 +395,9 @@ export const createBackdropMaterial = (
     const dustTime = time.mul(0.01 + background.dustDrift * 0.012);
     const dustUv = surfaceUv
       .add(
-        parallaxOffsetUniform.mul(getBackdropParallaxOffset(DUST_CAMERA_FOLLOW)),
+        parallaxOffsetUniform.mul(
+          getBackdropParallaxOffset(DUST_CAMERA_FOLLOW),
+        ),
       )
       .add(vec2(dustTime.mul(-0.18), dustTime.mul(0.08)));
     const dustScale = 1 / Math.max(background.dustSize, 0.35);
@@ -454,7 +456,9 @@ export const createBackdropMaterial = (
   if (background.nebulaEnabled && background.nebulaStrength > 0) {
     const nebulaTime = time.mul(0.012 + background.nebulaDrift * 0.01);
     const nebulaUv = surfaceUv.add(
-      parallaxOffsetUniform.mul(getBackdropParallaxOffset(NEBULA_CAMERA_FOLLOW)),
+      parallaxOffsetUniform.mul(
+        getBackdropParallaxOffset(NEBULA_CAMERA_FOLLOW),
+      ),
     );
     const nebulaNoise = mx_fractal_noise_float(
       vec3(
@@ -571,7 +575,9 @@ export const createBackdropMaterial = (
       .mul(eventPulse)
       .mul(0.42);
     const burstPulseA = pow(
-      sin(pulseTime.add(eventField.mul(5.6)).add(0.7)).mul(0.5).add(0.5),
+      sin(pulseTime.add(eventField.mul(5.6)).add(0.7))
+        .mul(0.5)
+        .add(0.5),
       float(6.4),
     )
       .mul(0.92)
@@ -616,15 +622,15 @@ export const createBackdropMaterial = (
       .mul(burstPulseA)
       .mul(0.6)
       .add(burstHaloB.mul(burstPulseB).mul(0.52));
-    const burstRingMask = burstRingA.mul(burstPulseA).add(
-      burstRingB.mul(burstPulseB),
-    );
+    const burstRingMask = burstRingA
+      .mul(burstPulseA)
+      .add(burstRingB.mul(burstPulseB));
     const burstCoreMask = burstCoreA
       .mul(burstPulseA.mul(1.2).add(0.2))
       .add(burstCoreB.mul(burstPulseB.mul(1.15).add(0.16)));
-    const burstFlareMask = burstFlareA.mul(burstPulseA).add(
-      burstFlareB.mul(burstPulseB),
-    );
+    const burstFlareMask = burstFlareA
+      .mul(burstPulseA)
+      .add(burstFlareB.mul(burstPulseB));
     const burstCoolColor = color(
       toHexString(tintColor(background.glowColor, 0.08, 0.12, 0.34)),
     );

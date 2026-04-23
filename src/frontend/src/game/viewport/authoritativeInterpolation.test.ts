@@ -243,6 +243,50 @@ describe("authoritativeInterpolation", () => {
     });
   });
 
+  it("uses snapshot velocities for curved planet interpolation when tick span is available", () => {
+    const previousWorld = buildWorld({
+      blackHole: undefined,
+      caches: [],
+      debris: [],
+      neutronStars: [],
+      planets: [
+        buildPlanet({
+          pos: { x: 0, y: 0 },
+          vel: { x: 10, y: 0 },
+        }),
+      ],
+      rockets: [],
+      suns: [],
+    });
+    const currentWorld = buildWorld({
+      blackHole: undefined,
+      caches: [],
+      debris: [],
+      neutronStars: [],
+      planets: [
+        buildPlanet({
+          pos: { x: 10, y: 0 },
+          vel: { x: -10, y: 0 },
+        }),
+      ],
+      rockets: [],
+      suns: [],
+    });
+    const cache = createAuthoritativeInterpolationCache();
+
+    const interpolatedWorld = syncAuthoritativeInterpolatedWorld(
+      cache,
+      previousWorld,
+      currentWorld,
+      0.5,
+      1,
+    );
+
+    expect(interpolatedWorld.planets[0]!.pos.x).toBeCloseTo(7.5);
+    expect(interpolatedWorld.planets[0]!.pos.y).toBeCloseTo(0);
+    expect(interpolatedWorld.planets[0]!.vel).toEqual({ x: 0, y: 0 });
+  });
+
   it("supports bounded extrapolation past the latest snapshot without freezing", () => {
     const previousWorld = buildWorld({
       planets: [

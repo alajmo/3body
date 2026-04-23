@@ -1,4 +1,3 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   clamp,
   DEFAULT_VIEWPORT_DISPLAY_MODE,
@@ -8,11 +7,12 @@ import {
   type RocketKind,
   type ViewportDisplayMode,
 } from "@3body/shared";
+import { type CSSProperties, useEffect, useRef, useState } from "react";
 import type {
   GameViewportController,
+  GameViewportHudState,
   GameViewportMinimapEntityKind,
   GameViewportMinimapState,
-  GameViewportHudState,
 } from "./game/viewportHud";
 
 const KILL_FEED_DURATION_SEC = 4;
@@ -32,6 +32,40 @@ const formatFps = (fps: number): string =>
 
 const formatFrameTime = (frameTimeMs: number): string =>
   frameTimeMs > 0 ? `${frameTimeMs.toFixed(1)} ms` : "-- ms";
+
+export const formatHudDiagnosticsReport = (
+  hud: GameViewportHudState,
+  capturedAtIso = new Date().toISOString(),
+): string =>
+  JSON.stringify(
+    {
+      capturedAt: capturedAtIso,
+      connection: hud.connection,
+      debugItems: Object.fromEntries(
+        hud.debugItems.map((item) => [item.label, item.value]),
+      ),
+      profilingEnabled: hud.profilingEnabled,
+    },
+    null,
+    2,
+  );
+
+const copyTextToClipboard = (text: string): void => {
+  if (navigator.clipboard?.writeText !== undefined) {
+    void navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textArea = document.createElement("textarea");
+  textArea.value = text;
+  textArea.setAttribute("readonly", "");
+  textArea.style.position = "fixed";
+  textArea.style.left = "-9999px";
+  document.body.appendChild(textArea);
+  textArea.select();
+  document.execCommand("copy");
+  document.body.removeChild(textArea);
+};
 
 const COMPASS_POINTS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"] as const;
 
@@ -615,6 +649,7 @@ export function CombatHud({
   const hasSideDock = showPerformanceTools;
   const hasBottomShortcuts = hud.sandboxControlsEnabled;
   const showSandboxPlaybackControls = hud.connection.state === "local";
+  const hasCopyableStats = hud.profilingEnabled && hud.debugItems.length > 0;
   const connectionDetail = [
     hud.connection.label.trim(),
     hud.connection.extrapolating ? "Extrapolating" : null,
@@ -624,11 +659,7 @@ export function CombatHud({
   const showConnectionDetail =
     connectionDetail.length > 0 &&
     connectionDetail.toLowerCase() !== hud.connection.state.toLowerCase();
-  const timerStatus = hud.blackHoleActive
-    ? "Overtime active"
-    : hud.blackHoleWarning
-      ? `Black Hole in ${formatClock(hud.blackHoleRemainingSec)}`
-      : null;
+  const timerStatus = hud.blackHoleActive ? "Overtime active" : null;
   const showWorldMinimap =
     showPerformanceTools &&
     (hud.minimap.arenaRadius > 0 || hud.minimap.entities.length > 0);
@@ -712,6 +743,16 @@ export function CombatHud({
                   >
                     Reset Stats
                   </button>
+                  <button
+                    type="button"
+                    className="hud-button hud-button--compact"
+                    disabled={!hasCopyableStats}
+                    onClick={() =>
+                      copyTextToClipboard(formatHudDiagnosticsReport(hud))
+                    }
+                  >
+                    Copy Stats
+                  </button>
                 </div>
               </div>
               {hud.profilingEnabled && hud.debugItems.length > 0 ? (
@@ -790,9 +831,7 @@ export function CombatHud({
             className={`match-timer__status${
               hud.blackHoleActive
                 ? " match-timer__status--active"
-                : hud.blackHoleWarning
-                  ? " match-timer__status--warning"
-                  : ""
+                : ""
             }`}
           >
             {timerStatus}

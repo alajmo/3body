@@ -81,6 +81,7 @@ describe("syncSharedCombatScene", () => {
         transient: {
           impactBursts: {
             bursts: [],
+            nowSec: 1,
             resolveBurst: () => null,
           },
           nowSec: 1,
@@ -143,14 +144,10 @@ describe("syncSharedCombatScene", () => {
           syncVisual: vi.fn(),
         },
         planet: {
-          createTrail: vi.fn(),
           createVisual: vi.fn(),
-          disposeTrail: vi.fn(),
           disposeVisual: vi.fn(),
-          planetTrails: new Map(),
           planetVisuals: new Map(),
           planets: [],
-          syncTrail: vi.fn(),
           syncVisual: vi.fn(),
         },
         sun: {
@@ -171,11 +168,12 @@ describe("syncSharedCombatScene", () => {
       },
       viewport: {
         bundle: viewportBundle,
-        nowSec: 4,
       },
     });
 
-    expect(sceneSyncMocks.syncSharedCombatBackgroundParallax).toHaveBeenCalled();
+    expect(
+      sceneSyncMocks.syncSharedCombatBackgroundParallax,
+    ).toHaveBeenCalled();
     expect(
       sceneSyncMocks.syncSharedCombatDynamicSunPresentation,
     ).toHaveBeenCalled();
@@ -187,7 +185,6 @@ describe("syncSharedCombatScene", () => {
     ).toHaveBeenCalled();
     expect(sceneSyncMocks.syncSharedCombatViewportFrame).toHaveBeenCalledWith({
       frame: viewportBundle.frame,
-      nowSec: 4,
       resources: viewportBundle.resources,
     });
 

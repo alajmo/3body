@@ -9,8 +9,7 @@ import {
 } from "@3body/shared";
 import type { CombatPlayerRuntime, QueuedCombatMessage } from "./room";
 
-interface BotContext
-  extends Omit<CombatBotContext, "difficulty" | "runtime"> {
+interface BotContext extends Omit<CombatBotContext, "difficulty" | "runtime"> {
   runtime: CombatPlayerRuntime;
 }
 

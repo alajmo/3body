@@ -3,9 +3,7 @@ import { ROCKET_SPECS } from "@3body/shared";
 import { describe, expect, it } from "vitest";
 import { deriveAuthoritativeRocketLaunchBursts } from "./authoritativeRocketLaunchBursts";
 
-const buildPlanet = (
-  overrides: Partial<PlanetPublic> = {},
-): PlanetPublic => ({
+const buildPlanet = (overrides: Partial<PlanetPublic> = {}): PlanetPublic => ({
   archetype: "terra",
   debuffs: {},
   hp: 100,

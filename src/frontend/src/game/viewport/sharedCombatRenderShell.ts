@@ -11,11 +11,11 @@ import {
   createShowcaseDisplayPipeline,
   type ShowcaseDisplayMode,
 } from "../showcaseDisplayMode";
-import {
-  type LocalViewportCameraState,
-  applyLocalViewportCameraFrame,
-} from "./localViewportCamera";
 import { registerViewportDisposables } from "./disposables";
+import {
+  applyViewportCameraFrame,
+  type ViewportCameraFrameState,
+} from "./viewportCameraFrame";
 
 interface StarfieldLayerVisual {
   geometry: { dispose: () => void };
@@ -42,7 +42,7 @@ interface StarfieldLayerConfig {
   z: number;
 }
 
-export const createLocalViewportRenderShell = ({
+export const createSharedCombatRenderShell = ({
   camera,
   cameraState,
   createBackgroundLayer,
@@ -55,7 +55,7 @@ export const createLocalViewportRenderShell = ({
   backgroundLayers,
 }: {
   camera: OrthographicCamera;
-  cameraState: LocalViewportCameraState;
+  cameraState: ViewportCameraFrameState;
   backdropMaterial: MeshBasicNodeMaterial;
   createBackgroundLayer: (config: StarfieldLayerConfig) => StarfieldLayerVisual;
   currentSsaaLevel: number;
@@ -74,7 +74,7 @@ export const createLocalViewportRenderShell = ({
   backdropMesh.frustumCulled = false;
   backdropMesh.renderOrder = -40;
   scene.add(backdropMesh);
-  applyLocalViewportCameraFrame({
+  applyViewportCameraFrame({
     backdropMesh,
     camera,
     cameraState,

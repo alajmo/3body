@@ -12,7 +12,7 @@ import {
   type RocketKind,
   type SunVisualProfile,
 } from "@3body/shared";
-import type { Sun, Vec2 } from "@3body/shared";
+import type { Vec2 } from "@3body/shared";
 import { attribute, color, renderOutput, uniform } from "three/tsl";
 import { bloom } from "three/addons/tsl/display/BloomNode.js";
 import { rgbShift } from "three/addons/tsl/display/RGBShiftNode.js";
@@ -258,9 +258,7 @@ const getRocketKindFromItemId = (
 const isAbilityPreviewItem = (
   itemId: EditorPreviewViewportItemId,
 ): itemId is "shield" | "boost" | "gravityPulse" =>
-  itemId === "shield" ||
-  itemId === "boost" ||
-  itemId === "gravityPulse";
+  itemId === "shield" || itemId === "boost" || itemId === "gravityPulse";
 
 const usesPlayerCameraStageView = (itemId: EditorPreviewViewportItemId) =>
   isAbilityPreviewItem(itemId) ||

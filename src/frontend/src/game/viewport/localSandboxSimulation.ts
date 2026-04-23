@@ -1,17 +1,13 @@
 import type { Vec2 } from "@3body/shared";
 import {
-  absorbSunsIntoNeutronStars,
   clamp,
   FIXED_STEP_SEC,
   GRAVITY_PULSE_RADIUS,
-  getSunVisualProfile,
   getSeekerLockTicks,
+  getSunVisualProfile,
   normalize as normalizeVec2,
   PLANET_HP,
   ROOM_CAPACITY,
-  stepBody,
-  stepNeutronStars,
-  stepSuns,
 } from "@3body/shared";
 import type {
   CombatPlanetDeathReason,
@@ -22,11 +18,14 @@ import type {
 import {
   createInterpolatedSandboxState,
   createSandboxInterpolationCache,
-  getActiveCombatSuns,
   stepSandbox,
   syncInterpolatedSandboxState,
 } from "../combatSandbox";
-import { sampleRuntimeFixedPatternSunSeeds } from "../runtimeOrbitPreset";
+import {
+  findAbsorbingNeutronStar,
+  getNeutronStarAbsorptionExplosionRadius,
+} from "../neutronStarAbsorption";
+import { getRuntimeTuningDocument } from "../runtimeTuning";
 import {
   CAMERA_SHAKE_DURATION_SEC,
   getBoundaryAsteroidImpactCameraShake,
@@ -37,14 +36,9 @@ import {
   getRocketImpactScreenFlash,
   ROCKET_IMPACT_HUD_FLICKER_DURATION_SEC,
 } from "./cameraShake";
-import {
-  findAbsorbingNeutronStar,
-  getNeutronStarAbsorptionExplosionRadius,
-} from "../neutronStarAbsorption";
 import type { GameViewportInputRuntimeState } from "./localInput";
 import { createViewportPerformanceProfiler } from "./performanceProfiler";
 import { createRuntimeStatsTracker } from "./runtimeStats";
-import { getRuntimeTuningDocument } from "../runtimeTuning";
 import type { SharedCombatBoostBurstState } from "./sharedCombatBoostVisuals";
 
 const MAX_FRAME_DELTA_SEC = 0.1;
@@ -354,11 +348,11 @@ export const runLocalSandboxSimulationFrame = ({
     simulationState.previousFrameTimeSec = nowSec;
   }
 
-  const frameDeltaSec = clamp(
-    nowSec - simulationState.previousFrameTimeSec,
+  const rawFrameDeltaSec = Math.max(
     0,
-    MAX_FRAME_DELTA_SEC,
+    nowSec - simulationState.previousFrameTimeSec,
   );
+  const frameDeltaSec = clamp(rawFrameDeltaSec, 0, MAX_FRAME_DELTA_SEC);
   simulationState.previousFrameTimeSec = nowSec;
   const sampledRuntimeStats =
     simulationState.runtimeStatsTracker.sample(frameDeltaSec);
@@ -453,7 +447,7 @@ export const runLocalSandboxSimulationFrame = ({
           }),
           vel: { x: previousSun.vel.x, y: previousSun.vel.y },
         },
-        nextState.elapsedSec,
+        nowSec,
       );
     }
 
@@ -505,7 +499,7 @@ export const runLocalSandboxSimulationFrame = ({
               ? 1
               : 0.5,
           );
-          onPlanetExplosionRequested?.(planet, nextState.elapsedSec);
+          onPlanetExplosionRequested?.(planet, nowSec);
         }
         simulationState.nextKillFeedId += 1;
       }
@@ -656,6 +650,7 @@ export const runLocalSandboxSimulationFrame = ({
 
   return {
     frameDeltaSec,
+    frameGapSec: rawFrameDeltaSec,
     interpolationMs: interpolationProfilerEndMs - interpolationProfilerStartMs,
     playerPlanet:
       simulationState.renderPlanetsById.get(

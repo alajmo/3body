@@ -10,9 +10,16 @@ interface ScalarMetricSnapshot {
   max: number;
 }
 
+interface SpikeMetricSnapshot {
+  count: number;
+  lastAgeSec: number | null;
+  thresholdMs: number;
+}
+
 interface ViewportPerformanceFrameSample {
   frameCpuMs: number;
   frameDeltaSec: number;
+  frameGapSec: number;
   interpolationMs: number;
   renderCpuMs: number;
   simulationMs: number;
@@ -22,6 +29,8 @@ interface ViewportPerformanceFrameSample {
 
 export interface ViewportPerformanceSnapshot {
   frameCpu: TimedMetricSnapshot;
+  frameGap: TimedMetricSnapshot;
+  frameGapSpikes: SpikeMetricSnapshot;
   frames: number;
   interpolation: TimedMetricSnapshot;
   renderCpu: TimedMetricSnapshot;
@@ -29,6 +38,7 @@ export interface ViewportPerformanceSnapshot {
   simulation: TimedMetricSnapshot;
   steps: ScalarMetricSnapshot;
   submit: TimedMetricSnapshot;
+  submitSpikes: SpikeMetricSnapshot;
 }
 
 interface TimedMetricState {
@@ -43,6 +53,15 @@ interface ScalarMetricState {
   total: number;
 }
 
+interface SpikeMetricState {
+  count: number;
+  lastAtSec: number | null;
+  thresholdMs: number;
+}
+
+const FRAME_GAP_SPIKE_THRESHOLD_MS = 1000 / 30;
+const SUBMIT_SPIKE_THRESHOLD_MS = 20;
+
 const createTimedMetricState = (): TimedMetricState => ({
   latestMs: 0,
   maxMs: 0,
@@ -55,6 +74,12 @@ const createScalarMetricState = (): ScalarMetricState => ({
   total: 0,
 });
 
+const createSpikeMetricState = (thresholdMs: number): SpikeMetricState => ({
+  count: 0,
+  lastAtSec: null,
+  thresholdMs,
+});
+
 const recordTimedMetric = (state: TimedMetricState, valueMs: number) => {
   state.latestMs = valueMs;
   state.totalMs += valueMs;
@@ -65,6 +90,19 @@ const recordScalarMetric = (state: ScalarMetricState, value: number) => {
   state.latest = value;
   state.total += value;
   state.max = Math.max(state.max, value);
+};
+
+const recordSpikeMetric = (
+  state: SpikeMetricState,
+  valueMs: number,
+  atSec: number,
+) => {
+  if (valueMs <= state.thresholdMs) {
+    return;
+  }
+
+  state.count += 1;
+  state.lastAtSec = atSec;
 };
 
 const getTimedMetricSnapshot = (
@@ -85,6 +123,18 @@ const getScalarMetricSnapshot = (
   max: state.max,
 });
 
+const getSpikeMetricSnapshot = (
+  state: SpikeMetricState,
+  sampledDurationSec: number,
+): SpikeMetricSnapshot => ({
+  count: state.count,
+  lastAgeSec:
+    state.lastAtSec === null
+      ? null
+      : Math.max(0, sampledDurationSec - state.lastAtSec),
+  thresholdMs: state.thresholdMs,
+});
+
 export const createViewportPerformanceProfiler = (): {
   getSnapshot: () => ViewportPerformanceSnapshot;
   record: (sample: ViewportPerformanceFrameSample) => void;
@@ -93,16 +143,24 @@ export const createViewportPerformanceProfiler = (): {
   let frames = 0;
   let sampledDurationSec = 0;
   let frameCpu = createTimedMetricState();
+  let frameGap = createTimedMetricState();
   let simulation = createTimedMetricState();
   let interpolation = createTimedMetricState();
   let renderCpu = createTimedMetricState();
   let submit = createTimedMetricState();
   let steps = createScalarMetricState();
+  let frameGapSpikes = createSpikeMetricState(FRAME_GAP_SPIKE_THRESHOLD_MS);
+  let submitSpikes = createSpikeMetricState(SUBMIT_SPIKE_THRESHOLD_MS);
 
   return {
     getSnapshot() {
       return {
         frameCpu: getTimedMetricSnapshot(frameCpu, frames),
+        frameGap: getTimedMetricSnapshot(frameGap, frames),
+        frameGapSpikes: getSpikeMetricSnapshot(
+          frameGapSpikes,
+          sampledDurationSec,
+        ),
         frames,
         interpolation: getTimedMetricSnapshot(interpolation, frames),
         renderCpu: getTimedMetricSnapshot(renderCpu, frames),
@@ -110,27 +168,35 @@ export const createViewportPerformanceProfiler = (): {
         simulation: getTimedMetricSnapshot(simulation, frames),
         steps: getScalarMetricSnapshot(steps, frames),
         submit: getTimedMetricSnapshot(submit, frames),
+        submitSpikes: getSpikeMetricSnapshot(submitSpikes, sampledDurationSec),
       };
     },
     record(sample) {
       frames += 1;
-      sampledDurationSec += sample.frameDeltaSec;
+      sampledDurationSec += sample.frameGapSec;
+      const frameGapMs = sample.frameGapSec * 1000;
       recordTimedMetric(frameCpu, sample.frameCpuMs);
+      recordTimedMetric(frameGap, frameGapMs);
       recordTimedMetric(simulation, sample.simulationMs);
       recordTimedMetric(interpolation, sample.interpolationMs);
       recordTimedMetric(renderCpu, sample.renderCpuMs);
       recordTimedMetric(submit, sample.submitMs);
       recordScalarMetric(steps, sample.stepCount);
+      recordSpikeMetric(frameGapSpikes, frameGapMs, sampledDurationSec);
+      recordSpikeMetric(submitSpikes, sample.submitMs, sampledDurationSec);
     },
     reset() {
       frames = 0;
       sampledDurationSec = 0;
       frameCpu = createTimedMetricState();
+      frameGap = createTimedMetricState();
       simulation = createTimedMetricState();
       interpolation = createTimedMetricState();
       renderCpu = createTimedMetricState();
       submit = createTimedMetricState();
       steps = createScalarMetricState();
+      frameGapSpikes = createSpikeMetricState(FRAME_GAP_SPIKE_THRESHOLD_MS);
+      submitSpikes = createSpikeMetricState(SUBMIT_SPIKE_THRESHOLD_MS);
     },
   };
 };

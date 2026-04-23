@@ -4,7 +4,7 @@ import {
   type Group,
   type Mesh,
   type MeshBasicMaterial,
-  Vector3,
+  type Vector3,
 } from "three/webgpu";
 
 const PLANET_EXPLOSION_DURATION_SEC = 1.55;
@@ -87,7 +87,7 @@ const getTintedColor = (
   return cached;
 };
 
-export const hideSharedCombatPlanetExplosionVisual = (
+const hideSharedCombatPlanetExplosionVisual = (
   visual: SharedCombatPlanetExplosionVisual,
 ) => {
   visual.group.visible = false;

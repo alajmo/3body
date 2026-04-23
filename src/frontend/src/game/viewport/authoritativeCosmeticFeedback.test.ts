@@ -162,7 +162,7 @@ describe("authoritativeCosmeticFeedback", () => {
     expect(activeLaunchBurstsByKind.light).toHaveLength(1);
   });
 
-  it("queues immediate local fire feedback without changing damage flash", () => {
+  it("queues immediate local cannon feedback without a predicted projectile", () => {
     const playerPlanet = buildPlanet({
       pos: { x: 20, y: -10 },
       radius: 18,
@@ -193,24 +193,8 @@ describe("authoritativeCosmeticFeedback", () => {
       damageFlash: 0.4,
       hudFlicker: 0.05,
     });
-    expect(burstStates.get("seeker")).toMatchObject({
-      direction: { x: 0, y: 1 },
-      origin: {
-        x: 20,
-        y: 8 + ROCKET_SPECS.seeker.radius * 1.4,
-      },
-      radius: 18,
-      startedAtSec: 12,
-    });
-    expect(ghostStates.get("seeker")).toMatchObject({
-      direction: { x: 0, y: 1 },
-      origin: {
-        x: 20,
-        y: 8 + ROCKET_SPECS.seeker.radius * 1.4,
-      },
-      startedAtSec: 12,
-      velocity: { x: 0, y: ROCKET_SPECS.seeker.speed },
-    });
+    expect(burstStates.has("seeker")).toBe(false);
+    expect(ghostStates.has("seeker")).toBe(false);
   });
 
   it("queues immediate shield feedback when the authoritative adapter dispatches q", () => {
@@ -388,6 +372,66 @@ describe("authoritativeCosmeticFeedback", () => {
     });
   });
 
+  it("places hit impact bursts on the incoming rocket side", () => {
+    const victimPlanet = buildPlanet({
+      id: 7,
+      pos: { x: 0, y: 0 },
+    });
+    const impactRocket = buildRocket({
+      id: 99,
+      pos: { x: victimPlanet.radius + ROCKET_SPECS.heavy.radius, y: 0 },
+      rocketKind: "heavy",
+    });
+    const snapshot = buildSnapshot(
+      buildWorld({
+        planets: [victimPlanet],
+        rockets: [impactRocket],
+      }),
+    );
+    const activeImpactBursts: AuthoritativeImpactBurstState[] = [];
+
+    syncAuthoritativeRecentEventFeedback({
+      activeBoostBursts: [],
+      activeImpactBursts,
+      blackHoleSource: null,
+      lastProcessedEventId: 0,
+      localAimWorld: { x: 80, y: 20 },
+      localPlayerPlanet: victimPlanet,
+      maxActiveBoostBursts: 4,
+      maxActiveImpactBursts: 16,
+      nowSec: 12,
+      queueBlackHoleSwallowEffect: () => {},
+      runtime: buildRuntime({
+        previousSnapshot: snapshot,
+        recentEvents: [
+          {
+            event: {
+              absorbedByShield: false,
+              attackerPlayerId: impactRocket.ownerId,
+              damage: 35,
+              hpAfter: 65,
+              kind: "hit",
+              rocketId: impactRocket.id,
+              rocketKind: impactRocket.rocketKind,
+              tick: 120,
+              victimPlanetId: victimPlanet.id,
+            },
+            id: 7,
+            receivedAtMs: 10_000,
+          },
+        ],
+        snapshot,
+      }),
+      screenEffects: {
+        cameraShake: 0,
+        damageFlash: 0,
+        hudFlicker: 0,
+      },
+    });
+
+    expect(activeImpactBursts[0]?.normal).toEqual({ x: 1, y: 0 });
+  });
+
   it("uses local aim as boost direction when the authoritative snapshot has no velocity delta", () => {
     const playerPlanet = buildPlanet({
       id: 11,
@@ -517,5 +561,81 @@ describe("authoritativeCosmeticFeedback", () => {
       targetPos: blackHoleSource.pos,
     });
     expect(queuedEffects[0]?.color).toEqual(expect.any(String));
+  });
+
+  it("queues a planet explosion effect when an authoritative rocket kill arrives", () => {
+    const killedPlanet = buildPlanet({
+      archetype: "ignis",
+      id: 31,
+      pos: { x: 42, y: -18 },
+      radius: 24,
+      vel: { x: 8, y: -3 },
+    });
+    const previousSnapshot = buildSnapshot(
+      buildWorld({
+        planets: [killedPlanet],
+      }),
+      { tick: 210 },
+    );
+    const queuedExplosions: Array<{
+      deathReason?: string;
+      id: number;
+      pos: { x: number; y: number };
+      radius: number;
+      vel: { x: number; y: number };
+    }> = [];
+
+    syncAuthoritativeRecentEventFeedback({
+      activeBoostBursts: [],
+      activeImpactBursts: [],
+      blackHoleSource: null,
+      lastProcessedEventId: 0,
+      localAimWorld: { x: 0, y: 0 },
+      localPlayerPlanet: null,
+      maxActiveBoostBursts: 4,
+      maxActiveImpactBursts: 16,
+      nowSec: 21,
+      queueBlackHoleSwallowEffect: () => {},
+      queuePlanetExplosionEffect: (planet) => {
+        queuedExplosions.push(planet);
+      },
+      runtime: buildRuntime({
+        previousSnapshot,
+        recentEvents: [
+          {
+            event: {
+              cause: "rocket",
+              kind: "kill",
+              killerPlayerId: "self",
+              tick: 211,
+              victimPlanetId: killedPlanet.id,
+              victimPlayerId: killedPlanet.playerId,
+            },
+            id: 10,
+            receivedAtMs: 21_000,
+          },
+        ],
+        snapshot: buildSnapshot(
+          buildWorld({
+            planets: [],
+          }),
+          { tick: 211 },
+        ),
+      }),
+      screenEffects: {
+        cameraShake: 0,
+        damageFlash: 0,
+        hudFlicker: 0,
+      },
+    });
+
+    expect(queuedExplosions).toHaveLength(1);
+    expect(queuedExplosions[0]).toMatchObject({
+      deathReason: "rocket",
+      id: killedPlanet.id,
+      pos: killedPlanet.pos,
+      radius: killedPlanet.radius,
+      vel: killedPlanet.vel,
+    });
   });
 });

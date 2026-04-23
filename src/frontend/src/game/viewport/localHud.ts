@@ -1,11 +1,11 @@
 import {
-  ARENA_RADIUS,
-  FIXED_STEP_SEC,
-  ROCKET_SPECS,
-  getShieldLoadCapacity,
   type AbilitySpec,
+  ARENA_RADIUS,
   type BlackHoleSpec,
   type BoostSpec,
+  FIXED_STEP_SEC,
+  getShieldLoadCapacity,
+  ROCKET_SPECS,
   type RocketKind,
 } from "@3body/shared";
 import type {
@@ -147,6 +147,9 @@ const formatProfilerScalar = (
 ): string =>
   `${latest.toFixed(1)} · avg ${average.toFixed(1)} · max ${max.toFixed(1)}`;
 
+const formatSpikeAge = (lastAgeSec: number | null): string =>
+  lastAgeSec === null ? "--" : `${lastAgeSec.toFixed(1)}s ago`;
+
 const weaponLabel = (rocketKind: RocketKind): string => {
   switch (rocketKind) {
     case "light":
@@ -195,6 +198,14 @@ const buildProfilerDebugItems = ({
             ),
           },
           {
+            label: "Frame Gap",
+            value: formatProfilerTiming(
+              profilerSnapshot.frameGap.latestMs,
+              profilerSnapshot.frameGap.averageMs,
+              profilerSnapshot.frameGap.maxMs,
+            ),
+          },
+          {
             label: "Sim CPU",
             value: formatProfilerTiming(
               profilerSnapshot.simulation.latestMs,
@@ -225,6 +236,18 @@ const buildProfilerDebugItems = ({
               profilerSnapshot.submit.averageMs,
               profilerSnapshot.submit.maxMs,
             ),
+          },
+          {
+            label: "Spikes",
+            value: `gap>${profilerSnapshot.frameGapSpikes.thresholdMs.toFixed(
+              0,
+            )} ${profilerSnapshot.frameGapSpikes.count} · last ${formatSpikeAge(
+              profilerSnapshot.frameGapSpikes.lastAgeSec,
+            )} · submit>${profilerSnapshot.submitSpikes.thresholdMs.toFixed(
+              0,
+            )} ${profilerSnapshot.submitSpikes.count} · last ${formatSpikeAge(
+              profilerSnapshot.submitSpikes.lastAgeSec,
+            )}`,
           },
           {
             label: "Steps / frame",

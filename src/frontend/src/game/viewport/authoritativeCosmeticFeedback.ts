@@ -7,13 +7,10 @@ import type {
   World,
 } from "@3body/shared";
 import {
-  add,
   GRAVITY_PULSE_SPEC,
   len,
   normalize as normalizeVec2,
-  ROCKET_SPECS,
   SNAPSHOT_HZ,
-  scale,
   sub,
 } from "@3body/shared";
 import type {
@@ -38,10 +35,10 @@ import type {
   SharedCombatImmediateFireBurstState,
   SharedCombatImmediateGhostRocketState,
 } from "./sharedCombatImmediateFireVisuals";
+import type { SharedCombatPlanetExplosionSource } from "./sharedCombatPlanetExplosions";
 import type { SharedCombatLaunchBurstState } from "./sharedCombatLaunchBurstVisuals";
 import type { SharedCombatImmediateShieldFeedbackState } from "./sharedCombatSupportVisuals";
 
-const AUTHORITATIVE_FIRE_ORIGIN_OFFSET_MULTIPLIER = 1.4;
 const AUTHORITATIVE_IMMEDIATE_FIRE_CAMERA_SHAKE = 0.12;
 const AUTHORITATIVE_IMMEDIATE_FIRE_HUD_FLICKER = 0.05;
 const AUTHORITATIVE_IMMEDIATE_SHIELD_HUD_FLICKER = 0.06;
@@ -138,6 +135,24 @@ const findRocketById = (
 ): World["rockets"][number] | null =>
   world?.rockets.find((rocket) => rocket.id === rocketId) ?? null;
 
+const killCauseToPlanetExplosionDeathReason = (
+  cause: Extract<SnapshotEvent, { kind: "kill" }>["cause"],
+): SharedCombatPlanetExplosionSource["deathReason"] | null => {
+  switch (cause) {
+    case "rocket":
+    case "planetCollision":
+    case "boundaryAsteroid":
+    case "boundary":
+      return cause;
+    case "sun":
+      return "sunCollision";
+    case "neutronStar":
+      return "neutronStar";
+    case "blackHole":
+      return null;
+  }
+};
+
 const estimateImpactNormal = ({
   event,
   previousWorld,
@@ -158,7 +173,7 @@ const estimateImpactNormal = ({
     findRocketById(snapshotWorld, event.rocketId) ??
     findRocketById(previousWorld, event.rocketId);
   if (impactRocket !== null) {
-    const rocketDelta = sub(victimPlanet.pos, impactRocket.pos);
+    const rocketDelta = sub(impactRocket.pos, victimPlanet.pos);
     if (len(rocketDelta) > 0.001) {
       return normalizeVec2(rocketDelta);
     }
@@ -169,7 +184,7 @@ const estimateImpactNormal = ({
       findPlanetByPlayerId(snapshotWorld, event.attackerPlayerId) ??
       findPlanetByPlayerId(previousWorld, event.attackerPlayerId);
     if (attackerPlanet !== null) {
-      const attackerDelta = sub(victimPlanet.pos, attackerPlanet.pos);
+      const attackerDelta = sub(attackerPlanet.pos, victimPlanet.pos);
       if (len(attackerDelta) > 0.001) {
         return normalizeVec2(attackerDelta);
       }
@@ -228,7 +243,7 @@ export const decayAuthoritativeFeedbackLevels = ({
   ),
 });
 
-export const queueAuthoritativeBoostBurst = ({
+const queueAuthoritativeBoostBurst = ({
   activeBursts,
   burst,
   maxActiveBursts,
@@ -262,11 +277,9 @@ export const queueAuthoritativeBoostBurst = ({
 };
 
 export const queueAuthoritativeImmediateFireFeedback = ({
-  aimDir,
   immediateFireBurstState,
   immediateGhostRocketState,
   nowSec,
-  playerPlanet,
   rocketKind,
   screenEffects,
 }: {
@@ -284,27 +297,8 @@ export const queueAuthoritativeImmediateFireFeedback = ({
   immediateCannonFlashState: ImmediateCannonFlashState;
   screenEffects: AuthoritativeFeedbackLevels;
 } => {
-  const rocketSpec = ROCKET_SPECS[rocketKind];
-  const fireOrigin = add(
-    playerPlanet.pos,
-    scale(
-      aimDir,
-      playerPlanet.radius +
-        rocketSpec.radius * AUTHORITATIVE_FIRE_ORIGIN_OFFSET_MULTIPLIER,
-    ),
-  );
-  immediateFireBurstState.set(rocketKind, {
-    direction: { x: aimDir.x, y: aimDir.y },
-    origin: fireOrigin,
-    radius: playerPlanet.radius,
-    startedAtSec: nowSec,
-  });
-  immediateGhostRocketState.set(rocketKind, {
-    direction: { x: aimDir.x, y: aimDir.y },
-    origin: fireOrigin,
-    startedAtSec: nowSec,
-    velocity: scale(aimDir, rocketSpec.speed),
-  });
+  immediateFireBurstState.delete(rocketKind);
+  immediateGhostRocketState.delete(rocketKind);
 
   return {
     immediateCannonFlashState: {
@@ -492,6 +486,7 @@ export const syncAuthoritativeRecentEventFeedback = ({
   maxActiveImpactBursts,
   nowSec,
   queueBlackHoleSwallowEffect,
+  queuePlanetExplosionEffect,
   runtime,
   screenEffects,
 }: {
@@ -506,6 +501,9 @@ export const syncAuthoritativeRecentEventFeedback = ({
   nowSec: number;
   queueBlackHoleSwallowEffect: (
     args: QueueAuthoritativeBlackHoleSwallowEffectArgs,
+  ) => void;
+  queuePlanetExplosionEffect?: (
+    planet: SharedCombatPlanetExplosionSource,
   ) => void;
   runtime: Pick<
     AuthoritativeMatchRuntimeState,
@@ -649,6 +647,31 @@ export const syncAuthoritativeRecentEventFeedback = ({
           radius: swallowedPlanet.radius,
           startPos: swallowedPlanet.pos,
           targetPos: blackHoleSource.pos,
+        });
+      }
+    }
+
+    if (eventRecord.event.kind === "kill" && queuePlanetExplosionEffect) {
+      const killEvent = eventRecord.event;
+      const deathReason = killCauseToPlanetExplosionDeathReason(
+        killEvent.cause,
+      );
+      const killedPlanet =
+        findPlanetById(previousSnapshotWorld, killEvent.victimPlanetId) ??
+        findPlanetById(snapshotWorld, killEvent.victimPlanetId);
+
+      if (deathReason !== null && killedPlanet !== null) {
+        const archetypeVisual =
+          getRuntimeTuningDocument().visuals.planets.archetypes[
+            killedPlanet.archetype
+          ];
+        queuePlanetExplosionEffect({
+          color: archetypeVisual.color,
+          deathReason,
+          id: killedPlanet.id,
+          pos: { x: killedPlanet.pos.x, y: killedPlanet.pos.y },
+          radius: killedPlanet.radius,
+          vel: { x: killedPlanet.vel.x, y: killedPlanet.vel.y },
         });
       }
     }

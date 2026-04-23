@@ -2,13 +2,14 @@ import { BLACK_HOLE_SPEC } from "@3body/shared";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_ORBIT_PRESET } from "./orbitPresets";
 import {
+  createGameViewportHudEmitter,
+  createInitialHudState,
   DEFAULT_BOOST_SETTINGS,
   DEFAULT_CACHE_BADGE_SCALE,
   DEFAULT_PLANET_AURA_GAP,
   DEFAULT_PLANET_AURA_SCALE,
   DEFAULT_PLANET_BODY_SCALE,
   DEFAULT_SHIELD_SETTINGS,
-  createInitialHudState,
 } from "./viewportHud";
 
 describe("createInitialHudState", () => {
@@ -63,5 +64,41 @@ describe("createInitialHudState", () => {
     );
     expect(second.connection.label).toBe("Local");
     expect(second.minimap.arenaRadius).toBe(0);
+  });
+});
+
+describe("createGameViewportHudEmitter", () => {
+  it("emits changed HUD states and suppresses unchanged/disposed updates", () => {
+    let disposed = false;
+    const emitted: ReturnType<typeof createInitialHudState>[] = [];
+    const initialState = createInitialHudState();
+    const emitter = createGameViewportHudEmitter({
+      initialState,
+      isDisposed: () => disposed,
+      onHudStateChange: (state) => {
+        emitted.push(state);
+      },
+    });
+    const nextState = {
+      ...initialState,
+      playerLabel: "Changed",
+    };
+
+    emitter.emit(initialState);
+    expect(emitted).toHaveLength(0);
+    expect(emitter.getState()).toBe(initialState);
+
+    emitter.emit(nextState);
+    expect(emitted).toEqual([nextState]);
+    expect(emitter.getState()).toBe(nextState);
+
+    disposed = true;
+    const disposedState = {
+      ...nextState,
+      playerLabel: "Disposed",
+    };
+    emitter.emit(disposedState);
+    expect(emitted).toEqual([nextState]);
+    expect(emitter.getState()).toBe(disposedState);
   });
 });

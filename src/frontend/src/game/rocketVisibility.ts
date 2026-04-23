@@ -62,9 +62,7 @@ export const getCannonWorldLayout = (
   stemRadiusWorld: visuals.stemWidth * 0.5 * worldUnitsPerPixel,
 });
 
-const getMaxConcurrentRocketsPerController = (
-  rocketKind: RocketKind,
-): number =>
+const getMaxConcurrentRocketsPerController = (rocketKind: RocketKind): number =>
   Math.floor(
     ROCKET_SPECS[rocketKind].ttlSec / ROCKET_SPECS[rocketKind].reloadSec,
   ) + 1;

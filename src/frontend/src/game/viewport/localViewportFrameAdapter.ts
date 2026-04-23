@@ -1,7 +1,11 @@
 import type { RocketKind, Vec2 } from "@3body/shared";
-import type { CombatSandboxCache, CombatSandboxPlanet, CombatSandboxRocket, CombatSandboxState } from "../combatSandbox";
+import type {
+  CombatSandboxCache,
+  CombatSandboxPlanet,
+  CombatSandboxRocket,
+  CombatSandboxState,
+} from "../combatSandbox";
 import type { getCannonWorldLayout } from "../rocketVisibility";
-import type { BlackHoleSwallowState, BlackHoleSwallowVisual } from "./blackHoleVisuals";
 import type {
   CacheIconKey,
   CacheSpriteAssets,
@@ -14,10 +18,6 @@ import type { SharedCombatTrackedRocketBody } from "./sharedCombatBlackHoleSwall
 import type { SharedCombatLaunchBurstPoolVisual } from "./sharedCombatLaunchBurstPools";
 import type { SharedCombatLaunchBurstState } from "./sharedCombatLaunchBurstVisuals";
 import type {
-  SharedCombatPlanetExplosionState,
-  SharedCombatPlanetExplosionVisual,
-} from "./sharedCombatPlanetExplosions";
-import type {
   SharedCombatPresentationFrameState,
   SharedCombatPresentationFrameVisuals,
 } from "./sharedCombatPresentationFrame";
@@ -25,8 +25,10 @@ import type {
   SharedCombatRocketPoolVisual,
   SharedCombatRocketTrailState,
 } from "./sharedCombatRocketPools";
-import type { SharedCombatResolvedImpactBurst } from "./sharedCombatImpactBursts";
-import type { SharedCombatImpactBurstVisual } from "./sharedCombatSceneResources";
+import {
+  buildSharedCombatViewportTransientBundle,
+  type SharedCombatViewportTransientInput,
+} from "./sharedCombatViewportTransients";
 import type { ViewportFrameBundle } from "./viewportFrameState";
 
 interface LocalViewportFrameRuntimeInput {
@@ -55,9 +57,6 @@ interface LocalViewportFrameRuntimeInput {
     CombatSandboxState,
     "caches" | "impactBursts" | "player" | "rockets"
   >;
-  resolveImpactBurst: (
-    burst: CombatSandboxState["impactBursts"][number],
-  ) => SharedCombatResolvedImpactBurst | null;
   shieldActive: boolean;
   shieldRadius: number;
   visibleWorldHeight: number;
@@ -66,9 +65,7 @@ interface LocalViewportFrameRuntimeInput {
 }
 
 interface LocalViewportFrameSyncInput {
-  activeBlackHoleSwallowEffects: BlackHoleSwallowState[];
   activeCacheIds: Set<number>;
-  activePlanetExplosions: SharedCombatPlanetExplosionState[];
   cacheBadgeBaseSize: number;
   cacheBadgeScale: number;
   cacheSpriteAssets: CacheSpriteAssets;
@@ -79,12 +76,8 @@ interface LocalViewportFrameSyncInput {
   ) => CacheVisual;
   disposeCacheVisual: (visual: CacheVisual) => void;
   getCacheIconKey: (contents: CombatSandboxCache["contents"]) => CacheIconKey;
-  impactBurstVisuals: readonly SharedCombatImpactBurstVisual[];
-  inactiveBlackHoleSwallowVisuals: BlackHoleSwallowVisual[];
-  inactivePlanetExplosionVisuals: SharedCombatPlanetExplosionVisual[];
   launchBurstBudget: number;
   maxRocketTrailSamples: number;
-  maxVisibleImpactBursts: number;
   presentationVisuals: SharedCombatPresentationFrameVisuals;
   renderedCacheKeysById: Map<number, CacheIconKey>;
   rocketKinds: readonly RocketKind[];
@@ -104,16 +97,22 @@ interface LocalViewportFrameSyncInput {
   ) => void;
 }
 
-export interface LocalViewportFrameAdapterParams {
+interface LocalViewportFrameAdapterParams {
   runtime: LocalViewportFrameRuntimeInput;
   sync: LocalViewportFrameSyncInput;
+  transient: SharedCombatViewportTransientInput<
+    CombatSandboxState["impactBursts"][number]
+  >;
 }
 
 export const buildLocalViewportFrameBundle = ({
   runtime,
   sync,
-}: LocalViewportFrameAdapterParams) =>
-  ({
+  transient,
+}: LocalViewportFrameAdapterParams) => {
+  const transientBundle = buildSharedCombatViewportTransientBundle(transient);
+
+  return {
     frame: {
       entity: {
         caches: {
@@ -174,11 +173,7 @@ export const buildLocalViewportFrameBundle = ({
         weapon: runtime.weaponFrame,
       },
       transient: {
-        impactBursts: {
-          bursts: runtime.renderState.impactBursts,
-          resolveBurst: runtime.resolveImpactBurst,
-        },
-        nowSec: runtime.nowSec,
+        ...transientBundle.frame,
       },
     },
     resources: {
@@ -216,27 +211,12 @@ export const buildLocalViewportFrameBundle = ({
       },
       presentation: sync.presentationVisuals,
       transient: {
-        blackHoleSwallows: {
-          activeEffects: sync.activeBlackHoleSwallowEffects,
-          inactiveVisuals: sync.inactiveBlackHoleSwallowVisuals,
-        },
-        impactBursts: {
-          maxVisibleBursts: sync.maxVisibleImpactBursts,
-          visuals: sync.impactBurstVisuals,
-          z: {
-            core: 2.65,
-            glow: 2.55,
-            ring: 2.75,
-          },
-        },
-        planetExplosions: {
-          activePlanetExplosions: sync.activePlanetExplosions,
-          inactivePlanetExplosionVisuals: sync.inactivePlanetExplosionVisuals,
-        },
+        ...transientBundle.resources,
       },
     },
-  }) satisfies ViewportFrameBundle<
+  } satisfies ViewportFrameBundle<
     CombatSandboxCache,
     CombatSandboxRocket,
     CombatSandboxState["impactBursts"][number]
   >;
+};

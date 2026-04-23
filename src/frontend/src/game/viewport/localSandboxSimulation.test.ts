@@ -3,6 +3,7 @@ import {
   FIXED_STEP_SEC,
   PLANET_HP,
   ROCKET_SPECS,
+  SIM_HZ,
 } from "@3body/shared";
 import { describe, expect, it } from "vitest";
 import { createSandboxState } from "../combatSandbox";
@@ -42,7 +43,7 @@ describe("local sandbox held ability visuals", () => {
     const simulationState = createLocalSandboxSimulationState(initialState);
     let sawBotBoostBurst = false;
 
-    for (let step = 0; step < 6 * 120; step += 1) {
+    for (let step = 0; step < 6 * SIM_HZ; step += 1) {
       runLocalSandboxSimulationFrame({
         blackHoleSettings: BLACK_HOLE_SPEC,
         inputController: null,
@@ -189,6 +190,108 @@ describe("local sandbox held ability visuals", () => {
     expect(simulationState.playerDamageFlash).toBeGreaterThan(0.3);
     expect(simulationState.playerHudFlicker).toBeGreaterThan(0.4);
     expect(simulationState.cameraShake).toBeGreaterThan(0.3);
+  });
+
+  it("queues planet explosion visuals on the render clock", () => {
+    const initialState = createSandboxState();
+    const playerPlanetId = initialState.player.planetId;
+    const targetPlanetId =
+      initialState.planets.find((planet) => planet.id !== playerPlanetId)
+        ?.id ?? null;
+    if (targetPlanetId === null) {
+      throw new Error("missing target planet");
+    }
+
+    initialState.suns = [];
+    initialState.neutronStars = [];
+    initialState.caches = [];
+    initialState.cacheRespawnAtTicks = [];
+    initialState.debris = [];
+    initialState.impactBursts = [];
+    initialState.bots = [];
+    initialState.planets = initialState.planets.map((planet) => {
+      if (planet.id === playerPlanetId) {
+        return {
+          ...planet,
+          alive: true,
+          deathReason: undefined,
+          debuffs: {},
+          hp: PLANET_HP,
+          pos: { x: 2_000, y: 0 },
+          vel: { x: 0, y: 0 },
+        };
+      }
+
+      if (planet.id === targetPlanetId) {
+        return {
+          ...planet,
+          alive: true,
+          deathReason: undefined,
+          debuffs: {},
+          hp: 1,
+          pos: { x: 0, y: 0 },
+          radius: 20,
+          vel: { x: 0, y: 0 },
+        };
+      }
+
+      return {
+        ...planet,
+        alive: false,
+        deathReason: "rocket",
+        debuffs: {},
+        hp: 0,
+        pos: { x: 5_000 + planet.id, y: 0 },
+        vel: { x: 0, y: 0 },
+      };
+    });
+    initialState.rockets = [
+      {
+        color: "#ffffff",
+        damage: ROCKET_SPECS.heavy.damage,
+        dragOnHit: false,
+        id: 90_002,
+        kind: "rocket",
+        launchPlanetArchetype: "terra",
+        launchPlanetPos: { x: 2_000, y: 0 },
+        launchPlanetRadius: 20,
+        ownerId: initialState.player.playerId,
+        pos: { x: 0, y: 0 },
+        radius: ROCKET_SPECS.heavy.radius,
+        rocketKind: "heavy",
+        targetId: targetPlanetId,
+        trailColor: "#ffd9aa",
+        ttlUntilTick: initialState.tick + 5,
+        turnRateMultiplier: 1,
+        vel: { x: 0, y: 0 },
+      },
+    ];
+
+    const simulationState = createLocalSandboxSimulationState(initialState);
+    const explosionStartTimes: number[] = [];
+    const firstFrameSec = 10;
+    const hitFrameSec = firstFrameSec + FIXED_STEP_SEC * 1.5;
+    const runFrame = (nowSec: number) =>
+      runLocalSandboxSimulationFrame({
+        blackHoleSettings: BLACK_HOLE_SPEC,
+        inputController: null,
+        inputRuntime: createInputRuntime(),
+        nowSec,
+        onPlanetExplosionRequested: (_source, startedAtSec) => {
+          explosionStartTimes.push(startedAtSec);
+        },
+        profilingEnabled: false,
+        resetAccumulator: false,
+        sandboxPaused: false,
+        simulationState,
+      });
+
+    runFrame(firstFrameSec);
+    runFrame(hitFrameSec);
+
+    expect(explosionStartTimes).toHaveLength(1);
+    expect(explosionStartTimes[0]).toBeCloseTo(hitFrameSec);
+    expect(simulationState.currentState.elapsedSec).toBeLessThan(1);
   });
 
   it("still emits the pulse when step-scoped requests are cleared by the input controller", () => {

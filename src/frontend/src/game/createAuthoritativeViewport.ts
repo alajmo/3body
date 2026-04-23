@@ -1,196 +1,93 @@
+import type { ClientMsg, PlanetPublic, RocketKind, World } from "@3body/shared";
+import { clamp, lerp, SIM_HZ, SNAPSHOT_HZ } from "@3body/shared";
 import type {
-  ClientMsg,
-  PlanetPublic,
-  RocketKind,
-  Vec2,
-  World,
-} from "@3body/shared";
-import {
-  clamp,
-  getSunVisualProfile,
-  lerp,
-  ROCKET_SPECS,
-  ROOM_CAPACITY,
-  SHIELD_SPEC,
-  SNAPSHOT_HZ,
-} from "@3body/shared";
-import {
-  AdditiveBlending,
-  CircleGeometry,
-  CylinderGeometry,
-  Group,
   Mesh,
-  MeshBasicMaterial,
-  type Object3D,
+  Object3D,
   OrthographicCamera,
-  PlaneGeometry,
-  RingGeometry,
-  SphereGeometry,
-  type WebGPURenderer,
+  WebGPURenderer,
 } from "three/webgpu";
 import type { AuthoritativeMatchRuntimeState } from "./authoritativeMatchRuntime";
-import { getScaledRocketVisuals } from "./rocketVisualTuning";
 import { getRuntimeTuningDocument } from "./runtimeTuning";
-import {
-  SHIELD_GLOW_OUTER_SCALE,
-  SHIELD_INNER_SCALE,
-  SHIELD_OUTER_SCALE,
-} from "./shieldPresentation";
 import type { ShowcaseDisplayMode } from "./showcaseDisplayMode";
-import {
-  createBackdropMaterial,
-  createBackgroundLayer,
-  createBackgroundLayerConfigs,
-  createRocketFlameMaterial,
-  createRocketMaterial,
-  createRocketTrailMaterial,
-  createSceneBackgroundColor,
-  syncBackdropFrame,
-} from "./showcaseVisuals";
-import {
-  getAmbientBoundaryDebrisRadii,
-  updateAmbientBoundaryDebrisVisual,
-} from "./viewport/ambientBoundaryDebris";
 import { createViewportAnimationLoopController } from "./viewport/animationLoopController";
 import {
-  type AuthoritativeImpactBurstState,
   decayAuthoritativeFeedbackLevels,
   type ImmediateCannonFlashState,
   type ImmediateGravityPulseFeedbackState,
-  queueAuthoritativeImmediateAbilityFeedback,
-  queueAuthoritativeImmediateFireFeedback,
-  syncAuthoritativeLaunchBurstFeedback,
-  syncAuthoritativeRecentEventFeedback,
 } from "./viewport/authoritativeCosmeticFeedback";
-import { updateAuthoritativeDebrisVisual } from "./viewport/authoritativeDebrisVisual";
+import type {
+  AuthoritativeNetworkDiagnosticsSnapshot,
+  AuthoritativeRenderDiagnostics,
+} from "./viewport/authoritativeDiagnostics";
 import { buildAuthoritativeHudState } from "./viewport/authoritativeHud";
 import {
   createAuthoritativeInterpolationCache,
   syncAuthoritativeInterpolatedWorld,
 } from "./viewport/authoritativeInterpolation";
 import {
+  getAuthoritativeAdaptiveInterpolationDelayMs,
+  getAuthoritativeBufferedInterpolationFrame,
+  getAuthoritativeEstimatedClientTickFrame,
   getAuthoritativeInterpolationDelayMs,
   getAuthoritativeInterpolationMaxAlpha,
-  getAuthoritativeLateSnapshotThresholdMs,
+  getAuthoritativeRenderClockFrame,
 } from "./viewport/authoritativeLatency";
-import { syncAuthoritativeLocalPlayerPrediction } from "./viewport/authoritativeLocalPlayerPrediction";
 import {
+  createAuthoritativeLocalPlanetPresentationState,
+  reconcileAuthoritativeLocalPlanetPresentation,
+} from "./viewport/authoritativeLocalPlanetReconciliation";
+import {
+  canDispatchAuthoritativeRocketFire,
   resolveAuthoritativeCombatControlStep,
   smoothAuthoritativeCameraAxis,
 } from "./viewport/authoritativeViewportBehavior";
-import { updateAuthoritativeViewportScene } from "./viewport/authoritativeViewportScene";
 import {
-  type BlackHoleSwallowState,
-  createBlackHoleSwallowVisualPool,
-  queueBlackHoleSwallowEffect,
-} from "./viewport/blackHoleVisuals";
-import {
-  type CacheVisual,
-  createCacheSpriteAssets,
-  disposeCacheSpriteAssets,
-} from "./viewport/cacheVisuals";
+  createAuthoritativeViewportRuntimeAdapter,
+  disposeAuthoritativeViewportRuntimeSceneResources,
+  disposeAuthoritativeViewportRuntimeSceneStateVisuals,
+  queueAuthoritativeViewportRuntimeImmediateAbilityFeedback,
+  queueAuthoritativeViewportRuntimeImmediateFireFeedback,
+  resetAuthoritativeViewportRuntimeAdapter,
+  syncAuthoritativeViewportRuntimeFeedback,
+  updateAuthoritativeViewportRuntimeFrame,
+} from "./viewport/authoritativeViewportRuntimeAdapter";
+import { createAuthoritativeViewportSceneResources } from "./viewport/authoritativeViewportSceneResources";
 import { getViewportCameraShakeOffsets } from "./viewport/cameraShake";
 import { disposeViewportDisposables } from "./viewport/disposables";
 import { createGameViewportInputController } from "./viewport/localInput";
-import { createLocalViewportRenderShell } from "./viewport/localViewportRenderShell";
-import {
-  createBlackHoleCoreMaterial,
-  createBlackHoleLensMaterial,
-  createBlackHoleRingMaterial,
-  createBoostWakeMaterial,
-  createNeutronStarCoreMaterial,
-  createNeutronStarHaloMaterial,
-  createNeutronStarJetMaterial,
-  createNeutronStarLensMaterial,
-  createPlanetExplosionVisual,
-  createRocketLaunchBurstMaterial,
-} from "./viewport/localViewportVisualFactories";
-import { createManagedViewportSession } from "./viewport/managedViewportSession";
 import { createViewportPerformanceProfiler } from "./viewport/performanceProfiler";
 import {
   disposeViewportRendererSession,
   type ViewportRendererBootstrap,
 } from "./viewport/rendererBootstrap";
+import { createViewportRendererSizeState } from "./viewport/rendererSizing";
 import {
-  createViewportRendererSizeState,
-  getViewportHostSize,
-  syncViewportRendererSize,
-} from "./viewport/rendererSizing";
-import { DEFAULT_VIEWPORT_RENDER_QUALITY_PROFILE } from "./viewport/renderQuality";
+  DEFAULT_VIEWPORT_RENDER_QUALITY_PROFILE,
+  type ViewportRenderQualityProfile,
+} from "./viewport/renderQuality";
 import { createRuntimeStatsTracker } from "./viewport/runtimeStats";
-import type { SharedCombatTrackedRocketBody } from "./viewport/sharedCombatBlackHoleSwallowTracking";
+import { getSharedCombatRocketTrailInstanceLimits } from "./viewport/sharedCombatRocketPools";
+import type { SharedCombatImmediateShieldFeedbackState } from "./viewport/sharedCombatSupportVisuals";
 import {
-  createSharedCombatBoostBurstVisual,
-  type SharedCombatBoostBurstState,
-  type SharedCombatBoostBurstVisual,
-} from "./viewport/sharedCombatBoostVisuals";
-import { createSharedCombatCannonVisual } from "./viewport/sharedCombatCannonVisual";
+  createSharedCombatViewportLifecycle,
+  createSharedCombatViewportRenderContext,
+} from "./viewport/sharedCombatViewport";
 import {
-  disposeSharedCombatNeutronStarVisual,
-  disposeSharedCombatSunVisual,
-  type SharedCombatNeutronStarVisual as NeutronStarVisual,
-  type SharedCombatSunVisual as SunVisual,
-} from "./viewport/sharedCombatCelestialVisuals";
+  applyViewportCameraFrame,
+  resizeViewportCameraFrame,
+} from "./viewport/viewportCameraFrame";
+import { screenToViewportWorld } from "./viewport/viewportScreenToWorld";
 import {
-  type SharedCombatTrackedNeutronStarBody,
-  type SharedCombatTrackedSunBody,
-} from "./viewport/sharedCombatDynamicCelestialSync";
-import {
-  hideSharedCombatImmediateFireFeedbackVisual,
-  type SharedCombatImmediateFireBurstState,
-  type SharedCombatImmediateFireFeedbackVisual,
-  type SharedCombatImmediateGhostRocketState,
-  syncSharedCombatImmediateFireFeedback,
-} from "./viewport/sharedCombatImmediateFireVisuals";
-import {
-  createSharedCombatLaunchBurstPools,
-  type SharedCombatLaunchBurstPoolVisual,
-} from "./viewport/sharedCombatLaunchBurstPools";
-import type { SharedCombatLaunchBurstState } from "./viewport/sharedCombatLaunchBurstVisuals";
-import {
-  clearSharedCombatPlanetExplosions,
-  type SharedCombatPlanetExplosionState,
-  type SharedCombatPlanetExplosionVisual,
-} from "./viewport/sharedCombatPlanetExplosions";
-import {
-  disposeSharedCombatPlanetTrailVisual,
-  type SharedCombatPlanetTrailVisual as PlanetTrailVisual,
-} from "./viewport/sharedCombatPlanetTrails";
-import {
-  disposeSharedCombatPlanetVisual,
-  type SharedCombatPlanetVisual as PlanetVisual,
-} from "./viewport/sharedCombatPlanetVisuals";
-import {
-  createSharedCombatRocketPools,
-  getSharedCombatRocketTrailInstanceLimits,
-  type SharedCombatRocketPoolVisual,
-  type SharedCombatRocketTrailState,
-} from "./viewport/sharedCombatRocketPools";
-import {
-  createSharedCombatSceneResources,
-  type SharedCombatGravityPulseVisual as GravityPulseVisual,
-  type SharedCombatImpactBurstVisual as ImpactBurstVisual,
-} from "./viewport/sharedCombatSceneResources";
-import type {
-  SharedCombatCannonVisual,
-  SharedCombatImmediateShieldFeedbackState,
-  SharedCombatLockRingVisual,
-  SharedCombatShieldVisual,
-} from "./viewport/sharedCombatSupportVisuals";
-import {
-  areHudStatesEqual,
-  createInitialHudState,
+  createGameViewportHudEmitter,
   type GameViewportHudState,
 } from "./viewportHud";
 
-const CAMERA_DISTANCE = 100;
 const CAMERA_FOLLOW_LERP = 6.1;
 const CAMERA_ZOOM_LERP = 5.2;
-const BACKDROP_OVERDRAW = 1.35;
 const MAX_FRAME_DELTA_SEC = 0.1;
 const HUD_UPDATE_INTERVAL_SEC = 1 / 12;
-const INPUT_SEND_INTERVAL_MS = 1000 / 30;
-const SHIELD_AIM_SEND_INTERVAL_MS = 1000 / 30;
+const INPUT_SEND_INTERVAL_MS = 1000 / SIM_HZ;
+const SHIELD_AIM_SEND_INTERVAL_MS = 1000 / SIM_HZ;
 const MAX_ACTIVE_BLACK_HOLE_SWALLOWS = 24;
 const MAX_ACTIVE_IMPACT_BURSTS = 16;
 const MAX_ACTIVE_NEUTRON_STAR_ABSORPTION_EXPLOSIONS = 8;
@@ -207,17 +104,28 @@ const MAX_ROCKET_LAUNCH_BURST_INSTANCES = {
   light: 24,
   seeker: 24,
 } satisfies Record<RocketKind, number>;
-const IMMEDIATE_FIRE_BURST_DURATION_SEC = 0.12;
-const IMMEDIATE_GHOST_ROCKET_DURATION_SEC = 0.18;
 const AUTHORITATIVE_ROCKET_KINDS = [
   "heavy",
   "light",
   "seeker",
 ] as const satisfies readonly RocketKind[];
+const AUTHORITATIVE_VIEWPORT_RENDER_QUALITY_PROFILE = {
+  ...DEFAULT_VIEWPORT_RENDER_QUALITY_PROFILE,
+  maxPixelRatio: 1.5,
+} satisfies ViewportRenderQualityProfile;
+const RAW_RENDER_QUERY_PARAM = "rawRender";
+
+const isRawAuthoritativeRenderEnabled = (hostElement: HTMLDivElement) =>
+  new URLSearchParams(
+    hostElement.ownerDocument.defaultView?.location.search ?? "",
+  ).get(RAW_RENDER_QUERY_PARAM) === "1";
 
 interface CreateAuthoritativeViewportOptions {
   dispatchMessage: (message: ClientMsg) => void;
   displayMode: ShowcaseDisplayMode;
+  getNetworkDiagnostics: (
+    timeMs: number,
+  ) => AuthoritativeNetworkDiagnosticsSnapshot;
   getPerformanceState: () => {
     profilingEnabled: boolean;
     resetToken: number;
@@ -263,9 +171,6 @@ const getCameraFrame = (
   };
 };
 
-const getBudgetedCount = (maxCount: number, budget: number): number =>
-  budget <= 0 ? 0 : Math.max(1, Math.round(maxCount * budget));
-
 export function createAuthoritativeViewport(
   hostElement: HTMLDivElement,
   options: CreateAuthoritativeViewportOptions,
@@ -282,17 +187,22 @@ export function createAuthoritativeViewport(
     typeof createGameViewportInputController
   > | null = null;
   let syncAimWorldToPointer: (() => void) | null = null;
-  let lastHudState = createInitialHudState();
   let lastHudUpdateSec = 0;
   let previousFrameTimeSec: number | null = null;
   let lastInputSentAtMs = 0;
   let lastShieldAimSentAtMs = 0;
-  let nextClientTick = 1;
+  let lastClientTick = 0;
   let lastBoostAbilitySentAtSec = Number.NEGATIVE_INFINITY;
+  const lastFireSentAtTickByKind: Record<RocketKind, number> = {
+    heavy: Number.NEGATIVE_INFINITY,
+    light: Number.NEGATIVE_INFINITY,
+    seeker: Number.NEGATIVE_INFINITY,
+  };
   let seekerLockTargetId: number | null = null;
   let seekerLockStartedAtSec: number | null = null;
   let lastProfilingResetToken = options.getPerformanceState().resetToken;
-  const renderQuality = DEFAULT_VIEWPORT_RENDER_QUALITY_PROFILE;
+  let rawRenderEnabled = false;
+  const renderQuality = AUTHORITATIVE_VIEWPORT_RENDER_QUALITY_PROFILE;
   const currentMaxPixelRatio = renderQuality.maxPixelRatio;
   const performanceProfiler = createViewportPerformanceProfiler();
   const runtimeStatsTracker = createRuntimeStatsTracker();
@@ -302,83 +212,19 @@ export function createAuthoritativeViewport(
   };
   const disposables: Array<{ dispose: () => void }> = [];
   let cleanupComplete = false;
-  const sunVisuals = new Map<number, SunVisual>();
-  const neutronStarVisuals = new Map<number, NeutronStarVisual>();
-  const planetVisuals = new Map<number, PlanetVisual>();
-  const planetTrails = new Map<number, PlanetTrailVisual>();
-  let rocketPools: Record<RocketKind, SharedCombatRocketPoolVisual> | null =
-    null;
-  let rocketLaunchBurstPools: Record<
-    RocketKind,
-    SharedCombatLaunchBurstPoolVisual
-  > | null = null;
-  const rocketTrailStates = new Map<number, SharedCombatRocketTrailState>();
-  const rocketsByKind: Record<RocketKind, Array<World["rockets"][number]>> = {
-    heavy: [],
-    light: [],
-    seeker: [],
-  };
-  const activeLaunchBurstsByKind: Record<
-    RocketKind,
-    SharedCombatLaunchBurstState[]
-  > = {
-    heavy: [],
-    light: [],
-    seeker: [],
-  };
-  const cacheVisuals = new Map<number, CacheVisual>();
-  const activeCacheIds = new Set<number>();
-  const activeBlackHoleSwallowEffects: BlackHoleSwallowState[] = [];
-  const activeBoostBursts: SharedCombatBoostBurstState[] = [];
-  const activeImpactBursts: AuthoritativeImpactBurstState[] = [];
-  const activePlanetExplosions: SharedCombatPlanetExplosionState[] = [];
-  const authoritativePlanetsById = new Map<number, PlanetPublic>();
-  let shieldGroup: Group | null = null;
-  let shieldArcOpacityUniform: { value: number } | null = null;
-  let shieldPanelOpacityUniform: { value: number } | null = null;
-  let shieldCrestOpacityUniform: { value: number } | null = null;
-  let shieldGlowOpacityUniform: { value: number } | null = null;
-  let lockRingMesh: Mesh | null = null;
-  let lockRingProgressUniform: { value: number } | null = null;
-  let lockRingLockedUniform: { value: number } | null = null;
-  let lockRingTimeUniform: { value: number } | null = null;
-  let cannonVisual: SharedCombatCannonVisual | null = null;
+  let disposeViewportSession = () => {};
+  const runtimeAdapter = createAuthoritativeViewportRuntimeAdapter(
+    AUTHORITATIVE_ROCKET_KINDS,
+  );
   let immediateCannonFlashState: ImmediateCannonFlashState | null = null;
-  let boostBurstVisual: SharedCombatBoostBurstVisual | null = null;
-  let gravityPulseVisual: GravityPulseVisual | null = null;
-  const impactBurstVisuals: ImpactBurstVisual[] = [];
   let gravityPulseFeedbackState: ImmediateGravityPulseFeedbackState | null =
     null;
-  const immediateFireFeedback = new Map<
-    RocketKind,
-    SharedCombatImmediateFireFeedbackVisual
-  >();
-  const immediateFireBurstState = new Map<
-    RocketKind,
-    SharedCombatImmediateFireBurstState
-  >();
-  const immediateGhostRocketState = new Map<
-    RocketKind,
-    SharedCombatImmediateGhostRocketState
-  >();
   let immediateShieldFeedbackState: SharedCombatImmediateShieldFeedbackState | null =
     null;
-  let inactivePlanetExplosionVisuals: SharedCombatPlanetExplosionVisual[] = [];
-  const previousCacheBodiesById = new Map<
-    number,
-    { pos: Vec2; radius: number }
-  >();
-  const previousRocketBodiesById = new Map<
-    number,
-    SharedCombatTrackedRocketBody
-  >();
-  const previousNeutronStarsById = new Map<
-    number,
-    SharedCombatTrackedNeutronStarBody
-  >();
-  const previousSunBodiesById = new Map<number, SharedCombatTrackedSunBody>();
   const authoritativeInterpolationCache =
     createAuthoritativeInterpolationCache();
+  const localPlanetPresentationState =
+    createAuthoritativeLocalPlanetPresentationState();
   const cameraState = {
     centerX: 0,
     centerY: 0,
@@ -389,195 +235,103 @@ export function createAuthoritativeViewport(
     visibleWorldHeight: getGameplayCameraHeights().followWorldHeight,
   };
   const rendererSizeState = createViewportRendererSizeState();
-  const managedViewportSession = createManagedViewportSession({
+  const viewportLifecycle = createSharedCombatViewportLifecycle({
+    disposeViewportSession: () => {
+      disposeViewportSession();
+    },
     failureLogLabel: "authoritative viewport",
     hostElement,
     isDisposed: () => disposed,
   });
+  const managedViewportSession = viewportLifecycle.managedViewportSession;
   const snapshotWindowMs = 1000 / SNAPSHOT_HZ;
-  const authoritativeInterpolationDelayMs =
+  const authoritativeBaseInterpolationDelayMs =
     getAuthoritativeInterpolationDelayMs({
       hostname: window.location.hostname,
       snapshotWindowMs,
     });
-  const authoritativeInterpolationLeadMs = Math.max(
-    0,
-    snapshotWindowMs - authoritativeInterpolationDelayMs,
-  );
+  let authoritativeAdaptiveInterpolationDelayMs =
+    authoritativeBaseInterpolationDelayMs;
   const authoritativeInterpolationMaxAlpha =
     getAuthoritativeInterpolationMaxAlpha({
       hostname: window.location.hostname,
       snapshotWindowMs,
     });
-  const authoritativeLateSnapshotThresholdMs =
-    getAuthoritativeLateSnapshotThresholdMs({
-      snapshotWindowMs,
-    });
   let cameraShake = 0;
   let damageFlash = 0;
   let hudFlicker = 0;
+  let authoritativeRenderTick: number | null = null;
   let lastProcessedEventId: number | null = null;
   let lastProcessedLaunchBurstSnapshotTick: number | null = null;
 
-  const emitHudState = (nextState: GameViewportHudState) => {
-    if (areHudStatesEqual(lastHudState, nextState)) {
-      return;
+  const hudEmitter = createGameViewportHudEmitter({
+    isDisposed: () => disposed,
+    onHudStateChange: options.onHudStateChange,
+  });
+
+  const getAuthoritativeClientTick = (
+    snapshot: AuthoritativeMatchRuntimeState["snapshot"],
+    timeMs: number,
+  ): number => {
+    if (snapshot === null) {
+      lastClientTick += 1;
+      return lastClientTick;
     }
 
-    lastHudState = nextState;
-    if (!disposed) {
-      options.onHudStateChange?.(nextState);
-    }
-  };
-
-  const applyCameraFrame = () => {
-    if (camera === null) {
-      return;
-    }
-
-    const { aspect } = getViewportHostSize(hostElement);
-    const worldHalfHeight = cameraState.visibleWorldHeight / 2;
-    const worldHalfWidth = worldHalfHeight * aspect;
-
-    cameraState.renderCenterX = cameraState.centerX + cameraState.shakeOffsetX;
-    cameraState.renderCenterY = cameraState.centerY + cameraState.shakeOffsetY;
-    camera.left = -worldHalfWidth;
-    camera.right = worldHalfWidth;
-    camera.top = worldHalfHeight;
-    camera.bottom = -worldHalfHeight;
-    camera.position.set(
-      cameraState.renderCenterX,
-      cameraState.renderCenterY,
-      CAMERA_DISTANCE,
-    );
-    camera.lookAt(cameraState.renderCenterX, cameraState.renderCenterY, 0);
-    camera.updateProjectionMatrix();
-
-    syncBackdropFrame({
-      backdropMesh,
-      centerX: cameraState.renderCenterX,
-      centerY: cameraState.renderCenterY,
-      height: worldHalfHeight * 2 * BACKDROP_OVERDRAW,
-      width: worldHalfWidth * 2 * BACKDROP_OVERDRAW,
+    const frame = getAuthoritativeEstimatedClientTickFrame({
+      latestSnapshotReceivedAtMs: snapshot.receivedAtMs,
+      latestSnapshotTick: snapshot.tick,
+      previousClientTick: lastClientTick,
+      simHz: SIM_HZ,
+      timeMs,
     });
+    lastClientTick = frame.clientTick;
+    return frame.clientTick;
   };
 
   const resizeViewport = () => {
-    if (renderer === null) {
-      return;
-    }
-
-    syncViewportRendererSize({
+    resizeViewportCameraFrame({
+      backdropMesh,
+      camera,
+      cameraState,
       hostElement,
       maxPixelRatio: currentMaxPixelRatio,
       renderer,
       sizeState: rendererSizeState,
     });
-    applyCameraFrame();
     syncAimWorldToPointer?.();
   };
 
   const resetViewportProfilingState = (profilingEnabled: boolean) => {
     performanceProfiler.reset();
+    authoritativeAdaptiveInterpolationDelayMs =
+      authoritativeBaseInterpolationDelayMs;
     lastHudUpdateSec = 0;
-    emitHudState({
-      ...lastHudState,
+    hudEmitter.emit({
+      ...hudEmitter.getState(),
       debugItems: [],
       profilingEnabled,
     });
   };
 
-  const disposeViewportSession = () => {
-    managedViewportSession.invalidate();
-    window.removeEventListener("resize", resizeViewport);
+  disposeViewportSession = () => {
+    viewportLifecycle.disposeBase();
     inputController?.dispose();
     inputController = null;
     syncAimWorldToPointer = null;
 
-    for (const visual of sunVisuals.values()) {
-      disposeSharedCombatSunVisual(visual);
-    }
-    for (const visual of neutronStarVisuals.values()) {
-      disposeSharedCombatNeutronStarVisual(visual);
-    }
-    for (const visual of planetVisuals.values()) {
-      disposeSharedCombatPlanetVisual(visual);
-    }
-    for (const trail of planetTrails.values()) {
-      disposeSharedCombatPlanetTrailVisual(trail);
-    }
-    for (const visual of cacheVisuals.values()) {
-      sceneRemoveSafe(visual.group);
-    }
-    if (shieldGroup !== null) {
-      sceneRemoveSafe(shieldGroup);
-      shieldGroup = null;
-    }
-    if (lockRingMesh !== null) {
-      sceneRemoveSafe(lockRingMesh);
-      lockRingMesh = null;
-    }
-    if (cannonVisual !== null) {
-      sceneRemoveSafe(cannonVisual.group);
-      cannonVisual = null;
-    }
-    if (boostBurstVisual !== null) {
-      sceneRemoveSafe(
-        boostBurstVisual.points,
-        ...boostBurstVisual.wakeVisuals.map((visual) => visual.mesh),
-      );
-      boostBurstVisual = null;
-    }
-    if (gravityPulseVisual !== null) {
-      sceneRemoveSafe(
-        gravityPulseVisual.coreMesh,
-        gravityPulseVisual.ringMesh,
-        gravityPulseVisual.echoMesh,
-      );
-      gravityPulseVisual = null;
-    }
-    for (const visual of impactBurstVisuals) {
-      sceneRemoveSafe(visual.glowMesh, visual.ringMesh, visual.coreMesh);
-    }
-    for (const feedback of immediateFireFeedback.values()) {
-      sceneRemoveSafe(feedback.burstMesh, feedback.ghost.group);
-    }
-    sunVisuals.clear();
-    neutronStarVisuals.clear();
-    planetVisuals.clear();
-    planetTrails.clear();
-    rocketPools = null;
-    rocketLaunchBurstPools = null;
-    rocketTrailStates.clear();
-    for (const rocketKind of AUTHORITATIVE_ROCKET_KINDS) {
-      rocketsByKind[rocketKind].length = 0;
-      activeLaunchBurstsByKind[rocketKind].length = 0;
-    }
-    cacheVisuals.clear();
-    immediateFireFeedback.clear();
-    immediateFireBurstState.clear();
-    immediateGhostRocketState.clear();
-    activeBlackHoleSwallowEffects.length = 0;
-    activeBoostBursts.length = 0;
-    activeImpactBursts.length = 0;
-    impactBurstVisuals.length = 0;
-    clearSharedCombatPlanetExplosions({
-      activePlanetExplosions,
-      inactivePlanetExplosionVisuals,
+    disposeAuthoritativeViewportRuntimeSceneStateVisuals({
+      adapter: runtimeAdapter,
+      sceneRemoveSafe,
     });
-    activeCacheIds.clear();
-    authoritativePlanetsById.clear();
-    previousCacheBodiesById.clear();
-    previousNeutronStarsById.clear();
-    previousRocketBodiesById.clear();
-    previousSunBodiesById.clear();
-    shieldArcOpacityUniform = null;
-    shieldPanelOpacityUniform = null;
-    shieldCrestOpacityUniform = null;
-    shieldGlowOpacityUniform = null;
-    lockRingProgressUniform = null;
-    lockRingLockedUniform = null;
-    lockRingTimeUniform = null;
+    disposeAuthoritativeViewportRuntimeSceneResources({
+      adapter: runtimeAdapter,
+      sceneRemoveSafe,
+    });
+    resetAuthoritativeViewportRuntimeAdapter({
+      adapter: runtimeAdapter,
+      sceneRemoveSafe,
+    });
     lastBoostAbilitySentAtSec = Number.NEGATIVE_INFINITY;
     seekerLockTargetId = null;
     seekerLockStartedAtSec = null;
@@ -601,288 +355,53 @@ export function createAuthoritativeViewport(
     backdropMesh = null;
   };
 
-  const handleViewportRenderError = (error: unknown) => {
-    disposeViewportSession();
-    managedViewportSession.reportFailure(error);
-  };
-
   const startViewport = async () => {
     try {
       await managedViewportSession.start({
         onReady: ({ bootstrap, renderer: nextRenderer }) => {
           rendererBootstrap = bootstrap;
           renderer = nextRenderer;
+          rawRenderEnabled = isRawAuthoritativeRenderEnabled(hostElement);
 
-          const backgroundVisuals =
-            getRuntimeTuningDocument().visuals.background;
-          const nextCamera = new OrthographicCamera(-1, 1, 1, -1, -2000, 2000);
-          nextCamera.position.set(0, 0, CAMERA_DISTANCE);
-          nextCamera.lookAt(0, 0, 0);
-          camera = nextCamera;
-
-          const shell = createLocalViewportRenderShell({
-            backdropMaterial: createBackdropMaterial(backgroundVisuals),
-            backgroundLayers: createBackgroundLayerConfigs(backgroundVisuals),
-            camera: nextCamera,
+          const renderContext = createSharedCombatViewportRenderContext({
             cameraState,
-            createBackgroundLayer,
             currentSsaaLevel: renderQuality.ssaaLevel,
             displayMode: options.displayMode,
             hostElement,
             renderer: nextRenderer,
-            sceneBackground: createSceneBackgroundColor(backgroundVisuals),
           });
+          const nextCamera = renderContext.camera;
+          camera = nextCamera;
           const {
             backgroundLayers,
             backdropMesh: shellBackdropMesh,
             disposables: shellDisposables,
             postProcessing,
             scene,
-          } = shell;
+          } = renderContext.shell;
           backdropMesh = shellBackdropMesh;
           disposables.push(...shellDisposables);
 
-          const sunGeometry = new SphereGeometry(1, 40, 40);
-          const planetGeometry = new SphereGeometry(1, 56, 56);
-          const glowGeometry = new CircleGeometry(1, 48);
-          const warpGeometry = new RingGeometry(0.55, 1, 72);
-          const rocketGeometry = new CylinderGeometry(0.58, 1, 1, 18, 1);
-          const ribbonGeometry = new PlaneGeometry(1, 1);
-          rocketGeometry.rotateZ(-Math.PI / 2);
-          disposables.push(
-            sunGeometry,
-            planetGeometry,
-            glowGeometry,
-            warpGeometry,
-            rocketGeometry,
-            ribbonGeometry,
-          );
-
-          const inactiveBlackHoleSwallowVisuals =
-            createBlackHoleSwallowVisualPool({
-              capacity: MAX_ACTIVE_BLACK_HOLE_SWALLOWS,
-              disposables,
-              document: hostElement.ownerDocument,
-              scene,
-            });
-          const initialTuning = getRuntimeTuningDocument();
-          const abilityVisuals = initialTuning.visuals.abilities;
-          const {
-            blackHoleGroup,
-            blackHoleRing,
-            boundaryDebrisVisual,
-            debrisVisual,
-            disposables: sharedSceneDisposables,
-            gravityPulseVisual: sharedGravityPulseVisual,
-            impactBurstVisuals: sharedImpactBurstVisuals,
-            inactivePlanetExplosionVisuals: nextInactivePlanetExplosionVisuals,
-            lockRingLockedUniform: nextLockRingLockedUniform,
-            lockRingMesh: nextLockRingMesh,
-            lockRingProgressUniform: nextLockRingProgressUniform,
-            lockRingTimeUniform: nextLockRingTimeUniform,
-            shieldArcOpacityUniform: nextShieldArcOpacityUniform,
-            shieldPanelOpacityUniform: nextShieldPanelOpacityUniform,
-            shieldCrestOpacityUniform: nextShieldCrestOpacityUniform,
-            shieldGlowOpacityUniform: nextShieldGlowOpacityUniform,
-            shieldGroup: nextShieldGroup,
-          } = createSharedCombatSceneResources({
-            blackHoleDepthOffsets: {
-              ring: -1,
-            },
-            boundaryAsteroidMeshNamePrefix: "authoritativeBoundaryAsteroid",
-            createBlackHoleCoreMaterial,
-            createBlackHoleLensMaterial,
-            createBlackHoleRingMaterial,
-            createPlanetExplosionVisual,
+          createAuthoritativeViewportSceneResources({
+            adapter: runtimeAdapter,
+            blackHoleSwallowCapacity: MAX_ACTIVE_BLACK_HOLE_SWALLOWS,
+            boostBurstSampleLimit: MAX_BOOST_BURST_SAMPLES,
             debrisSampleLimit: MAX_DEBRIS_SAMPLES,
-            getBlackHoleCoreRadius: () =>
-              initialTuning.visuals.blackHole.coreRadius,
-            getBlackHoleLensRadius: () =>
-              initialTuning.visuals.blackHole.lensRadius,
-            getBlackHoleRingRadius: () =>
-              initialTuning.visuals.blackHole.ringRadius,
-            gravityPulseColors: {
-              core: abilityVisuals.wildcardColor,
-              echo: abilityVisuals.wildcardColor,
-              ring: abilityVisuals.wildcardColor,
-            },
-            gravityPulseRenderOrders: {
-              core: 6,
-              echo: 7,
-              ring: 8,
-            },
+            disposables,
+            document: hostElement.ownerDocument,
             impactBurstLimit: MAX_ACTIVE_IMPACT_BURSTS,
-            lockRingAccentColor: initialTuning.visuals.rockets.seeker.hudAccent,
+            launchBurstInstanceLimits: MAX_ROCKET_LAUNCH_BURST_INSTANCES,
             planetExplosionLimit: MAX_ACTIVE_NEUTRON_STAR_ABSORPTION_EXPLOSIONS,
-            scene,
-            shieldArcDeg:
-              initialTuning.gameplay.abilities.shield?.arcDeg ??
-              SHIELD_SPEC.arcDeg,
-            shieldColor: abilityVisuals.shieldColor,
-            shieldGlowOuterScale: SHIELD_GLOW_OUTER_SCALE,
-            shieldInnerScale: SHIELD_INNER_SCALE,
-            shieldOuterScale: SHIELD_OUTER_SCALE,
-          });
-          inactivePlanetExplosionVisuals = nextInactivePlanetExplosionVisuals;
-          impactBurstVisuals.push(...sharedImpactBurstVisuals);
-          gravityPulseVisual = sharedGravityPulseVisual;
-          shieldGroup = nextShieldGroup;
-          shieldArcOpacityUniform = nextShieldArcOpacityUniform;
-          shieldPanelOpacityUniform = nextShieldPanelOpacityUniform;
-          shieldCrestOpacityUniform = nextShieldCrestOpacityUniform;
-          shieldGlowOpacityUniform = nextShieldGlowOpacityUniform;
-          lockRingMesh = nextLockRingMesh;
-          lockRingProgressUniform = nextLockRingProgressUniform;
-          lockRingLockedUniform = nextLockRingLockedUniform;
-          lockRingTimeUniform = nextLockRingTimeUniform;
-          disposables.push(...sharedSceneDisposables);
-
-          const cacheSpriteAssets = createCacheSpriteAssets(
-            hostElement.ownerDocument,
-          );
-          disposables.push({
-            dispose: () => {
-              disposeCacheSpriteAssets(cacheSpriteAssets);
-            },
-          });
-
-          const cannonMetalMaterial = new MeshBasicMaterial({
-            color: "#7c8ea8",
-          });
-          const cannonAccentMaterial = new MeshBasicMaterial({
-            color: initialTuning.visuals.rockets.light.hudAccent,
-          });
-          const cannonFlashMaterial = new MeshBasicMaterial({
-            blending: AdditiveBlending,
-            color: "#fff1c2",
-            depthWrite: false,
-            opacity: 0,
-            transparent: true,
-          });
-          const {
-            disposables: sharedCannonDisposables,
-            visual: nextCannonVisual,
-          } = createSharedCombatCannonVisual({
-            accentMaterial: cannonAccentMaterial,
-            flashMaterial: cannonFlashMaterial,
-            metalMaterial: cannonMetalMaterial,
-            scene,
-            setAccentColor: (value: string) => {
-              cannonAccentMaterial.color.set(value);
-            },
-          });
-          cannonVisual = nextCannonVisual;
-          disposables.push(
-            cannonMetalMaterial,
-            cannonAccentMaterial,
-            cannonFlashMaterial,
-            ...sharedCannonDisposables,
-          );
-
-          const {
-            disposables: sharedBoostBurstDisposables,
-            visual: nextBoostBurstVisual,
-          } = createSharedCombatBoostBurstVisual({
-            boostColor: abilityVisuals.boostColor,
-            createBoostWakeMaterial,
-            sampleLimit: MAX_BOOST_BURST_SAMPLES,
-            scene,
-            wakeCount: ROOM_CAPACITY,
-          });
-          boostBurstVisual = nextBoostBurstVisual;
-          disposables.push(...sharedBoostBurstDisposables);
-          const initialScaledRocketVisualTuning = getScaledRocketVisuals(
-            initialTuning.visuals.rockets,
-          );
-          const {
-            disposables: sharedRocketPoolDisposables,
-            rocketPools: nextRocketPools,
-          } = createSharedCombatRocketPools({
-            createRocketFlameMaterial,
-            createRocketMaterial,
-            createRocketTrailMaterial,
             rocketKinds: AUTHORITATIVE_ROCKET_KINDS,
-            rocketRenderProfiles: initialScaledRocketVisualTuning,
             rocketTrailInstanceLimits: MAX_ROCKET_TRAIL_INSTANCES,
             scene,
           });
-          rocketPools = nextRocketPools;
-          disposables.push(...sharedRocketPoolDisposables);
-          const {
-            disposables: sharedLaunchBurstDisposables,
-            launchBurstPools: nextRocketLaunchBurstPools,
-          } = createSharedCombatLaunchBurstPools({
-            createRocketLaunchBurstMaterial,
-            launchBurstInstanceLimits: MAX_ROCKET_LAUNCH_BURST_INSTANCES,
-            rocketKinds: AUTHORITATIVE_ROCKET_KINDS,
-            rocketRenderProfiles: initialScaledRocketVisualTuning,
-            scene,
-          });
-          rocketLaunchBurstPools = nextRocketLaunchBurstPools;
-          disposables.push(...sharedLaunchBurstDisposables);
-
-          for (const rocketKind of AUTHORITATIVE_ROCKET_KINDS) {
-            const rocketAppearance =
-              initialScaledRocketVisualTuning[rocketKind];
-            const body = new Mesh(
-              rocketGeometry,
-              createRocketMaterial(
-                rocketAppearance.core,
-                rocketAppearance.trail,
-              ),
-            );
-            const trail = new Mesh(
-              ribbonGeometry,
-              createRocketTrailMaterial(
-                rocketAppearance.core,
-                rocketAppearance.trail,
-              ),
-            );
-            const flame = new Mesh(
-              ribbonGeometry,
-              createRocketFlameMaterial(
-                rocketAppearance.core,
-                rocketAppearance.trail,
-              ),
-            );
-            const ghostGroup = new Group();
-            ghostGroup.visible = false;
-            body.renderOrder = 3;
-            trail.renderOrder = 2;
-            flame.renderOrder = 4;
-            ghostGroup.add(trail, flame, body);
-            const burstMesh = new Mesh(
-              ribbonGeometry,
-              createRocketLaunchBurstMaterial(
-                rocketAppearance.core,
-                rocketAppearance.trail,
-              ),
-            );
-            burstMesh.renderOrder = 5;
-            burstMesh.visible = false;
-            const feedbackVisual = {
-              burstMesh,
-              ghost: {
-                body,
-                flame,
-                group: ghostGroup,
-                trail,
-              },
-            } satisfies SharedCombatImmediateFireFeedbackVisual;
-            hideSharedCombatImmediateFireFeedbackVisual(feedbackVisual);
-            scene.add(burstMesh, ghostGroup);
-            immediateFireFeedback.set(rocketKind, feedbackVisual);
-            disposables.push(
-              burstMesh.material as { dispose: () => void },
-              body.material as { dispose: () => void },
-              trail.material as { dispose: () => void },
-              flame.material as { dispose: () => void },
-            );
-          }
 
           const emitConnectionHud = (
             timeMs: number,
             extrapolating: boolean,
+            networkDiagnostics: AuthoritativeNetworkDiagnosticsSnapshot,
+            renderDiagnostics: AuthoritativeRenderDiagnostics,
           ) => {
             const runtime = options.getRuntimeState();
             const snapshot = runtime.snapshot;
@@ -908,7 +427,7 @@ export function createAuthoritativeViewport(
               runtime.roomRoster.map((entry) => [entry.playerId, entry.name]),
             );
             const performanceState = options.getPerformanceState();
-            emitHudState(
+            hudEmitter.emit(
               buildAuthoritativeHudState({
                 connection: {
                   extrapolating,
@@ -925,10 +444,14 @@ export function createAuthoritativeViewport(
                 currentEffectsQuality: renderQuality.effectsQuality,
                 currentTick: snapshot?.tick ?? 0,
                 currentMaxPixelRatio,
+                currentRenderModeLabel: rawRenderEnabled ? "raw" : undefined,
                 damageFlash,
                 eventLog: runtime.recentEvents,
                 extrapolating,
                 hudFlicker,
+                networkDiagnostics: performanceState.profilingEnabled
+                  ? networkDiagnostics
+                  : null,
                 playerId,
                 playerPlanet,
                 profilerSnapshot: performanceState.profilingEnabled
@@ -936,6 +459,9 @@ export function createAuthoritativeViewport(
                   : null,
                 profilingEnabled: performanceState.profilingEnabled,
                 recentEventsNowMs: timeMs,
+                renderDiagnostics: performanceState.profilingEnabled
+                  ? renderDiagnostics
+                  : null,
                 rosterNameByPlayerId,
                 runtimeStats,
                 selectedWeapon:
@@ -981,26 +507,6 @@ export function createAuthoritativeViewport(
           });
           const viewportInputController = inputController;
 
-          const screenToWorld = (clientX: number, clientY: number): Vec2 => {
-            const rect = nextRenderer.domElement.getBoundingClientRect();
-            const width = Math.max(1, rect.width);
-            const height = Math.max(1, rect.height);
-            const aspect = width / height;
-            const halfHeight = cameraState.visibleWorldHeight / 2;
-            const halfWidth = halfHeight * aspect;
-            const normalizedX = (clientX - rect.left) / width;
-            const normalizedY = (clientY - rect.top) / height;
-
-            return {
-              x:
-                cameraState.renderCenterX +
-                lerp(-halfWidth, halfWidth, normalizedX),
-              y:
-                cameraState.renderCenterY +
-                lerp(halfHeight, -halfHeight, normalizedY),
-            };
-          };
-
           syncAimWorldToPointer = () => {
             const pointerState = viewportInputController.state.pointerState;
             if (
@@ -1010,14 +516,18 @@ export function createAuthoritativeViewport(
               return;
             }
 
-            viewportInputController.state.inputState.aimWorld = screenToWorld(
-              pointerState.clientX,
-              pointerState.clientY,
-            );
+            viewportInputController.state.inputState.aimWorld =
+              screenToViewportWorld({
+                cameraState,
+                clampToViewport: false,
+                clientX: pointerState.clientX,
+                clientY: pointerState.clientY,
+                renderer: nextRenderer,
+              });
           };
 
           resizeViewport();
-          window.addEventListener("resize", resizeViewport);
+          viewportLifecycle.addResizeListener(resizeViewport);
 
           animationLoopController = createViewportAnimationLoopController({
             hostElement,
@@ -1036,7 +546,7 @@ export function createAuthoritativeViewport(
               }
             },
             onRenderError: (error) => {
-              handleViewportRenderError(error);
+              viewportLifecycle.reportRenderError(error);
             },
             renderFrame: (timeMs = performance.now()) => {
               const performanceState = options.getPerformanceState();
@@ -1055,8 +565,12 @@ export function createAuthoritativeViewport(
                 previousFrameTimeSec = nowSec;
               }
 
-              const frameDeltaSec = clamp(
+              const rawFrameDeltaSec = Math.max(
+                0,
                 nowSec - previousFrameTimeSec,
+              );
+              const frameDeltaSec = clamp(
+                rawFrameDeltaSec,
                 0,
                 MAX_FRAME_DELTA_SEC,
               );
@@ -1066,40 +580,103 @@ export function createAuthoritativeViewport(
               runtimeStats.fps = sampledRuntimeStats.fps;
               runtimeStats.frameTimeMs = sampledRuntimeStats.frameTimeMs;
               const runtime = options.getRuntimeState();
+              const networkDiagnostics = options.getNetworkDiagnostics(timeMs);
+              authoritativeAdaptiveInterpolationDelayMs =
+                getAuthoritativeAdaptiveInterpolationDelayMs({
+                  baseDelayMs: authoritativeBaseInterpolationDelayMs,
+                  currentDelayMs: authoritativeAdaptiveInterpolationDelayMs,
+                  frameDeltaSec,
+                  snapshotGapMaxMs: networkDiagnostics.snapshotGapMaxMs,
+                  snapshotGapP90Ms: networkDiagnostics.snapshotGapP90Ms,
+                  snapshotWindowMs,
+                });
               const snapshot = runtime.snapshot;
               const previousSnapshot = runtime.previousSnapshot ?? snapshot;
+              const snapshotBuffer =
+                runtime.snapshotBuffer.length > 0
+                  ? runtime.snapshotBuffer
+                  : snapshot === null
+                    ? []
+                    : [snapshot];
+              const renderClockFrame =
+                snapshot === null
+                  ? null
+                  : getAuthoritativeRenderClockFrame({
+                      frameDeltaSec,
+                      interpolationDelayMs:
+                        authoritativeAdaptiveInterpolationDelayMs,
+                      latestSnapshotReceivedAtMs: snapshot.receivedAtMs,
+                      latestSnapshotTick: snapshot.tick,
+                      previousRenderTick: authoritativeRenderTick,
+                      simHz: SIM_HZ,
+                      timeMs,
+                    });
+              if (renderClockFrame === null) {
+                authoritativeRenderTick = null;
+              }
 
               const interpolationProfilerStartMs = profilingEnabled
                 ? performance.now()
                 : 0;
-              const rawInterpolationAlpha =
-                snapshot === null || previousSnapshot === null
-                  ? 1
-                  : (timeMs -
-                      snapshot.receivedAtMs +
-                      authoritativeInterpolationLeadMs) /
-                    snapshotWindowMs;
+              const interpolationFrame =
+                renderClockFrame === null
+                  ? null
+                  : getAuthoritativeBufferedInterpolationFrame({
+                      maxAlpha: authoritativeInterpolationMaxAlpha,
+                      renderTick: renderClockFrame.renderTick,
+                      snapshots: snapshotBuffer,
+                    });
+              if (renderClockFrame !== null && snapshotBuffer.length < 3) {
+                authoritativeRenderTick = renderClockFrame.renderTick;
+              } else if (interpolationFrame !== null) {
+                authoritativeRenderTick = interpolationFrame.renderTick;
+              }
+              const renderPreviousSnapshot =
+                interpolationFrame?.previous ?? previousSnapshot;
+              const renderSnapshot = interpolationFrame?.current ?? snapshot;
               const interpolationAlpha =
-                snapshot === null || previousSnapshot === null
+                renderSnapshot === null || renderPreviousSnapshot === null
                   ? 1
-                  : clamp(
-                      rawInterpolationAlpha,
+                  : (interpolationFrame?.alpha ?? 1);
+              const interpolationTickSpanSec =
+                renderSnapshot === null || renderPreviousSnapshot === null
+                  ? undefined
+                  : Math.max(
                       0,
-                      authoritativeInterpolationMaxAlpha,
+                      (renderSnapshot.tick - renderPreviousSnapshot.tick) /
+                        SIM_HZ,
                     );
               const extrapolating =
-                snapshot !== null &&
-                timeMs - snapshot.receivedAtMs >
-                  authoritativeLateSnapshotThresholdMs;
+                interpolationFrame?.visuallyExtrapolating ?? false;
+              const renderTickForDiagnostics =
+                interpolationFrame?.renderTick ??
+                renderClockFrame?.renderTick ??
+                null;
+              const renderDiagnostics: AuthoritativeRenderDiagnostics = {
+                bufferDepth: snapshotBuffer.length,
+                desiredRenderTick: renderClockFrame?.desiredRenderTick ?? null,
+                interpolationAlpha,
+                latestSnapshotAgeMs:
+                  snapshot === null
+                    ? null
+                    : Math.max(0, timeMs - snapshot.receivedAtMs),
+                renderTick: renderTickForDiagnostics,
+                tickBehindLatest:
+                  snapshot === null || renderTickForDiagnostics === null
+                    ? null
+                    : snapshot.tick - renderTickForDiagnostics,
+                visuallyExtrapolating: extrapolating,
+              };
 
               const world =
-                snapshot === null
+                renderSnapshot === null
                   ? null
                   : syncAuthoritativeInterpolatedWorld(
                       authoritativeInterpolationCache,
-                      previousSnapshot?.world ?? snapshot.world,
-                      snapshot.world,
+                      renderPreviousSnapshot?.world ?? renderSnapshot.world,
+                      renderSnapshot.world,
                       interpolationAlpha,
+                      interpolationTickSpanSec,
                     );
               const interpolationProfilerEndMs = profilingEnabled
                 ? performance.now()
@@ -1110,19 +687,12 @@ export function createAuthoritativeViewport(
 
               const playerId = runtime.playerId;
               const playerPlanet =
-                playerId === null || world === null || snapshot === null
-                  ? null
-                  : (syncAuthoritativeLocalPlayerPrediction({
-                      playerId,
-                      predictionMs: Math.max(0, timeMs - snapshot.receivedAtMs),
-                      renderWorld: world,
-                      snapshotTick: snapshot.tick,
-                      snapshotWorld: snapshot.world,
-                    }) ??
-                    world.planets.find(
-                      (planet) => planet.playerId === playerId,
-                    ) ??
-                    null);
+                reconcileAuthoritativeLocalPlanetPresentation({
+                  frameDeltaSec,
+                  playerId,
+                  state: localPlanetPresentationState,
+                  world,
+                });
               if (playerPlanet !== null) {
                 viewportInputController.updateKeyboardAim(
                   playerPlanet.pos,
@@ -1136,54 +706,36 @@ export function createAuthoritativeViewport(
                   frameDeltaSec,
                   hudFlicker,
                 }));
-              lastProcessedLaunchBurstSnapshotTick =
-                syncAuthoritativeLaunchBurstFeedback({
-                  activeLaunchBurstsByKind,
-                  currentPlayerId: playerId,
-                  currentSnapshot: snapshot,
-                  lastProcessedSnapshotTick:
-                    lastProcessedLaunchBurstSnapshotTick,
-                  previousSnapshotWorld: previousSnapshot?.world,
-                  rocketKinds: AUTHORITATIVE_ROCKET_KINDS,
-                });
-              ({ cameraShake, damageFlash, hudFlicker, lastProcessedEventId } =
-                syncAuthoritativeRecentEventFeedback({
-                  activeBoostBursts,
-                  activeImpactBursts,
-                  blackHoleSource:
-                    snapshot?.world.blackHole ??
-                    previousSnapshot?.world.blackHole ??
-                    null,
-                  lastProcessedEventId,
-                  localAimWorld:
-                    viewportInputController.state.inputState.aimWorld,
-                  localPlayerPlanet: playerPlanet,
-                  maxActiveBoostBursts: MAX_ACTIVE_BOOST_BURSTS,
-                  maxActiveImpactBursts: MAX_ACTIVE_IMPACT_BURSTS,
-                  nowSec,
-                  queueBlackHoleSwallowEffect: ({
-                    color,
-                    radius,
-                    startPos,
-                    targetPos,
-                  }) => {
-                    queueBlackHoleSwallowEffect({
-                      activeEffects: activeBlackHoleSwallowEffects,
-                      color,
-                      inactiveVisuals: inactiveBlackHoleSwallowVisuals,
-                      radius,
-                      startedAtSec: nowSec,
-                      startPos,
-                      targetPos,
-                    });
-                  },
-                  runtime,
-                  screenEffects: {
-                    cameraShake,
-                    damageFlash,
-                    hudFlicker,
-                  },
-                }));
+              ({
+                cameraShake,
+                damageFlash,
+                hudFlicker,
+                lastProcessedEventId,
+                lastProcessedLaunchBurstSnapshotTick,
+              } = syncAuthoritativeViewportRuntimeFeedback({
+                adapter: runtimeAdapter,
+                blackHoleSource:
+                  snapshot?.world.blackHole ??
+                  previousSnapshot?.world.blackHole ??
+                  null,
+                currentPlayerId: playerId,
+                currentSnapshot: snapshot,
+                lastProcessedEventId,
+                lastProcessedLaunchBurstSnapshotTick,
+                localAimWorld:
+                  viewportInputController.state.inputState.aimWorld,
+                localPlayerPlanet: playerPlanet,
+                maxActiveBoostBursts: MAX_ACTIVE_BOOST_BURSTS,
+                maxActiveImpactBursts: MAX_ACTIVE_IMPACT_BURSTS,
+                nowSec,
+                previousSnapshotWorld: previousSnapshot?.world,
+                runtime,
+                screenEffects: {
+                  cameraShake,
+                  damageFlash,
+                  hudFlicker,
+                },
+              }));
               const frame = getCameraFrame(world, playerPlanet);
               const cameraZoomAlpha =
                 1 - Math.exp(-CAMERA_ZOOM_LERP * frameDeltaSec);
@@ -1212,46 +764,16 @@ export function createAuthoritativeViewport(
               });
               cameraState.shakeOffsetX = shakeOffsets.x;
               cameraState.shakeOffsetY = shakeOffsets.y;
-              applyCameraFrame();
+              applyViewportCameraFrame({
+                backdropMesh,
+                camera,
+                cameraState,
+                hostElement,
+              });
               syncAimWorldToPointer?.();
 
               const selectedRocketKind =
                 viewportInputController.state.inputState.selectedRocketKind;
-              const arenaRadius =
-                world?.arenaRadius ??
-                getRuntimeTuningDocument().gameplay.arena.radius;
-              authoritativePlanetsById.clear();
-              for (const planet of world?.planets ?? []) {
-                authoritativePlanetsById.set(planet.id, planet);
-              }
-              updateAmbientBoundaryDebrisVisual({
-                blackHoleBody:
-                  world?.blackHole === undefined
-                    ? null
-                    : {
-                        pos: world.blackHole.pos,
-                        radius: world.blackHole.killRadius,
-                      },
-                enableFallingDebris: false,
-                nowSec,
-                neutronStarBodies: world?.neutronStars,
-                planetBodies: world?.planets,
-                sunBodies: world?.suns,
-                visual: boundaryDebrisVisual,
-                ...getAmbientBoundaryDebrisRadii(arenaRadius),
-              });
-              const maxDebrisSamples = getBudgetedCount(
-                MAX_DEBRIS_SAMPLES,
-                renderQuality.debrisBudget,
-              );
-              updateAuthoritativeDebrisVisual({
-                boundaryDebrisVisual,
-                debris: world?.debris ?? [],
-                maxSamples: maxDebrisSamples,
-                nowSec,
-                planets: world?.planets ?? [],
-                visual: debrisVisual,
-              });
 
               const combatControl = resolveAuthoritativeCombatControlStep({
                 connectionState: runtime.connectionState,
@@ -1284,11 +806,10 @@ export function createAuthoritativeViewport(
               if (combatControl.sendInput && combatControl.aimDir !== null) {
                 lastInputSentAtMs = timeMs;
                 options.dispatchMessage({
-                  clientTick: nextClientTick,
+                  clientTick: getAuthoritativeClientTick(snapshot, timeMs),
                   mouseDir: combatControl.aimDir,
                   type: "input",
                 });
-                nextClientTick += 1;
               }
               if (
                 combatControl.sendShieldAim &&
@@ -1313,30 +834,43 @@ export function createAuthoritativeViewport(
                   selectedRocketKind !== "seeker" ||
                   seekerTargetId !== undefined
                 ) {
-                  options.dispatchMessage({
-                    aimDir: combatControl.aimDir,
-                    clientTick: nextClientTick,
-                    kind: selectedRocketKind,
-                    targetId: seekerTargetId,
-                    type: "fireRocket",
-                  });
-                  ({
-                    immediateCannonFlashState,
-                    screenEffects: { cameraShake, damageFlash, hudFlicker },
-                  } = queueAuthoritativeImmediateFireFeedback({
-                    aimDir: combatControl.aimDir,
-                    immediateFireBurstState,
-                    immediateGhostRocketState,
-                    nowSec,
+                  const actionTick = getAuthoritativeClientTick(
+                    snapshot,
+                    timeMs,
+                  );
+                  const fireReady = canDispatchAuthoritativeRocketFire({
+                    actionTick,
+                    lastFireSentAtTick:
+                      lastFireSentAtTickByKind[selectedRocketKind],
                     playerPlanet,
                     rocketKind: selectedRocketKind,
-                    screenEffects: {
-                      cameraShake,
-                      damageFlash,
-                      hudFlicker,
-                    },
-                  }));
-                  nextClientTick += 1;
+                    self: snapshot?.self ?? null,
+                  });
+                  if (fireReady) {
+                    options.dispatchMessage({
+                      aimDir: combatControl.aimDir,
+                      clientTick: actionTick,
+                      kind: selectedRocketKind,
+                      targetId: seekerTargetId,
+                      type: "fireRocket",
+                    });
+                    lastFireSentAtTickByKind[selectedRocketKind] = actionTick;
+                    ({
+                      immediateCannonFlashState,
+                      screenEffects: { cameraShake, damageFlash, hudFlicker },
+                    } = queueAuthoritativeViewportRuntimeImmediateFireFeedback({
+                      aimDir: combatControl.aimDir,
+                      adapter: runtimeAdapter,
+                      nowSec,
+                      playerPlanet,
+                      rocketKind: selectedRocketKind,
+                      screenEffects: {
+                        cameraShake,
+                        damageFlash,
+                        hudFlicker,
+                      },
+                    }));
+                  }
                 }
               }
 
@@ -1359,66 +893,36 @@ export function createAuthoritativeViewport(
                     gravityPulseFeedbackState,
                     immediateShieldFeedbackState,
                     screenEffects: { cameraShake, damageFlash, hudFlicker },
-                  } = queueAuthoritativeImmediateAbilityFeedback({
-                    abilitySlot,
-                    activeBoostBursts,
-                    aimDir: combatControl.aimDir,
-                    gravityPulseFeedbackState,
-                    immediateShieldFeedbackState,
-                    maxActiveBoostBursts: MAX_ACTIVE_BOOST_BURSTS,
-                    nowSec,
-                    playerPlanet,
-                    screenEffects: {
-                      cameraShake,
-                      damageFlash,
-                      hudFlicker,
+                  } = queueAuthoritativeViewportRuntimeImmediateAbilityFeedback(
+                    {
+                      abilitySlot,
+                      adapter: runtimeAdapter,
+                      aimDir: combatControl.aimDir,
+                      gravityPulseFeedbackState,
+                      immediateShieldFeedbackState,
+                      maxActiveBoostBursts: MAX_ACTIVE_BOOST_BURSTS,
+                      nowSec,
+                      playerPlanet,
+                      screenEffects: {
+                        cameraShake,
+                        damageFlash,
+                        hudFlicker,
+                      },
+                      snapshotTick: snapshot?.tick ?? null,
                     },
-                    snapshotTick: snapshot?.tick ?? null,
-                  }));
+                  ));
                 }
               }
 
               viewportInputController.clearStepScopedRequests();
 
               const tuning = getRuntimeTuningDocument();
-              const scaledRocketVisualTuning = getScaledRocketVisuals(
-                tuning.visuals.rockets,
-              );
-              const shieldVisual =
-                shieldGroup !== null &&
-                shieldArcOpacityUniform !== null &&
-                shieldPanelOpacityUniform !== null &&
-                shieldCrestOpacityUniform !== null &&
-                shieldGlowOpacityUniform !== null
-                  ? {
-                      arcOpacityUniform: shieldArcOpacityUniform,
-                      crestOpacityUniform: shieldCrestOpacityUniform,
-                      glowOpacityUniform: shieldGlowOpacityUniform,
-                      group: shieldGroup,
-                      panelOpacityUniform: shieldPanelOpacityUniform,
-                    }
-                  : null;
-              const lockRingVisual =
-                lockRingMesh !== null &&
-                lockRingProgressUniform !== null &&
-                lockRingLockedUniform !== null &&
-                lockRingTimeUniform !== null
-                  ? {
-                      lockedUniform: lockRingLockedUniform,
-                      mesh: lockRingMesh,
-                      progressUniform: lockRingProgressUniform,
-                      timeUniform: lockRingTimeUniform,
-                    }
-                  : null;
-              const controlsEnabled =
-                runtime.phase === "combat" &&
-                runtime.connectionState === "connected";
               ({
                 gravityPulse: gravityPulseFeedbackState,
                 immediateCannonFlashState,
                 shieldImmediateFeedback: immediateShieldFeedbackState,
-              } = updateAuthoritativeViewportScene({
-                authoritativePlanetsById,
+              } = updateAuthoritativeViewportRuntimeFrame({
+                adapter: runtimeAdapter,
                 background: {
                   backgroundLayers,
                   nowSec,
@@ -1429,12 +933,6 @@ export function createAuthoritativeViewport(
                   visibleWorldHeight: cameraState.visibleWorldHeight,
                 },
                 combat: {
-                  boostHeld:
-                    playerPlanet !== null &&
-                    controlsEnabled &&
-                    (runtime.snapshot?.self?.boostCharges ?? 0) > 0 &&
-                    viewportInputController.state.pendingAbilityRequests.boost,
-                  controlsEnabled,
                   currentSeekerLockProgress,
                   currentSeekerLockTarget,
                   gravityPulseFeedbackState,
@@ -1443,103 +941,24 @@ export function createAuthoritativeViewport(
                   playerId,
                   playerPlanet,
                   selectedRocketKind,
-                  viewportAimWorld:
-                    viewportInputController.state.inputState.aimWorld,
-                },
-                effects: {
-                  activeBlackHoleSwallowEffects,
-                  activeBoostBursts,
-                  activeCacheIds,
-                  activeImpactBursts,
-                  activeLaunchBurstsByKind,
-                  activePlanetExplosions,
-                  impactBurstVisuals,
-                  inactiveBlackHoleSwallowVisuals,
-                  inactivePlanetExplosionVisuals,
-                },
-                geometries: {
-                  glowGeometry,
-                  planetGeometry,
-                  ribbonGeometry,
-                  sunGeometry,
-                  warpGeometry,
                 },
                 hostElement,
-                maps: {
-                  neutronStarVisuals,
-                  planetTrails,
-                  planetVisuals,
-                  sunVisuals,
-                },
-                previousState: {
-                  previousCacheBodiesById,
-                  previousNeutronStarsById,
-                  previousRocketBodiesById,
-                  previousSunBodiesById,
-                },
+                inputRuntime: viewportInputController.state,
                 renderQuality,
-                rocketKinds: AUTHORITATIVE_ROCKET_KINDS,
-                rocketLaunchBurstPools,
-                rocketPools,
-                rocketTrailStates,
-                rocketsByKind,
+                runtime,
                 scene,
                 tuning,
-                visuals: {
-                  blackHoleGroup,
-                  blackHoleRing,
-                  boostBurstVisual,
-                  cacheSpriteAssets,
-                  cacheVisuals,
-                  cannonVisual,
-                  gravityPulseVisual,
-                  lockRingVisual,
-                  shieldVisual,
-                },
                 world,
               }));
 
-              syncSharedCombatImmediateFireFeedback({
-                burstDurationSec: IMMEDIATE_FIRE_BURST_DURATION_SEC,
-                burstStatesByKind: immediateFireBurstState,
-                feedbackByKind: immediateFireFeedback,
-                ghostDurationSec: IMMEDIATE_GHOST_ROCKET_DURATION_SEC,
-                ghostStatesByKind: immediateGhostRocketState,
-                nowSec,
-                rocketAppearances: scaledRocketVisualTuning,
-                rocketSpeeds: {
-                  heavy: ROCKET_SPECS.heavy.speed,
-                  light: ROCKET_SPECS.light.speed,
-                  seeker: ROCKET_SPECS.seeker.speed,
-                },
-                shouldYieldGhost: ({ ghostPosition, rocketKind }) =>
-                  playerId !== null &&
-                  (world?.rockets.some((rocket) => {
-                    if (
-                      rocket.ownerId !== playerId ||
-                      rocket.rocketKind !== rocketKind
-                    ) {
-                      return false;
-                    }
-
-                    return (
-                      Math.hypot(
-                        rocket.pos.x - ghostPosition.x,
-                        rocket.pos.y - ghostPosition.y,
-                      ) <=
-                      Math.max(
-                        42,
-                        ROCKET_SPECS[rocketKind].speed * 0.04,
-                        rocket.radius * 6,
-                      )
-                    );
-                  }) ??
-                    false),
-              });
-
               if (nowSec >= lastHudUpdateSec) {
                 lastHudUpdateSec = nowSec + HUD_UPDATE_INTERVAL_SEC;
-                emitConnectionHud(timeMs, extrapolating);
+                emitConnectionHud(
+                  timeMs,
+                  extrapolating,
+                  networkDiagnostics,
+                  renderDiagnostics,
+                );
               }
 
               const renderProfilerEndMs = profilingEnabled
@@ -1548,12 +967,17 @@ export function createAuthoritativeViewport(
               const submitProfilerStartMs = profilingEnabled
                 ? performance.now()
                 : 0;
-              postProcessing.render();
+              if (rawRenderEnabled) {
+                nextRenderer.render(scene, nextCamera);
+              } else {
+                postProcessing.render();
+              }
               if (profilingEnabled) {
                 const submitProfilerEndMs = performance.now();
                 performanceProfiler.record({
                   frameCpuMs: submitProfilerEndMs - frameProfilerStartMs,
                   frameDeltaSec,
+                  frameGapSec: rawFrameDeltaSec,
                   interpolationMs:
                     interpolationProfilerEndMs - interpolationProfilerStartMs,
                   renderCpuMs: renderProfilerEndMs - renderProfilerStartMs,
@@ -1568,8 +992,7 @@ export function createAuthoritativeViewport(
         },
       });
     } catch (error) {
-      disposeViewportSession();
-      managedViewportSession.reportFailure(error);
+      viewportLifecycle.reportRenderError(error);
     }
   };
 

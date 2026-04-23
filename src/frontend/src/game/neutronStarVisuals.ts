@@ -23,7 +23,9 @@ export const getNeutronStarVisualShape = ({
 }) => ({
   coreRadius: radius * pulse,
   haloRadius:
-    radius * (tuning.haloScale + massAlpha * NEUTRON_STAR_HALO_MASS_SCALE) * haloPulse,
+    radius *
+    (tuning.haloScale + massAlpha * NEUTRON_STAR_HALO_MASS_SCALE) *
+    haloPulse,
   jetLength:
     radius *
     (tuning.jetLengthScale + massAlpha * NEUTRON_STAR_LENGTH_MASS_SCALE),

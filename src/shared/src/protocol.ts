@@ -14,6 +14,7 @@ import type {
   Sun,
   WildcardKind,
   World,
+  WorldOrbitStarMotion,
 } from "./entities";
 import type { Vec2 } from "./vec2";
 
@@ -85,6 +86,88 @@ export interface SnapshotRemoved {
   caches?: EntityId[];
   debris?: EntityId[];
   blackHole?: true;
+}
+
+export type SnapshotSunUpdateRow = [
+  id: EntityId,
+  x: number,
+  y: number,
+  vx: number,
+  vy: number,
+  mass: number,
+  radius: number,
+];
+
+export type SnapshotNeutronStarUpdateRow = [
+  id: EntityId,
+  x: number,
+  y: number,
+  vx: number,
+  vy: number,
+  mass: number,
+  radius: number,
+];
+
+export type SnapshotPlanetUpdateRow = [
+  id: EntityId,
+  x: number,
+  y: number,
+  vx: number,
+  vy: number,
+  hp: number,
+  shieldX: number,
+  shieldY: number,
+  shieldActive: 0 | 1,
+  shieldLoad: number,
+  shieldMaxLoad: number,
+  debuffs: PlanetPublic["debuffs"],
+];
+
+export type SnapshotRocketUpdateRow = [
+  id: EntityId,
+  x: number,
+  y: number,
+  vx: number,
+  vy: number,
+  ttlUntilTick: number,
+];
+
+export type SnapshotCacheUpdateRow = [
+  id: EntityId,
+  x: number,
+  y: number,
+  vx: number,
+  vy: number,
+];
+
+export type SnapshotDebrisUpdateRow = [
+  id: EntityId,
+  x: number,
+  y: number,
+  vx: number,
+  vy: number,
+  ttlUntilTick: number,
+];
+
+export interface SnapshotV2Spawns {
+  suns?: Sun[];
+  neutronStars?: NeutronStar[];
+  planets?: PlanetPublic[];
+  rockets?: Rocket[];
+  caches?: Cache[];
+  debris?: Debris[];
+  blackHole?: BlackHole;
+}
+
+export interface SnapshotV2Updates {
+  suns?: SnapshotSunUpdateRow[];
+  neutronStars?: SnapshotNeutronStarUpdateRow[];
+  planets?: SnapshotPlanetUpdateRow[];
+  rockets?: SnapshotRocketUpdateRow[];
+  caches?: SnapshotCacheUpdateRow[];
+  debris?: SnapshotDebrisUpdateRow[];
+  blackHole?: BlackHole;
+  orbitStarMotion?: WorldOrbitStarMotion | null;
 }
 
 export type SnapshotEvent =
@@ -164,6 +247,7 @@ export interface HelloMsg {
   join: JoinRequest;
   profileToken?: ProfileToken;
   resumeToken?: ResumeToken;
+  snapshotVersion?: 1 | 2;
 }
 
 export interface SetBotDifficultyMsg {
@@ -292,6 +376,7 @@ export interface CountdownMsg {
 export interface FullSnapshotMsg {
   type: "fullSnapshot";
   tick: number;
+  sentAtMs?: number;
   world: World;
   self: PlanetPrivateState | null;
 }
@@ -299,8 +384,20 @@ export interface FullSnapshotMsg {
 export interface DeltaSnapshotMsg {
   type: "deltaSnapshot";
   tick: number;
+  sentAtMs?: number;
   baseTick: number;
   changed: SnapshotDelta;
+  removed: SnapshotRemoved;
+  self?: PlanetPrivateState | null;
+}
+
+export interface SnapshotV2Msg {
+  type: "snapshotV2";
+  tick: number;
+  sentAtMs?: number;
+  baseTick: number;
+  spawns: SnapshotV2Spawns;
+  updates: SnapshotV2Updates;
   removed: SnapshotRemoved;
   self?: PlanetPrivateState | null;
 }
@@ -342,6 +439,7 @@ export type ServerMsg =
   | CountdownMsg
   | FullSnapshotMsg
   | DeltaSnapshotMsg
+  | SnapshotV2Msg
   | EventMsg
   | ChatMessageMsg
   | RematchStateMsg

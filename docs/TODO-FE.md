@@ -33,7 +33,7 @@ Goal: default offline orbit sandbox with 3 suns + 7 planets under N-body gravity
 
 - [x] Instantiate 3 suns near an equilateral triangle with small asymmetric offsets/velocities for chaos.
 - [x] Add a 7-planet pack with distinct inner / transfer / outer orbit profiles instead of a single safe orbit.
-- [x] Run the sim at 120 Hz in a fixed-step accumulator loop; render at vsync.
+- [x] Run the sim at 60 Hz in a fixed-step accumulator loop; render at vsync.
 - [x] Render suns + planets as simple filled unlit bodies for now.
 - [x] Render the arena boundary ring at `ARENA_RADIUS` from the start so the playable space is always readable.
 - [x] Add per-frame **trail** rendering (last ~3s, fading alpha) for planets.
@@ -106,7 +106,7 @@ Still single-player and local-sim. Build the loop, then network it.
 - [x] Drone destroyed on rocket hit; cargo drops at death position for anyone to collect.
 - [x] Render Cache destruction on rocket / planet / sun / Black Hole contact and remove it cleanly from the scene until respawn.
 - [x] Implement each Cache effect on delivery: Heavy ammo +1, Seeker pack +2, Repair, Boost charge +1, Shield extender, Foresight extender.
-- [x] Implement **Gravity Pulse** wildcard roll (~10%): grants a one-shot extra ability bound to `G` until used. It pushes nearby planets, rockets, and caches away from the player on activation.
+- [x] Implement **Gravity Pulse** wildcard roll (~10%): grants a one-shot extra ability bound to `G` until used. It pushes nearby planets, rockets, boundary asteroids, and caches away from the player on activation.
 - [x] Drone cooldown: 8s between launches.
 
 **Done when:** you can fly a drone out, grab a Cache, deliver it, and the effect applies. Gravity Pulse triggers on G.
@@ -153,7 +153,7 @@ Client-side pieces of networking that can be built against mock data before BE i
 - [ ] Ack every applied `fullSnapshot` / `deltaSnapshot` with `ackSnapshot{tick}`; merge `changed` as full entity replacements by collection + `id`, remove entities listed in `removed`, and update owner-only HUD state from snapshot `self`. When an applied snapshot carries explicit `self:null`, transition the client state to `spectating`. Handle `error`, `pong`, `chatMessage`, and `rematchState` outside the snapshot buffer.
 - [ ] Map protocol `ErrorCode` values deterministically in the client: `invalid_room|bad_resume_token|room_full|server_full` route to `room-error`; `name_invalid|not_host|phase_invalid|invalid_action|rate_limited|invalid_message` stay in-place and surface inline feedback.
 - [ ] Handle time-critical one-shot events outside the snapshot buffer: `blackHoleSpawn` switches overtime HUD/VFX immediately, `wildcardRoll` drives grant UI/SFX when a wildcard slot is awarded, and `wildcardUse` drives activation VFX/SFX when `R` resolves successfully.
-- [ ] Receive snapshots at 30 Hz, buffer, and **interpolate** rendered transforms between the two latest server snapshots for smooth render.
+- [ ] Receive snapshots at 60 Hz, buffer, and **interpolate** rendered transforms between the two latest server snapshots for smooth render.
 - [ ] **Client-side prediction** for *firing actions only* is cosmetic: show muzzle flash + a short-lived ghost rocket immediately, then reconcile/discard when the authoritative server rocket arrives.
 - [ ] Immediate local ability feedback is presentation-only: Shield may raise the owner-local arc instantly, Foresight may render instantly from the latest local state, and Boost / Wildcard may play cast VFX/SFX and HUD state immediately. Do **not** locally move planets, apply teleport swaps, or mutate authoritative world state before the matching snapshot / event arrives.
 - [ ] Do **not** predict live planet movement or trust local gameplay state. In networked mode, planets, rockets, drones, caches, HP, cooldowns, and kills render from server snapshots/events only. (Per design: chaos diverges fast.)

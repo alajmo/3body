@@ -116,14 +116,7 @@ const createShieldArcMaterial = ({
     smoothstep(
       0.16,
       0.68,
-      abs(
-        sin(
-          localPos.x
-            .mul(3.1)
-            .add(localPos.y.mul(5.2))
-            .sub(time.mul(0.1)),
-        ),
-      ),
+      abs(sin(localPos.x.mul(3.1).add(localPos.y.mul(5.2)).sub(time.mul(0.1)))),
     ),
   );
   const gridC = float(1).sub(
@@ -131,12 +124,7 @@ const createShieldArcMaterial = ({
       0.16,
       0.68,
       abs(
-        sin(
-          localPos.x
-            .mul(3.1)
-            .sub(localPos.y.mul(5.2))
-            .add(time.mul(0.08)),
-        ),
+        sin(localPos.x.mul(3.1).sub(localPos.y.mul(5.2)).add(time.mul(0.08))),
       ),
     ),
   );
@@ -158,7 +146,8 @@ const createShieldArcMaterial = ({
   const faceColor = mix(
     baseColor,
     color(hotTint),
-    lattice.mul(0.28)
+    lattice
+      .mul(0.28)
       .add(innerRim.mul(spineMask).mul(0.22))
       .add(energyFront.mul(spineMask).mul(0.18)),
   );
@@ -236,12 +225,12 @@ const createShieldGlowMaterial = ({
   )
     .mul(0.5)
     .add(0.5);
-  const wave = sin(radial.mul(9.6).add(time.mul(4.8)).add(positionLocal.y.mul(2.1)))
+  const wave = sin(
+    radial.mul(9.6).add(time.mul(4.8)).add(positionLocal.y.mul(2.1)),
+  )
     .mul(0.5)
     .add(0.5);
-  const pulse = sin(
-    time.mul(5.1).add(haze.mul(1.9)).add(forwardMask.mul(4.2)),
-  )
+  const pulse = sin(time.mul(5.1).add(haze.mul(1.9)).add(forwardMask.mul(4.2)))
     .mul(0.18)
     .add(0.9);
   const glowColor = mix(
@@ -316,12 +305,7 @@ const createShieldPanelMaterial = ({
       0.14,
       0.58,
       abs(
-        sin(
-          localPos.x
-            .mul(2.1)
-            .add(localPos.y.mul(3.6))
-            .sub(time.mul(0.08)),
-        ),
+        sin(localPos.x.mul(2.1).add(localPos.y.mul(3.6)).sub(time.mul(0.08))),
       ),
     ),
   );
@@ -330,12 +314,7 @@ const createShieldPanelMaterial = ({
       0.14,
       0.58,
       abs(
-        sin(
-          localPos.x
-            .mul(2.1)
-            .sub(localPos.y.mul(3.6))
-            .add(time.mul(0.06)),
-        ),
+        sin(localPos.x.mul(2.1).sub(localPos.y.mul(3.6)).add(time.mul(0.06))),
       ),
     ),
   );
@@ -366,7 +345,13 @@ const createShieldPanelMaterial = ({
   const alpha = shellMask
     .mul(forwardMask)
     .mul(opacityUniform)
-    .mul(panelGrid.mul(0.46).add(activeCells.mul(0.1)).add(scanRidge.mul(0.1)).add(0.04))
+    .mul(
+      panelGrid
+        .mul(0.46)
+        .add(activeCells.mul(0.1))
+        .add(scanRidge.mul(0.1))
+        .add(0.04),
+    )
     .mul(scan.mul(0.12).add(0.88));
 
   material.fragmentNode = vec4(
@@ -447,7 +432,11 @@ const createShieldCrestMaterial = ({
     .mul(flow.mul(0.18).add(0.82));
 
   material.fragmentNode = vec4(
-    mix(crestColor, color("#effbff"), centerlineMask.mul(0.42).add(sweep.mul(0.24)))
+    mix(
+      crestColor,
+      color("#effbff"),
+      centerlineMask.mul(0.42).add(sweep.mul(0.24)),
+    )
       .mul(sweep.mul(0.28).add(1.06))
       .mul(forwardMask.mul(0.3).add(1.06)),
     alpha,

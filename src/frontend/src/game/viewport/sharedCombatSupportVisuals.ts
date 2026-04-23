@@ -2,7 +2,7 @@ import { add, clamp, len, lerp, scale, type Vec2 } from "@3body/shared";
 import type { Group, Mesh, MeshBasicMaterial } from "three/webgpu";
 import { getRenderedShieldOuterRadius } from "../shieldPresentation";
 import { getBlackHoleVisualScale } from "./blackHoleVisuals";
-import { getCannonWorldLayout } from "../rocketVisibility";
+import type { getCannonWorldLayout } from "../rocketVisibility";
 import type {
   SharedCombatGravityPulseVisual,
   SharedCombatImpactBurstVisual,
@@ -24,7 +24,7 @@ interface SharedCombatGravityPulseDepths {
   ring: number;
 }
 
-export interface SharedCombatImpactBurstPresentation {
+interface SharedCombatImpactBurstPresentation {
   absorbedByShield: boolean;
   durationSec: number;
   normal: Vec2;
@@ -47,7 +47,7 @@ export interface SharedCombatShieldImpactBurst {
   startedAtSec: number;
 }
 
-export interface SharedCombatShieldHitReact {
+interface SharedCombatShieldHitReact {
   arcBoost: number;
   glowBoost: number;
   offset: Vec2;
@@ -63,7 +63,7 @@ export interface SharedCombatShieldVisual {
   panelOpacityUniform: { value: unknown };
 }
 
-export interface SharedCombatShieldPresentation {
+interface SharedCombatShieldPresentation {
   arcOpacity: number;
   center: Vec2;
   crestOpacity: number;
@@ -113,7 +113,7 @@ export interface SharedCombatCannonVisual {
   stemMesh: Mesh;
 }
 
-export interface SharedCombatCannonPresentation {
+interface SharedCombatCannonPresentation {
   accent: string;
   aimAngle: number;
   flashAccent: string | null;
@@ -135,7 +135,7 @@ export interface SharedCombatImmediateShieldFeedbackState {
   startedAtSec: number;
 }
 
-export const hideSharedCombatGravityPulseVisual = (
+const hideSharedCombatGravityPulseVisual = (
   visual: SharedCombatGravityPulseVisual,
 ) => {
   visual.coreMesh.visible = false;
@@ -146,7 +146,7 @@ export const hideSharedCombatGravityPulseVisual = (
   visual.echoMaterial.opacity = 0;
 };
 
-export const updateSharedCombatGravityPulseVisual = ({
+const updateSharedCombatGravityPulseVisual = ({
   durationSec,
   nowSec,
   pulse,
@@ -306,9 +306,7 @@ export const getSharedCombatShieldHitReact = ({
   };
 };
 
-export const hideSharedCombatShieldVisual = (
-  visual: SharedCombatShieldVisual,
-) => {
+const hideSharedCombatShieldVisual = (visual: SharedCombatShieldVisual) => {
   visual.group.visible = false;
   visual.glowOpacityUniform.value = 0;
   visual.arcOpacityUniform.value = 0;
@@ -316,7 +314,7 @@ export const hideSharedCombatShieldVisual = (
   visual.crestOpacityUniform.value = 0;
 };
 
-export const syncSharedCombatShieldVisual = ({
+const syncSharedCombatShieldVisual = ({
   state,
   visual,
 }: {
@@ -515,15 +513,13 @@ export const getSharedCombatLockRingScale = ({
   return baseRadius * (locked ? lockedPulse : chargePulse);
 };
 
-export const hideSharedCombatLockRingVisual = (
-  visual: SharedCombatLockRingVisual,
-) => {
+const hideSharedCombatLockRingVisual = (visual: SharedCombatLockRingVisual) => {
   visual.mesh.visible = false;
   visual.progressUniform.value = 0;
   visual.lockedUniform.value = 0;
 };
 
-export const syncSharedCombatLockRingVisual = ({
+const syncSharedCombatLockRingVisual = ({
   state,
   visual,
 }: {
@@ -669,9 +665,7 @@ export const syncSharedCombatCannonVisual = ({
   visual.flashMesh.scale.set(flashLength, flashWidth, flashWidth);
 };
 
-export const hideSharedCombatCannonVisual = (
-  visual: SharedCombatCannonVisual,
-) => {
+const hideSharedCombatCannonVisual = (visual: SharedCombatCannonVisual) => {
   visual.group.visible = false;
   visual.flashMesh.visible = false;
   visual.flashMaterial.opacity = 0;

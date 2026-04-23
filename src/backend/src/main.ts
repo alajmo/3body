@@ -1,3 +1,5 @@
+import { statSync } from "node:fs";
+import { extname, resolve, sep } from "node:path";
 import { config } from "./config";
 import type { ConnectionWebSocketData } from "./connection";
 import {
@@ -61,149 +63,296 @@ const isOriginAllowed = (origin: string | null, clientIp: string): boolean => {
 const jsonError = (status: number, message: string): Response =>
   Response.json({ error: message }, { status });
 
+const STATIC_FRONTEND_DIR_CANDIDATES = [
+  process.env.STATIC_DIR?.trim(),
+  resolve(process.cwd(), "src/frontend/dist"),
+  resolve(process.cwd()),
+  resolve(import.meta.dir, "../../frontend/dist"),
+].filter((value): value is string => value !== undefined && value.length > 0);
+
+const isRegularFile = (path: string): boolean => {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+};
+
+const resolveStaticFrontendDir = (): string | null => {
+  for (const candidate of STATIC_FRONTEND_DIR_CANDIDATES) {
+    const resolved = resolve(candidate);
+    if (isRegularFile(resolve(resolved, "index.html"))) {
+      return resolved;
+    }
+  }
+
+  return null;
+};
+
+const getStaticContentType = (filePath: string): string => {
+  switch (extname(filePath)) {
+    case ".css":
+      return "text/css; charset=utf-8";
+    case ".html":
+      return "text/html; charset=utf-8";
+    case ".js":
+      return "text/javascript; charset=utf-8";
+    case ".json":
+      return "application/json; charset=utf-8";
+    case ".png":
+      return "image/png";
+    case ".svg":
+      return "image/svg+xml";
+    case ".wasm":
+      return "application/wasm";
+    case ".webp":
+      return "image/webp";
+    default:
+      return "application/octet-stream";
+  }
+};
+
+const staticFrontendDir = resolveStaticFrontendDir();
+
+const resolveStaticFrontendPath = (
+  staticDir: string,
+  pathname: string,
+): string | null => {
+  let decodedPathname: string;
+  try {
+    decodedPathname = decodeURIComponent(pathname);
+  } catch {
+    return null;
+  }
+
+  const requestedPath = decodedPathname.endsWith("/")
+    ? `${decodedPathname}index.html`
+    : decodedPathname;
+  const filePath = resolve(staticDir, `.${requestedPath}`);
+  if (filePath !== staticDir && !filePath.startsWith(`${staticDir}${sep}`)) {
+    return null;
+  }
+
+  return filePath;
+};
+
+const createStaticFrontendResponse = (filePath: string): Response =>
+  new Response(Bun.file(filePath), {
+    headers: {
+      "Content-Type": getStaticContentType(filePath),
+    },
+  });
+
+const serveStaticFrontend = (
+  request: Request,
+  pathname: string,
+): Response | null => {
+  if (
+    staticFrontendDir === null ||
+    (request.method !== "GET" && request.method !== "HEAD") ||
+    pathname.startsWith("/api") ||
+    pathname.startsWith("/ws") ||
+    pathname === "/healthz"
+  ) {
+    return null;
+  }
+
+  const filePath = resolveStaticFrontendPath(staticFrontendDir, pathname);
+  if (filePath !== null && isRegularFile(filePath)) {
+    return createStaticFrontendResponse(filePath);
+  }
+
+  const acceptHeader = request.headers.get("accept") ?? "";
+  if (!acceptHeader.includes("text/html") && extname(pathname) !== "") {
+    return null;
+  }
+
+  const indexPath = resolve(staticFrontendDir, "index.html");
+  return isRegularFile(indexPath)
+    ? createStaticFrontendResponse(indexPath)
+    : null;
+};
+
 const statsStore = new StatsStore(config.dataDir);
 const matchmaking = new MatchmakingService(config, statsStore);
 let shuttingDown = false;
 
 await loadEditorTuningIntoRuntime();
+if (staticFrontendDir !== null) {
+  log.info("static_frontend_enabled", { path: staticFrontendDir });
+}
 
-const server: Bun.Server<ConnectionWebSocketData> = Bun.serve({
-  hostname: config.host,
-  port: config.port,
-  async fetch(request, bunServer) {
-    const url = new URL(request.url);
+let server: Bun.Server<ConnectionWebSocketData>;
 
-    if (request.method === "GET" && url.pathname === "/healthz") {
-      return Response.json({
-        ok: true,
-        host: config.host,
-        port: config.port,
-      });
-    }
+try {
+  server = Bun.serve({
+    hostname: config.host,
+    port: config.port,
+    async fetch(request, bunServer) {
+      const url = new URL(request.url);
 
-    if (request.method === "GET" && url.pathname === "/api/leaderboards") {
-      const metric = url.searchParams.get("metric") ?? "wins";
-      if (!isLeaderboardMetric(metric)) {
-        return jsonError(400, "Invalid leaderboard metric");
+      if (request.method === "GET" && url.pathname === "/healthz") {
+        return Response.json({
+          ok: true,
+          host: config.host,
+          port: config.port,
+        });
       }
 
-      const rawLimit = Number.parseInt(
-        url.searchParams.get("limit") ?? "50",
-        10,
+      if (request.method === "GET" && url.pathname === "/api/leaderboards") {
+        const metric = url.searchParams.get("metric") ?? "wins";
+        if (!isLeaderboardMetric(metric)) {
+          return jsonError(400, "Invalid leaderboard metric");
+        }
+
+        const rawLimit = Number.parseInt(
+          url.searchParams.get("limit") ?? "50",
+          10,
+        );
+        return Response.json({
+          metric,
+          entries: statsStore.getLeaderboard(metric, rawLimit),
+        });
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/editor/tuning") {
+        return Response.json(await readEditorTuningDocument());
+      }
+
+      if (request.method === "PUT" && url.pathname === "/api/editor/tuning") {
+        try {
+          const body = await request.json();
+          return Response.json(await writeEditorTuningDocument(body));
+        } catch {
+          return jsonError(400, "Invalid tuning document");
+        }
+      }
+
+      if (
+        request.method === "POST" &&
+        url.pathname === "/api/editor/tuning/sync-current"
+      ) {
+        try {
+          return Response.json(await syncEditorTuningDocumentToCurrent());
+        } catch {
+          return jsonError(500, "Unable to sync editor tuning to current.json");
+        }
+      }
+
+      const playerStatsMatch = url.pathname.match(
+        /^\/api\/players\/([^/]+)\/stats$/,
       );
-      return Response.json({
-        metric,
-        entries: statsStore.getLeaderboard(metric, rawLimit),
-      });
-    }
+      if (request.method === "GET" && playerStatsMatch) {
+        const playerId = decodeURIComponent(playerStatsMatch[1]!);
+        const playerStats = statsStore.getPlayerStats(playerId);
+        if (!playerStats) {
+          return jsonError(404, "Player not found");
+        }
 
-    if (request.method === "GET" && url.pathname === "/api/editor/tuning") {
-      return Response.json(await readEditorTuningDocument());
-    }
-
-    if (request.method === "PUT" && url.pathname === "/api/editor/tuning") {
-      try {
-        const body = await request.json();
-        return Response.json(await writeEditorTuningDocument(body));
-      } catch {
-        return jsonError(400, "Invalid tuning document");
-      }
-    }
-
-    if (
-      request.method === "POST" &&
-      url.pathname === "/api/editor/tuning/sync-current"
-    ) {
-      try {
-        return Response.json(await syncEditorTuningDocumentToCurrent());
-      } catch {
-        return jsonError(500, "Unable to sync editor tuning to current.json");
-      }
-    }
-
-    const playerStatsMatch = url.pathname.match(
-      /^\/api\/players\/([^/]+)\/stats$/,
-    );
-    if (request.method === "GET" && playerStatsMatch) {
-      const playerId = decodeURIComponent(playerStatsMatch[1]!);
-      const playerStats = statsStore.getPlayerStats(playerId);
-      if (!playerStats) {
-        return jsonError(404, "Player not found");
+        return Response.json(playerStats);
       }
 
-      return Response.json(playerStats);
-    }
+      if (request.method === "GET" && url.pathname === "/ws") {
+        const peerIp =
+          bunServer.requestIP(request)?.address?.trim() || "unknown";
+        const trustedProxyPeer = isLoopbackIp(peerIp);
+        if (!trustedProxyPeer && hasForwardedHeaders(request)) {
+          log.warn("rejected_proxy_headers", { peerIp });
+          return jsonError(403, "Forwarded headers not trusted");
+        }
 
-    if (request.method === "GET" && url.pathname === "/ws") {
-      const peerIp = bunServer.requestIP(request)?.address?.trim() || "unknown";
-      const trustedProxyPeer = isLoopbackIp(peerIp);
-      if (!trustedProxyPeer && hasForwardedHeaders(request)) {
-        log.warn("rejected_proxy_headers", { peerIp });
-        return jsonError(403, "Forwarded headers not trusted");
+        if (!trustedProxyPeer) {
+          log.warn("rejected_direct_upgrade", { peerIp });
+          return jsonError(403, "Direct websocket traffic not allowed");
+        }
+
+        const clientIp = deriveClientIp(request, peerIp);
+        const origin = request.headers.get("origin");
+
+        if (!isOriginAllowed(origin, clientIp)) {
+          log.warn("rejected_origin", { clientIp, origin });
+          return jsonError(403, "Origin not allowed");
+        }
+
+        const pending = matchmaking.createPendingConnection(clientIp);
+        if (!pending.ok) {
+          return jsonError(pending.status, pending.message);
+        }
+
+        const upgraded = bunServer.upgrade(request, {
+          data: {
+            connId: pending.connection.id,
+            clientIp,
+          },
+        });
+
+        if (!upgraded) {
+          matchmaking.disposePendingConnection(pending.connection.id);
+          return jsonError(400, "WebSocket upgrade failed");
+        }
+
+        return;
       }
 
-      if (!trustedProxyPeer) {
-        log.warn("rejected_direct_upgrade", { peerIp });
-        return jsonError(403, "Direct websocket traffic not allowed");
-      }
-
-      const clientIp = deriveClientIp(request, peerIp);
-      const origin = request.headers.get("origin");
-
-      if (!isOriginAllowed(origin, clientIp)) {
-        log.warn("rejected_origin", { clientIp, origin });
-        return jsonError(403, "Origin not allowed");
-      }
-
-      const pending = matchmaking.createPendingConnection(clientIp);
-      if (!pending.ok) {
-        return jsonError(pending.status, pending.message);
-      }
-
-      const upgraded = bunServer.upgrade(request, {
-        data: {
-          connId: pending.connection.id,
-          clientIp,
-        },
-      });
-
-      if (!upgraded) {
-        matchmaking.disposePendingConnection(pending.connection.id);
-        return jsonError(400, "WebSocket upgrade failed");
-      }
-
-      return;
-    }
-
-    return new Response("Not Found", { status: 404 });
-  },
-  websocket: {
-    maxPayloadLength: config.wsMaxMsgBytes,
-    backpressureLimit: config.outboundQueueMaxBytes,
-    closeOnBackpressureLimit: true,
-    idleTimeout: Math.max(30, Math.ceil(config.reclaimGraceMs / 1000)),
-    open(ws) {
-      matchmaking.connectionForId(ws.data.connId)?.attachSocket(ws);
+      return (
+        serveStaticFrontend(request, url.pathname) ??
+        new Response("Not Found", { status: 404 })
+      );
     },
-    message(ws, message) {
-      matchmaking.connectionForId(ws.data.connId)?.onMessage(message);
+    websocket: {
+      maxPayloadLength: config.wsMaxMsgBytes,
+      backpressureLimit: config.outboundQueueMaxBytes,
+      closeOnBackpressureLimit: true,
+      idleTimeout: Math.max(30, Math.ceil(config.reclaimGraceMs / 1000)),
+      open(ws) {
+        matchmaking.connectionForId(ws.data.connId)?.attachSocket(ws);
+      },
+      message(ws, message) {
+        matchmaking.connectionForId(ws.data.connId)?.onMessage(message);
+      },
+      close(ws, code, reason) {
+        matchmaking.connectionForId(ws.data.connId)?.onClose(code, reason);
+      },
+      drain(ws) {
+        matchmaking.connectionForId(ws.data.connId)?.onDrain();
+      },
     },
-    close(ws) {
-      matchmaking.connectionForId(ws.data.connId)?.onClose();
+    error(error) {
+      log.error("server_error", error);
+      return jsonError(500, "Internal server error");
     },
-    drain(ws) {
-      matchmaking.connectionForId(ws.data.connId)?.onDrain();
-    },
-  },
-  error(error) {
-    log.error("server_error", error);
-    return jsonError(500, "Internal server error");
-  },
-});
+  });
+} catch (error) {
+  const code =
+    typeof error === "object" && error !== null && "code" in error
+      ? (error as { code?: unknown }).code
+      : undefined;
+  if (code === "EADDRINUSE") {
+    log.error("listen_failed_port_in_use", {
+      host: config.host,
+      port: config.port,
+      hint: `Port ${config.port} is already in use. Stop the existing server or run with PORT=<other-port>.`,
+    });
+  } else {
+    log.error("listen_failed", error);
+  }
+
+  statsStore.close();
+  process.exit(1);
+}
 
 const roomTickTimer = setInterval(() => {
   matchmaking.pruneRooms(Date.now());
 }, 250);
+const outboundTelemetryTimer =
+  config.snapshotTelemetryIntervalMs > 0
+    ? setInterval(() => {
+        const summary = matchmaking.flushOutboundTelemetry();
+        if (summary !== null) {
+          log.info("outbound_protocol_telemetry", summary);
+        }
+      }, config.snapshotTelemetryIntervalMs)
+    : undefined;
 
 const waitForShutdownDrain = async (): Promise<{
   drained: boolean;
@@ -246,6 +395,13 @@ const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
   await server.stop(false);
   const drainResult = await waitForShutdownDrain();
   clearInterval(roomTickTimer);
+  if (outboundTelemetryTimer !== undefined) {
+    clearInterval(outboundTelemetryTimer);
+    const summary = matchmaking.flushOutboundTelemetry();
+    if (summary !== null) {
+      log.info("outbound_protocol_telemetry", summary);
+    }
+  }
   if (!drainResult.drained) {
     log.warn("shutdown_drain_incomplete", {
       signal,

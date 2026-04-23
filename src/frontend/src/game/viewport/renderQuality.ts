@@ -24,3 +24,8 @@ export const DEFAULT_VIEWPORT_RENDER_QUALITY_PROFILE: ViewportRenderQualityProfi
     rocketTrailBudget: 1,
     ssaaLevel: 2,
   };
+
+export const getViewportBudgetedCount = (
+  maxCount: number,
+  budget: number,
+): number => (budget <= 0 ? 0 : Math.max(1, Math.round(maxCount * budget)));

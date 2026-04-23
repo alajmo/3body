@@ -5,6 +5,9 @@ const LOCAL_DEV_ALLOWED_ORIGINS = [
   "http://127.0.0.1:1337",
   "http://localhost:1337",
   "http://[::1]:1337",
+  "http://127.0.0.1:8080",
+  "http://localhost:8080",
+  "http://[::1]:8080",
   "http://127.0.0.1:5173",
   "http://localhost:5173",
   "http://[::1]:5173",
@@ -60,6 +63,7 @@ export interface AppConfig {
   snapshotHz: number;
   snapshotIntervalTicks: number;
   snapshotHistoryTicks: number;
+  snapshotTelemetryIntervalMs: number;
   maxRooms: number;
   roomIdleTimeoutMs: number;
   reclaimGraceMs: number;
@@ -84,6 +88,11 @@ export const config: AppConfig = {
   snapshotHz: SNAPSHOT_HZ,
   snapshotIntervalTicks: tickHz / SNAPSHOT_HZ,
   snapshotHistoryTicks: tickHz * 5,
+  snapshotTelemetryIntervalMs: parseIntegerEnv(
+    "SNAPSHOT_TELEMETRY_INTERVAL_MS",
+    0,
+    0,
+  ),
   maxRooms: parseIntegerEnv("MAX_ROOMS", 64),
   roomIdleTimeoutMs: parseIntegerEnv("ROOM_IDLE_TIMEOUT_MS", 60_000),
   reclaimGraceMs: parseIntegerEnv("RECLAIM_GRACE_MS", 30_000),

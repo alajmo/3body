@@ -3,8 +3,8 @@ import {
   CylinderGeometry,
   Group,
   Mesh,
-  MeshBasicMaterial,
-  MeshBasicNodeMaterial,
+  type MeshBasicMaterial,
+  type MeshBasicNodeMaterial,
   SphereGeometry,
 } from "three/webgpu";
 import type { SharedCombatCannonVisual } from "./sharedCombatSupportVisuals";
@@ -26,9 +26,7 @@ export const createSharedCombatCannonVisual = ({
   scene: { add: (object: Group) => void };
   setAccentColor: (value: string) => void;
 }) => {
-  const stemGeometry = new CylinderGeometry(1, 1, 1, 16).rotateZ(
-    -Math.PI / 2,
-  );
+  const stemGeometry = new CylinderGeometry(1, 1, 1, 16).rotateZ(-Math.PI / 2);
   const breechGeometry = new BoxGeometry(1, 1, 1);
   const barrelGeometry = new CylinderGeometry(1, 1, 1, 20).rotateZ(
     -Math.PI / 2,

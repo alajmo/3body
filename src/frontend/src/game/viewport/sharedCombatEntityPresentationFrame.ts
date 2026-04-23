@@ -11,7 +11,7 @@ import {
 } from "./sharedCombatEntityVisualSync";
 import type { SharedCombatRocketBody } from "./sharedCombatRocketPools";
 
-export interface SharedCombatEntityPresentationFrameState<
+interface SharedCombatEntityPresentationFrameState<
   CacheBody extends SharedCombatCacheBody,
   Rocket extends SharedCombatRocketBody & { radius: number },
 > {

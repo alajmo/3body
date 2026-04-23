@@ -1,12 +1,12 @@
 import { CURRENT_GAME_TUNING } from "@3body/shared";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { CombatHud, formatHudDiagnosticsReport } from "./CombatHud";
 import {
   createInitialHudState,
   type GameViewportController,
   type GameViewportHudState,
 } from "./game/viewportHud";
-import { CombatHud } from "./CombatHud";
 
 const createControllerMock = (): GameViewportController =>
   ({
@@ -142,7 +142,7 @@ describe("CombatHud", () => {
     );
 
     expect(screen.getByText("2:05")).toBeInTheDocument();
-    expect(screen.getByText("Black Hole in 0:30")).toBeInTheDocument();
+    expect(document.querySelector(".match-timer__status")).toBeNull();
     expect(screen.getByText("connected")).toBeInTheDocument();
     expect(screen.getByText("13 ms")).toBeInTheDocument();
     expect(screen.getByText("59 FPS")).toBeInTheDocument();
@@ -357,6 +357,102 @@ describe("CombatHud", () => {
       within(performanceSection).getByRole("button", { name: "Reset Stats" }),
     );
     expect(controller.resetProfiling).toHaveBeenCalledTimes(1);
+  });
+
+  it("formats profiling diagnostics as pasteable JSON", () => {
+    const report = JSON.parse(
+      formatHudDiagnosticsReport(
+        {
+          ...createInitialHudState(),
+          connection: {
+            extrapolating: false,
+            fps: 60,
+            frameTimeMs: 16.7,
+            label: "room-1 · combat",
+            rttMs: 4,
+            state: "connected",
+          },
+          profilingEnabled: true,
+          debugItems: [
+            {
+              label: "Net RX",
+              value: "225.0 KB/s · 60 msg/s",
+            },
+            {
+              label: "Interp",
+              value: "alpha 0.50 · depth 4 · behind 2.5t",
+            },
+          ],
+        },
+        "2026-04-23T12:00:00.000Z",
+      ),
+    );
+
+    expect(report).toEqual({
+      capturedAt: "2026-04-23T12:00:00.000Z",
+      connection: {
+        extrapolating: false,
+        fps: 60,
+        frameTimeMs: 16.7,
+        label: "room-1 · combat",
+        rttMs: 4,
+        state: "connected",
+      },
+      debugItems: {
+        Interp: "alpha 0.50 · depth 4 · behind 2.5t",
+        "Net RX": "225.0 KB/s · 60 msg/s",
+      },
+      profilingEnabled: true,
+    });
+  });
+
+  it("copies current profiling diagnostics from the performance panel", () => {
+    const clipboardDescriptor = Object.getOwnPropertyDescriptor(
+      navigator,
+      "clipboard",
+    );
+    const writeText = vi.fn();
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText,
+      },
+    });
+
+    render(
+      <CombatHud
+        controller={createControllerMock()}
+        hud={{
+          ...createInitialHudState(),
+          profilingEnabled: true,
+          debugItems: [
+            {
+              label: "Net RX",
+              value: "225.0 KB/s · 60 msg/s",
+            },
+          ],
+        }}
+        hudTuning={HUD_TUNING}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy Stats" }));
+
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(writeText.mock.calls[0]![0] as string)).toEqual(
+      expect.objectContaining({
+        debugItems: {
+          "Net RX": "225.0 KB/s · 60 msg/s",
+        },
+        profilingEnabled: true,
+      }),
+    );
+
+    if (clipboardDescriptor === undefined) {
+      Reflect.deleteProperty(navigator, "clipboard");
+    } else {
+      Object.defineProperty(navigator, "clipboard", clipboardDescriptor);
+    }
   });
 
   it("disables local playback controls when the viewport controller is unavailable", () => {

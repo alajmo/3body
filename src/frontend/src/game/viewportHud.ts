@@ -1,23 +1,24 @@
 import {
-  BLACK_HOLE_SPEC,
-  BOOST_SPEC,
-  CURRENT_GAME_TUNING,
-  len,
-  type BotDifficulty,
   type AbilitySpec,
+  BLACK_HOLE_SPEC,
   type BlackHole,
   type BlackHoleSpec,
+  BOOST_SPEC,
   type BoostSpec,
+  type BotDifficulty,
   type Cache,
+  CURRENT_GAME_TUNING,
+  len,
   type PlanetPublic,
   type RocketKind,
-  type Sun,
   SHIELD_SPEC,
+  type Sun,
   type Vec2,
 } from "@3body/shared";
 import { DEFAULT_ORBIT_PRESET } from "./orbitPresets";
 import { getRuntimeTuningDocument } from "./runtimeTuning";
 import type { ShowcaseDisplayMode } from "./showcaseDisplayMode";
+
 const DEFAULT_PLANET_VISUALS =
   CURRENT_GAME_TUNING.visuals.planets.archetypes.terra;
 export const DEFAULT_PLANET_BODY_SCALE = DEFAULT_PLANET_VISUALS.bodyScale;
@@ -370,6 +371,32 @@ export const createInitialHudState = (): GameViewportHudState => {
   };
 };
 
+export const createGameViewportHudEmitter = ({
+  initialState = createInitialHudState(),
+  isDisposed,
+  onHudStateChange,
+}: {
+  initialState?: GameViewportHudState;
+  isDisposed: () => boolean;
+  onHudStateChange?: (state: GameViewportHudState) => void;
+}) => {
+  let currentState = initialState;
+
+  return {
+    emit: (nextState: GameViewportHudState) => {
+      if (areHudStatesEqual(currentState, nextState)) {
+        return;
+      }
+
+      currentState = nextState;
+      if (!isDisposed()) {
+        onHudStateChange?.(nextState);
+      }
+    },
+    getState: () => currentState,
+  };
+};
+
 const areObjectsEqual = <T>(
   current: readonly T[],
   next: readonly T[],
@@ -416,7 +443,7 @@ const areMinimapStatesEqual = (
       left.radius === right.radius,
   );
 
-export const areHudStatesEqual = (
+const areHudStatesEqual = (
   current: GameViewportHudState,
   next: GameViewportHudState,
 ): boolean =>

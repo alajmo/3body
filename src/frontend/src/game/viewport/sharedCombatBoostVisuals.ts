@@ -15,7 +15,7 @@ import {
   DynamicDrawUsage,
   Float32BufferAttribute,
   Mesh,
-  MeshBasicMaterial,
+  type MeshBasicMaterial,
   PlaneGeometry,
   Points,
   PointsNodeMaterial,
@@ -26,7 +26,7 @@ const BOOST_WAKE_BEND_MIN = 0.22;
 const BOOST_WAKE_BEND_MAX = 1.18;
 const BOOST_WAKE_GEOMETRY_SEGMENTS = 12;
 
-export const SHARED_COMBAT_BOOST_BURST_DURATION_SEC = 0.48;
+const SHARED_COMBAT_BOOST_BURST_DURATION_SEC = 0.48;
 
 export interface SharedCombatBoostBody {
   alive?: boolean;
@@ -43,7 +43,7 @@ export interface SharedCombatBoostBurstState {
   tick: number;
 }
 
-export interface SharedCombatBoostDirectionOverride {
+interface SharedCombatBoostDirectionOverride {
   direction: Vec2;
   planetId: number;
 }
@@ -69,7 +69,7 @@ export interface SharedCombatBoostBurstVisual {
   wakeVisuals: readonly SharedCombatBoostWakeVisual[];
 }
 
-export interface SharedCombatVisibleBoostWakeBurst {
+interface SharedCombatVisibleBoostWakeBurst {
   alpha: number;
   burst: SharedCombatBoostBurstState;
   direction: Vec2;
@@ -182,10 +182,10 @@ const collectSharedCombatBoostWakeDirectionSamples = ({
     .sort((left, right) => right.startedAtSec - left.startedAtSec);
 
   for (const burst of visiblePlanetBursts) {
-    const direction =
-      directionOverride !== null && directionOverride.planetId === planetId
-        ? burst.direction
-        : getEffectiveSharedCombatBoostDirection(burst, directionOverride);
+    const direction = getEffectiveSharedCombatBoostDirection(
+      burst,
+      directionOverride,
+    );
     if (len(direction) <= 0.001) {
       continue;
     }
@@ -528,6 +528,29 @@ export const getSharedCombatHeldBoostDirectionOverride = ({
   };
 };
 
+const hasVisibleSharedCombatPlayerBoostBurst = ({
+  activeBursts,
+  nowSec,
+  playerBody,
+}: {
+  activeBursts: readonly SharedCombatBoostBurstState[];
+  nowSec: number;
+  playerBody: SharedCombatBoostPresentationBody | null;
+}): boolean => {
+  if (playerBody === null || playerBody.alive === false) {
+    return false;
+  }
+
+  return activeBursts.some((burst) => {
+    if (burst.planetId !== playerBody.id) {
+      return false;
+    }
+
+    const ageSec = nowSec - burst.startedAtSec;
+    return ageSec >= 0 && ageSec <= SHARED_COMBAT_BOOST_BURST_DURATION_SEC;
+  });
+};
+
 export const syncSharedCombatBoostPresentation = ({
   activeBursts,
   aimTarget,
@@ -555,7 +578,13 @@ export const syncSharedCombatBoostPresentation = ({
   const directionOverride = getSharedCombatHeldBoostDirectionOverride({
     aimTarget,
     body: playerBody,
-    heldBoosting,
+    heldBoosting:
+      heldBoosting ||
+      hasVisibleSharedCombatPlayerBoostBurst({
+        activeBursts,
+        nowSec,
+        playerBody,
+      }),
   });
 
   if (boostVisual !== null) {
@@ -572,7 +601,7 @@ export const syncSharedCombatBoostPresentation = ({
   return directionOverride;
 };
 
-export const syncSharedCombatBoostBurstVisual = ({
+const syncSharedCombatBoostBurstVisual = ({
   bursts,
   boostVisual,
   directionOverride = null,

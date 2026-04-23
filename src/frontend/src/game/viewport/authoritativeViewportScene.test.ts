@@ -9,14 +9,14 @@ import type {
   SphereGeometry,
 } from "three/webgpu";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getRuntimeTuningDocument } from "../runtimeTuning";
-import type { UpdateAuthoritativeViewportSceneParams } from "./authoritativeViewportScene";
+import type { getRuntimeTuningDocument } from "../runtimeTuning";
+import type { UpdateAuthoritativeViewportSceneParams } from "./authoritativeViewportRuntimeAdapter";
 
 const authoritativeSceneMocks = vi.hoisted(() => ({
   buildAuthoritativeViewportFrameBundle: vi.fn(),
   getCannonWorldLayout: vi.fn(),
   pruneSharedCombatImpactBursts: vi.fn(),
-  syncSharedCombatScene: vi.fn(),
+  updateSharedCombatViewport: vi.fn(),
 }));
 
 vi.mock("../rocketVisibility", () => ({
@@ -33,19 +33,19 @@ vi.mock("./sharedCombatImpactBursts", () => ({
     authoritativeSceneMocks.pruneSharedCombatImpactBursts,
 }));
 
-vi.mock("./sharedCombatSceneSync", async () => {
-  const actual = await vi.importActual("./sharedCombatSceneSync");
+vi.mock("./sharedCombatViewport", async () => {
+  const actual = await vi.importActual("./sharedCombatViewport");
   return {
     ...actual,
-    syncSharedCombatScene: authoritativeSceneMocks.syncSharedCombatScene,
+    updateSharedCombatViewport:
+      authoritativeSceneMocks.updateSharedCombatViewport,
   };
 });
 
-import { updateAuthoritativeViewportScene } from "./authoritativeViewportScene";
+import { updateAuthoritativeViewportRuntimeSharedScene as updateAuthoritativeViewportScene } from "./authoritativeViewportRuntimeAdapter";
+import { createAuthoritativeViewportSceneState } from "./authoritativeViewportSceneState";
 
-const createPlanet = (
-  overrides: Partial<PlanetPublic> = {},
-): PlanetPublic =>
+const createPlanet = (overrides: Partial<PlanetPublic> = {}): PlanetPublic =>
   ({
     ammo: {
       heavy: 0,
@@ -86,12 +86,15 @@ const createParams = (): UpdateAuthoritativeViewportSceneParams => {
     pos: { x: 30, y: 12 },
     radius: 22,
   });
+  const sceneState = createAuthoritativeViewportSceneState([
+    "heavy",
+    "light",
+    "seeker",
+  ]);
+  sceneState.authoritativePlanetsById.set(playerPlanet.id, playerPlanet);
+  sceneState.authoritativePlanetsById.set(lockTarget.id, lockTarget);
 
   return {
-    authoritativePlanetsById: new Map<number, PlanetPublic>([
-      [playerPlanet.id, playerPlanet],
-      [lockTarget.id, lockTarget],
-    ]),
     background: {
       backgroundLayers: [],
       nowSec: 2,
@@ -120,7 +123,6 @@ const createParams = (): UpdateAuthoritativeViewportSceneParams => {
     effects: {
       activeBlackHoleSwallowEffects: [],
       activeBoostBursts: [],
-      activeCacheIds: new Set<number>(),
       activeImpactBursts: [],
       activeLaunchBurstsByKind: {
         heavy: [],
@@ -142,18 +144,6 @@ const createParams = (): UpdateAuthoritativeViewportSceneParams => {
     hostElement: {
       clientHeight: 450,
     } as HTMLDivElement,
-    maps: {
-      neutronStarVisuals: new Map(),
-      planetTrails: new Map(),
-      planetVisuals: new Map(),
-      sunVisuals: new Map(),
-    },
-    previousState: {
-      previousCacheBodiesById: new Map(),
-      previousNeutronStarsById: new Map(),
-      previousRocketBodiesById: new Map(),
-      previousSunBodiesById: new Map(),
-    },
     renderQuality: {
       launchBurstBudget: 0.75,
       rocketTrailBudget: 0.5,
@@ -161,17 +151,12 @@ const createParams = (): UpdateAuthoritativeViewportSceneParams => {
     rocketKinds: ["heavy", "light", "seeker"],
     rocketLaunchBurstPools: null,
     rocketPools: null,
-    rocketTrailStates: new Map(),
-    rocketsByKind: {
-      heavy: [],
-      light: [],
-      seeker: [],
-    },
     scene: {
       add: vi.fn(),
       remove: vi.fn(),
     } as unknown as Scene,
-    tuning: ({
+    sceneState,
+    tuning: {
       gameplay: {
         neutronStars: {
           maxMassKg: 1,
@@ -203,22 +188,23 @@ const createParams = (): UpdateAuthoritativeViewportSceneParams => {
         },
         suns: [],
       },
-    } as unknown) as ReturnType<typeof getRuntimeTuningDocument>,
+    } as unknown as ReturnType<typeof getRuntimeTuningDocument>,
     visuals: {
       blackHoleGroup: {} as Group,
       blackHoleRing: {} as Mesh,
       boostBurstVisual: null,
       cacheSpriteAssets: {
-        badgeMaterials: {} as UpdateAuthoritativeViewportSceneParams["visuals"]["cacheSpriteAssets"]["badgeMaterials"],
-        iconMaterials: {} as UpdateAuthoritativeViewportSceneParams["visuals"]["cacheSpriteAssets"]["iconMaterials"],
+        badgeMaterials:
+          {} as UpdateAuthoritativeViewportSceneParams["visuals"]["cacheSpriteAssets"]["badgeMaterials"],
+        iconMaterials:
+          {} as UpdateAuthoritativeViewportSceneParams["visuals"]["cacheSpriteAssets"]["iconMaterials"],
       },
-      cacheVisuals: new Map(),
       cannonVisual: null,
       gravityPulseVisual: null,
       lockRingVisual: null,
       shieldVisual: null,
     },
-    world: ({
+    world: {
       arenaRadius: 1200,
       blackHole: null,
       caches: [],
@@ -227,7 +213,7 @@ const createParams = (): UpdateAuthoritativeViewportSceneParams => {
       planets: [],
       rockets: [],
       suns: [],
-    } as unknown) as World,
+    } as unknown as World,
   };
 };
 
@@ -237,91 +223,93 @@ describe("updateAuthoritativeViewportScene", () => {
     authoritativeSceneMocks.getCannonWorldLayout.mockReturnValue({
       flashDurationSec: 0.2,
     });
-    authoritativeSceneMocks.buildAuthoritativeViewportFrameBundle.mockReturnValue({
-      frame: {
-        entity: {
-          caches: null,
-          launchBursts: null,
-          rockets: null,
-        },
-        presentation: {
-          blackHole: null,
-          boost: {
-            activeBursts: [],
-            aimTarget: { x: 0, y: 0 },
-            heldBoosting: false,
-            maxParticlesPerBurst: 0,
-            playerBody: null,
+    authoritativeSceneMocks.buildAuthoritativeViewportFrameBundle.mockReturnValue(
+      {
+        frame: {
+          entity: {
+            caches: null,
+            launchBursts: null,
+            rockets: null,
           },
-          gravityPulse: {
-            durationSec: 0,
-            pulse: null,
-            visibleWorldHeight: 0,
-            z: {
-              core: 0,
-              echo: 0,
-              ring: 0,
+          presentation: {
+            blackHole: null,
+            boost: {
+              activeBursts: [],
+              aimTarget: { x: 0, y: 0 },
+              heldBoosting: false,
+              maxParticlesPerBurst: 0,
+              playerBody: null,
+            },
+            gravityPulse: {
+              durationSec: 0,
+              pulse: null,
+              visibleWorldHeight: 0,
+              z: {
+                core: 0,
+                echo: 0,
+                ring: 0,
+              },
+            },
+            shield: {
+              active: false,
+              activeAimDir: null,
+              bursts: [],
+              planet: null,
+              shieldRadius: 0,
+            },
+            weapon: {
+              cannon: null,
+              lockRing: null,
             },
           },
-          shield: {
-            active: false,
-            activeAimDir: null,
-            bursts: [],
-            planet: null,
-            shieldRadius: 0,
+          transient: {
+            impactBursts: {
+              bursts: [],
+              resolveBurst: () => null,
+            },
+            nowSec: 2,
           },
-          weapon: {
+        },
+        resources: {
+          entity: {
+            caches: null,
+            launchBursts: null,
+            rockets: null,
+          },
+          presentation: {
+            blackHole: {
+              group: {} as Group,
+              ringMesh: {} as Mesh,
+            },
+            boost: null,
             cannon: null,
+            gravityPulse: null,
             lockRing: null,
+            shield: null,
           },
-        },
-        transient: {
-          impactBursts: {
-            bursts: [],
-            resolveBurst: () => null,
-          },
-          nowSec: 2,
-        },
-      },
-      resources: {
-        entity: {
-          caches: null,
-          launchBursts: null,
-          rockets: null,
-        },
-        presentation: {
-          blackHole: {
-            group: {} as Group,
-            ringMesh: {} as Mesh,
-          },
-          boost: null,
-          cannon: null,
-          gravityPulse: null,
-          lockRing: null,
-          shield: null,
-        },
-        transient: {
-          blackHoleSwallows: {
-            activeEffects: [],
-            inactiveVisuals: [],
-          },
-          impactBursts: {
-            maxVisibleBursts: 0,
-            visuals: [],
-            z: {
-              core: 1,
-              glow: 2,
-              ring: 3,
+          transient: {
+            blackHoleSwallows: {
+              activeEffects: [],
+              inactiveVisuals: [],
+            },
+            impactBursts: {
+              maxVisibleBursts: 0,
+              visuals: [],
+              z: {
+                core: 1,
+                glow: 2,
+                ring: 3,
+              },
+            },
+            planetExplosions: {
+              activePlanetExplosions: [],
+              inactivePlanetExplosionVisuals: [],
             },
           },
-          planetExplosions: {
-            activePlanetExplosions: [],
-            inactivePlanetExplosionVisuals: [],
-          },
         },
       },
-    });
-    authoritativeSceneMocks.syncSharedCombatScene.mockReturnValue({
+    );
+    authoritativeSceneMocks.updateSharedCombatViewport.mockReturnValue({
       gravityPulse: null,
       shieldImmediateFeedback: { aimDir: { x: 0, y: 1 }, startedAtSec: 2 },
     });
@@ -336,7 +324,7 @@ describe("updateAuthoritativeViewportScene", () => {
       authoritativeSceneMocks.pruneSharedCombatImpactBursts,
     ).toHaveBeenCalledWith({
       activeBursts: params.effects.activeImpactBursts,
-      durationSec: 0.32,
+      durationSec: 0.55,
       nowSec: 2,
     });
     expect(
@@ -364,12 +352,11 @@ describe("updateAuthoritativeViewportScene", () => {
         }),
       }),
     );
-    expect(authoritativeSceneMocks.syncSharedCombatScene).toHaveBeenCalledWith(
+    expect(
+      authoritativeSceneMocks.updateSharedCombatViewport,
+    ).toHaveBeenCalledWith(
       expect.objectContaining({
         background: params.background,
-        viewport: expect.objectContaining({
-          nowSec: 2,
-        }),
       }),
     );
     expect(result).toEqual({

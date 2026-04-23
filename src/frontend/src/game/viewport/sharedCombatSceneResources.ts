@@ -39,10 +39,7 @@ import {
   type Scene,
 } from "three/webgpu";
 import { createShieldVisual } from "../shieldVisuals";
-import {
-  createAmbientBoundaryDebrisVisual,
-  type AmbientBoundaryDebrisVisual,
-} from "./ambientBoundaryDebris";
+import { createAmbientBoundaryDebrisVisual } from "./ambientBoundaryDebris";
 import {
   registerViewportDisposables,
   type ViewportDisposable,

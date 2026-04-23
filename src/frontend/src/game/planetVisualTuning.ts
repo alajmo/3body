@@ -5,16 +5,17 @@ const getPlanetVisualTuning = () => getRuntimeTuningDocument().visuals.planets;
 
 export const getPlanetArchetypeVisuals = (
   archetype: ArchetypeId,
-): PlanetArchetypeVisualSpec =>
-  getPlanetVisualTuning().archetypes[archetype];
+): PlanetArchetypeVisualSpec => getPlanetVisualTuning().archetypes[archetype];
 
 export const getPlanetBodyScaleForArchetype = (
   archetype: ArchetypeId,
 ): number => getPlanetArchetypeVisuals(archetype).bodyScale;
 
-export const getRenderedPlanetRadius = <T extends {
-  archetype: ArchetypeId;
-  radius: number;
-}>(
+export const getRenderedPlanetRadius = <
+  T extends {
+    archetype: ArchetypeId;
+    radius: number;
+  },
+>(
   planet: T,
 ): number => planet.radius;

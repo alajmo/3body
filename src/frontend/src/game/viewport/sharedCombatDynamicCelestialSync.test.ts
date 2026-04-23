@@ -197,14 +197,11 @@ describe("syncSharedCombatDynamicPlanetPresentation", () => {
     const syncVisualAliveStates: boolean[] = [];
 
     syncSharedCombatDynamicPlanetPresentation({
-      createTrail: () => ({ id: "trail" }),
       createVisual: () => ({ id: "visual" }),
-      disposeTrail: () => {},
       disposeVisual: () => {},
       onPlanetStartedBlackHoleSwallow: ({ planetId }) => {
         swallowedPlanetIds.push(planetId);
       },
-      planetTrails: new Map(),
       planetVisuals: new Map(),
       planets: [
         {
@@ -218,7 +215,6 @@ describe("syncSharedCombatDynamicPlanetPresentation", () => {
       resolveAlive: ({ planet }) => planet.alive,
       shouldTriggerBlackHoleSwallow: ({ planet }) =>
         planet.deathReason === "blackHole",
-      syncTrail: () => {},
       syncVisual: ({ alive }) => {
         syncVisualAliveStates.push(alive);
       },

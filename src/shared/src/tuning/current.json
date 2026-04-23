@@ -514,18 +514,18 @@
       "asteroidField": {
         "large": {
           "damage": 5,
-          "randomization": 1,
+          "randomization": 0.2,
           "spawnRatePerSec": 3
         },
         "micro": {
           "damage": 1,
-          "randomization": 1,
+          "randomization": 0.2,
           "spawnRatePerSec": 2.8
         },
         "small": {
           "damage": 2,
           "randomization": 1,
-          "spawnRatePerSec": 2
+          "spawnRatePerSec": 0.2
         }
       },
       "instantDeath": true,

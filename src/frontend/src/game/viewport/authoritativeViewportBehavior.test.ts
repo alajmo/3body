@@ -1,13 +1,17 @@
-import type { PlanetPublic } from "@3body/shared";
-import { ROCKET_SPECS } from "@3body/shared";
+import type { PlanetPrivateState, PlanetPublic } from "@3body/shared";
+import { ROCKET_SPECS, SIM_HZ } from "@3body/shared";
 import { describe, expect, it } from "vitest";
 import {
+  canDispatchAuthoritativeRocketFire,
   getAuthoritativeAbilitySlots,
+  getAuthoritativeRocketReloadTicks,
   resolveAuthoritativeCombatControlStep,
   smoothAuthoritativeCameraAxis,
 } from "./authoritativeViewportBehavior";
 
 describe("authoritativeViewportBehavior", () => {
+  const inputSendIntervalMs = 1000 / SIM_HZ;
+
   const createPlanet = (
     overrides: Partial<PlanetPublic> = {},
   ): PlanetPublic => ({
@@ -24,6 +28,25 @@ describe("authoritativeViewportBehavior", () => {
     shieldLoad: 3,
     shieldMaxLoad: 3,
     vel: { x: 0, y: 0 },
+    ...overrides,
+  });
+  const createSelf = (
+    overrides: Partial<PlanetPrivateState> = {},
+  ): PlanetPrivateState => ({
+    ammo: {
+      heavy: 1,
+      light: 1,
+      seeker: 1,
+    },
+    boostCharges: 1,
+    cooldowns: {
+      heavyReloadUntilTick: 0,
+      lightReloadUntilTick: 0,
+      seekerReloadUntilTick: 0,
+    },
+    gravityPulseHeld: false,
+    nextShieldExt: false,
+    planetId: 1,
     ...overrides,
   });
 
@@ -89,7 +112,7 @@ describe("authoritativeViewportBehavior", () => {
 
     const resolution = resolveAuthoritativeCombatControlStep({
       connectionState: "connected",
-      inputSendIntervalMs: 1000 / 30,
+      inputSendIntervalMs,
       inputState: {
         aimWorld: { x: 96, y: 0 },
         selectedRocketKind: "seeker",
@@ -125,8 +148,8 @@ describe("authoritativeViewportBehavior", () => {
         nextShieldExt: false,
         planetId: playerPlanet.id,
       },
-      shieldAimSendIntervalMs: 1000 / 30,
-      timeMs: 1000 / 30 + 1,
+      shieldAimSendIntervalMs: inputSendIntervalMs,
+      timeMs: inputSendIntervalMs + 1,
     });
 
     expect(resolution.dispatchEnabled).toBe(true);
@@ -147,7 +170,7 @@ describe("authoritativeViewportBehavior", () => {
 
     const resolution = resolveAuthoritativeCombatControlStep({
       connectionState: "connected",
-      inputSendIntervalMs: 1000 / 30,
+      inputSendIntervalMs,
       inputState: {
         aimWorld: { x: 30, y: 40 },
         selectedRocketKind: "light",
@@ -183,8 +206,8 @@ describe("authoritativeViewportBehavior", () => {
         nextShieldExt: false,
         planetId: playerPlanet.id,
       },
-      shieldAimSendIntervalMs: 1000 / 30,
-      timeMs: 1000 / 30 + 1,
+      shieldAimSendIntervalMs: inputSendIntervalMs,
+      timeMs: inputSendIntervalMs + 1,
     });
 
     expect(resolution.shieldActive).toBe(true);
@@ -197,7 +220,7 @@ describe("authoritativeViewportBehavior", () => {
 
     const resolution = resolveAuthoritativeCombatControlStep({
       connectionState: "connected",
-      inputSendIntervalMs: 1000 / 30,
+      inputSendIntervalMs,
       inputState: {
         aimWorld: { x: 10, y: 0 },
         selectedRocketKind: "light",
@@ -218,8 +241,8 @@ describe("authoritativeViewportBehavior", () => {
       previousSeekerLockStartedAtSec: null,
       previousSeekerLockTargetId: null,
       self: null,
-      shieldAimSendIntervalMs: 1000 / 30,
-      timeMs: 1000 / 30 + 1,
+      shieldAimSendIntervalMs: inputSendIntervalMs,
+      timeMs: inputSendIntervalMs + 1,
     });
 
     expect(resolution.dispatchEnabled).toBe(false);
@@ -228,5 +251,87 @@ describe("authoritativeViewportBehavior", () => {
     expect(resolution.queuedAbilitySlots).toEqual([]);
     expect(resolution.sendInput).toBe(false);
     expect(resolution.sendShieldAim).toBe(false);
+  });
+
+  it("allows authoritative fire only when ammo, cooldown, and shield state permit it", () => {
+    const playerPlanet = createPlanet();
+    const self = createSelf();
+
+    expect(
+      canDispatchAuthoritativeRocketFire({
+        actionTick: 24,
+        lastFireSentAtTick: Number.NEGATIVE_INFINITY,
+        playerPlanet,
+        rocketKind: "light",
+        self,
+      }),
+    ).toBe(true);
+    expect(
+      canDispatchAuthoritativeRocketFire({
+        actionTick: 24,
+        lastFireSentAtTick: Number.NEGATIVE_INFINITY,
+        playerPlanet,
+        rocketKind: "heavy",
+        self: createSelf({
+          ammo: {
+            ...self.ammo,
+            heavy: 0,
+          },
+        }),
+      }),
+    ).toBe(false);
+    expect(
+      canDispatchAuthoritativeRocketFire({
+        actionTick: 24,
+        lastFireSentAtTick: Number.NEGATIVE_INFINITY,
+        playerPlanet,
+        rocketKind: "light",
+        self: createSelf({
+          cooldowns: {
+            ...self.cooldowns,
+            lightReloadUntilTick: 30,
+          },
+        }),
+      }),
+    ).toBe(false);
+    expect(
+      canDispatchAuthoritativeRocketFire({
+        actionTick: 24,
+        lastFireSentAtTick: Number.NEGATIVE_INFINITY,
+        playerPlanet: createPlanet({
+          shieldActive: true,
+          shieldLoad: 1,
+        }),
+        rocketKind: "light",
+        self,
+      }),
+    ).toBe(false);
+  });
+
+  it("suppresses repeated local fire feedback until the sent shot reload window has elapsed", () => {
+    const playerPlanet = createPlanet();
+    const reloadTicks = getAuthoritativeRocketReloadTicks(
+      "light",
+      playerPlanet.archetype,
+    );
+
+    expect(
+      canDispatchAuthoritativeRocketFire({
+        actionTick: 100 + reloadTicks - 1,
+        lastFireSentAtTick: 100,
+        playerPlanet,
+        rocketKind: "light",
+        self: createSelf(),
+      }),
+    ).toBe(false);
+    expect(
+      canDispatchAuthoritativeRocketFire({
+        actionTick: 100 + reloadTicks,
+        lastFireSentAtTick: 100,
+        playerPlanet,
+        rocketKind: "light",
+        self: createSelf(),
+      }),
+    ).toBe(true);
   });
 });

@@ -256,10 +256,7 @@ export const createGameViewportInputController = (
       return;
     }
 
-    if (
-      (event.code === "KeyW" || event.code === "ArrowUp") &&
-      !event.repeat
-    ) {
+    if ((event.code === "KeyW" || event.code === "ArrowUp") && !event.repeat) {
       boostHeld = true;
       state.pendingAbilityRequests.boost = true;
       event.preventDefault();

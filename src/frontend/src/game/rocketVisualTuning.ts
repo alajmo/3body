@@ -1,4 +1,8 @@
-import type { GameTuningDocument, RocketVisualTuning, Vec2 } from "@3body/shared";
+import type {
+  GameTuningDocument,
+  RocketVisualTuning,
+  Vec2,
+} from "@3body/shared";
 
 const scaleVec2 = (value: Vec2, scale: number): Vec2 => ({
   x: value.x * scale,

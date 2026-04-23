@@ -1,8 +1,8 @@
 import type { PlanetPrivateState, PlanetPublic, World } from "@3body/shared";
 import { getShieldLoadCapacity } from "@3body/shared";
 import { describe, expect, it } from "vitest";
-import { buildAuthoritativeHudState } from "./authoritativeHud";
 import { createInitialHudState } from "../viewportHud";
+import { buildAuthoritativeHudState } from "./authoritativeHud";
 
 const createWorld = (): World =>
   ({
@@ -137,10 +137,51 @@ describe("buildAuthoritativeHudState", () => {
       eventLog: [],
       extrapolating: true,
       hudFlicker: 0,
+      networkDiagnostics: {
+        inboundBytesPerSec: 225 * 1024,
+        inboundByType: [
+          {
+            bytesPerSec: 225 * 1024,
+            messagesPerSec: 60,
+            type: "snapshotV2",
+          },
+        ],
+        inboundMessagesPerSec: 60,
+        outboundBytesPerSec: 58,
+        outboundByType: [
+          {
+            bytesPerSec: 58,
+            messagesPerSec: 30,
+            type: "input",
+          },
+        ],
+        outboundMessagesPerSec: 30,
+        serverSnapshotGapAverageMs: 16.7,
+        serverSnapshotGapMaxMs: 18.4,
+        serverSnapshotGapP90Ms: 17.1,
+        serverSnapshotLateCount: 0,
+        snapshotGapAverageMs: 16.7,
+        snapshotGapOver100Count: 0,
+        snapshotGapOver50Count: 0,
+        snapshotGapMaxMs: 24.5,
+        snapshotGapP90Ms: 17.2,
+        snapshotLastGapOver100AgeMs: null,
+        snapshotLastGapOver50AgeMs: null,
+        snapshotLateCount: 0,
+        snapshotMessagesPerSec: 60,
+        snapshotTickGapMax: 1,
+        windowSec: 2,
+      },
       playerId: "pilot-1",
       playerPlanet: createPlayerPlanet(),
       profilerSnapshot: {
         frameCpu: { averageMs: 5.5, latestMs: 5.8, maxMs: 8.3 },
+        frameGap: { averageMs: 16.7, latestMs: 16.6, maxMs: 24.1 },
+        frameGapSpikes: {
+          count: 0,
+          lastAgeSec: null,
+          thresholdMs: 1000 / 30,
+        },
         frames: 12,
         interpolation: { averageMs: 0.7, latestMs: 0.8, maxMs: 1.1 },
         renderCpu: { averageMs: 2.6, latestMs: 2.7, maxMs: 3.9 },
@@ -148,9 +189,23 @@ describe("buildAuthoritativeHudState", () => {
         simulation: { averageMs: 0, latestMs: 0, maxMs: 0 },
         steps: { average: 0, latest: 0, max: 0 },
         submit: { averageMs: 1.1, latestMs: 1.2, maxMs: 1.7 },
+        submitSpikes: {
+          count: 0,
+          lastAgeSec: null,
+          thresholdMs: 20,
+        },
       },
       profilingEnabled: true,
       recentEventsNowMs: 1_000,
+      renderDiagnostics: {
+        bufferDepth: 4,
+        desiredRenderTick: 117.5,
+        interpolationAlpha: 0.5,
+        latestSnapshotAgeMs: 34,
+        renderTick: 117.5,
+        tickBehindLatest: 2.5,
+        visuallyExtrapolating: true,
+      },
       rosterNameByPlayerId: new Map([
         ["pilot-1", "Pilot One"],
         ["pilot-2", "Pilot Two"],
@@ -187,6 +242,34 @@ describe("buildAuthoritativeHudState", () => {
         expect.objectContaining({
           label: "Net State",
           value: "connected · extrapolating",
+        }),
+        expect.objectContaining({
+          label: "Net RX",
+          value: "225.0 KB/s · 60 msg/s",
+        }),
+        expect.objectContaining({
+          label: "Net TX",
+          value: "58 B/s · 30 msg/s",
+        }),
+        expect.objectContaining({
+          label: "Snapshots",
+          value: "60/s · gap 16.7/17.2/24.5 ms · late 0",
+        }),
+        expect.objectContaining({
+          label: "Net Jitter",
+          value: "gap>50 0 · last -- · gap>100 0 · last --",
+        }),
+        expect.objectContaining({
+          label: "Server Snap",
+          value: "gap 16.7/17.1/18.4 ms · late 0",
+        }),
+        expect.objectContaining({
+          label: "Interp",
+          value: "alpha 0.50 · depth 4 · behind 2.5t · extrapolating",
+        }),
+        expect.objectContaining({
+          label: "Snap Age",
+          value: "34.0 ms · desired 117.5 · render 117.5",
         }),
       ]),
     );

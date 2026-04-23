@@ -1,6 +1,5 @@
 import {
   type AbilityMsg,
-  normalizePlayerName,
   type ArchetypeId,
   type BotDifficulty,
   type ChatMsg,
@@ -8,7 +7,9 @@ import {
   type HelloMsg,
   type InputMsg,
   type JoinRequest,
+  normalizePlayerName,
   type PlayerId,
+  type ServerMsg,
   type ShieldAimMsg,
   type VoteRematchMsg,
 } from "@3body/shared";
@@ -19,8 +20,16 @@ import { newOpaqueToken, newRoomId } from "./ids";
 import { log } from "./log";
 import type { QueuedCombatMessage, RoomAdvanceEvent } from "./room";
 import { Room } from "./room";
+import {
+  OutboundProtocolTelemetry,
+  type OutboundProtocolTelemetrySummary,
+} from "./snapshot-telemetry";
 import type { DrainStatsWritesResult, StatsStore } from "./stats-store";
-import { buildRoomDeltaSnapshot, RoomTicker } from "./tick";
+import {
+  buildRoomDeltaSnapshot,
+  buildRoomSnapshotV2,
+  RoomTicker,
+} from "./tick";
 
 const serializeError = (error: unknown): Record<string, unknown> =>
   error instanceof Error
@@ -93,6 +102,7 @@ export class MatchmakingService {
   readonly #tickers = new Map<string, RoomTicker>();
   readonly #socketCountsByIp = new Map<string, number>();
   readonly #limiter = new SlidingWindowLimiter();
+  readonly #outboundTelemetry = new OutboundProtocolTelemetry();
 
   #admissionsOpen = true;
 
@@ -101,6 +111,18 @@ export class MatchmakingService {
     readonly statsStore: StatsStore,
   ) {
     this.config = appConfig;
+  }
+
+  recordOutboundMessage(message: ServerMsg, byteLength: number): void {
+    if (this.config.snapshotTelemetryIntervalMs <= 0) {
+      return;
+    }
+
+    this.#outboundTelemetry.record(message, byteLength);
+  }
+
+  flushOutboundTelemetry(): OutboundProtocolTelemetrySummary | null {
+    return this.#outboundTelemetry.flush();
   }
 
   createPendingConnection(
@@ -1085,8 +1107,11 @@ export class MatchmakingService {
         }
         continue;
       }
-      const delta = buildRoomDeltaSnapshot(room, baseTick);
-      if (!delta) {
+      const snapshot =
+        connection.snapshotVersion === 2
+          ? buildRoomSnapshotV2(room, baseTick)
+          : buildRoomDeltaSnapshot(room, baseTick);
+      if (!snapshot) {
         continue;
       }
 
@@ -1100,7 +1125,7 @@ export class MatchmakingService {
         currentSelfSignature !== connection.lastSentSelfStateSignature;
 
       connection.send({
-        ...delta,
+        ...snapshot,
         ...(includeSelf ? { self: currentSelf } : {}),
       });
       if (includeSelf) {

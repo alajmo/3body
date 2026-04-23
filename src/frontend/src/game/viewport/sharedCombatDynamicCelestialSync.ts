@@ -315,16 +315,12 @@ export interface SharedCombatDynamicPlanetPresentationArgs<
     pos: Vec2;
   },
   PlanetVisual,
-  TrailVisual,
 > {
-  createTrail: (args: { index: number; planet: PlanetBody }) => TrailVisual;
   createVisual: (args: { index: number; planet: PlanetBody }) => PlanetVisual;
-  disposeTrail: (trail: TrailVisual) => void;
   disposeVisual: (visual: PlanetVisual) => void;
   onPlanetStartedBlackHoleSwallow?:
     | ((args: { planet: PlanetBody; planetId: number }) => void)
     | undefined;
-  planetTrails: Map<number, TrailVisual>;
   planetVisuals: Map<number, PlanetVisual>;
   planets: readonly PlanetBody[];
   previousPlanetAliveById?: Map<number, boolean> | undefined;
@@ -334,7 +330,6 @@ export interface SharedCombatDynamicPlanetPresentationArgs<
   shouldTriggerBlackHoleSwallow?:
     | ((args: { index: number; planet: PlanetBody }) => boolean)
     | undefined;
-  syncTrail: (args: { planet: PlanetBody; trail: TrailVisual }) => void;
   syncVisual: (args: {
     alive: boolean;
     index: number;
@@ -349,26 +344,17 @@ export const syncSharedCombatDynamicPlanetPresentation = <
     pos: Vec2;
   },
   PlanetVisual,
-  TrailVisual,
 >({
-  createTrail,
   createVisual,
-  disposeTrail,
   disposeVisual,
   onPlanetStartedBlackHoleSwallow,
-  planetTrails,
   planetVisuals,
   planets,
   previousPlanetAliveById,
   resolveAlive,
-  syncTrail,
   syncVisual,
   shouldTriggerBlackHoleSwallow,
-}: SharedCombatDynamicPlanetPresentationArgs<
-  PlanetBody,
-  PlanetVisual,
-  TrailVisual
->) => {
+}: SharedCombatDynamicPlanetPresentationArgs<PlanetBody, PlanetVisual>) => {
   const activePlanetIds = new Set<number>();
 
   for (const [index, planet] of planets.entries()) {
@@ -380,7 +366,6 @@ export const syncSharedCombatDynamicPlanetPresentation = <
       }) ?? true;
     const wasAlive = previousPlanetAliveById?.get(planet.id) ?? alive;
     let visual = planetVisuals.get(planet.id);
-    let trail = planetTrails.get(planet.id);
 
     if (visual === undefined) {
       visual = createVisual({
@@ -389,23 +374,12 @@ export const syncSharedCombatDynamicPlanetPresentation = <
       });
       planetVisuals.set(planet.id, visual);
     }
-    if (trail === undefined) {
-      trail = createTrail({
-        index,
-        planet,
-      });
-      planetTrails.set(planet.id, trail);
-    }
 
     syncVisual({
       alive,
       index,
       planet,
       visual,
-    });
-    syncTrail({
-      planet,
-      trail,
     });
 
     if (
@@ -432,15 +406,6 @@ export const syncSharedCombatDynamicPlanetPresentation = <
 
     disposeVisual(visual);
     planetVisuals.delete(planetId);
-  }
-
-  for (const [planetId, trail] of planetTrails) {
-    if (activePlanetIds.has(planetId)) {
-      continue;
-    }
-
-    disposeTrail(trail);
-    planetTrails.delete(planetId);
   }
 
   if (previousPlanetAliveById !== undefined) {

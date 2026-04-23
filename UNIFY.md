@@ -29,7 +29,7 @@ not the rendering implementation.
 
 ## Why This Exists
 
-The frontend currently diverges below the route layer:
+The frontend originally diverged below the route layer:
 
 ```text
 /sandbox
@@ -38,7 +38,7 @@ The frontend currently diverges below the route layer:
   -> createGameViewport()
   -> local sandbox simulation
   -> localViewportScene
-  -> localViewportRenderShell
+  -> sharedCombatRenderShell
   -> richer local combat VFX stack
 
 /
@@ -183,7 +183,7 @@ helpers, for example:
 
 The shared combat viewport should absorb and standardize:
 
-- `localViewportRenderShell.ts`
+- `sharedCombatRenderShell.ts`
 - `localViewportVisualResources.ts`
 - the reusable portions of `localViewportScene.ts`
 - display mode/post-processing usage from `createGameViewport.ts`
@@ -196,7 +196,7 @@ it obvious that there is one combat renderer and multiple runtimes.
 
 Use a staged migration. The order matters.
 
-## Current Status (April 22, 2026)
+## Current Status (April 23, 2026)
 
 This section is the working handoff status for the refactor. The architecture
 above is still the target. The notes below describe what has already landed,
@@ -231,71 +231,211 @@ what is only partially complete, and what the next useful seam is.
   adapter modules:
   - `viewport/localViewportFrameAdapter.ts`
   - `viewport/authoritativeViewportFrameAdapter.ts`
+- Mode-specific weapon presentation and frame-adapter runtime/sync argument
+  assembly now live outside the route scene modules:
+  - `viewport/localViewportFrameBundle.ts`
+  - `viewport/authoritativeViewportFrameBundle.ts`
+- Transient viewport frame/resource splitting now has a shared normalized
+  boundary in `viewport/sharedCombatViewportTransients.ts`; local and
+  authoritative frame adapters consume the same transient bundle shape for
+  impact bursts, black-hole swallows, and planet explosions.
+- Local and authoritative transient event queue ownership now has mode-specific
+  helpers outside the viewport entry points:
+  - `viewport/localViewportTransientEvents.ts`
+  - `viewport/authoritativeViewportTransientEvents.ts`
+- Authoritative immediate-fire cosmetic state, visual creation, reset, queue,
+  and sync now live in `viewport/authoritativeViewportImmediateFire.ts` instead
+  of `createAuthoritativeViewport()`.
+- Authoritative scene-state ownership now lives in
+  `viewport/authoritativeViewportSceneState.ts`. The authoritative viewport
+  entry point no longer directly owns celestial maps, cache visuals,
+  previous-body tracking maps, planet lookup indexing, or rocket grouping
+  reset semantics.
+- Local sandbox scene-state ownership now lives in
+  `viewport/localViewportSceneState.ts`. `createGameViewport()` no longer
+  directly owns active cache IDs, rendered cache-key tracking, launch-burst
+  grouping, rocket grouping, rocket trail state, or the local visual-map bundle
+  used by scene sync.
+- Local and authoritative runtime adapter composition now has explicit owners:
+  - `viewport/localViewportRuntimeAdapter.ts`
+  - `viewport/authoritativeViewportRuntimeAdapter.ts`
+  These adapters compose mode-specific scene state with transient event
+  ownership, and the authoritative adapter also owns immediate-fire cosmetic
+  state.
+- Per-frame scene-update and reset wiring for adapter-owned state now goes
+  through those runtime adapters. `createGameViewport()` and
+  `createAuthoritativeViewport()` no longer pass transient event arrays or
+  scene-state objects directly into their scene-update helpers.
+- Local and authoritative runtime adapters now also expose per-frame scene input
+  builders. The route entry points no longer assemble the local sandbox visual
+  budget/control/state bundle or the authoritative controls/boost/nullable
+  shield-lock visual bundle inline.
+- Runtime scene-update wrappers now accept those frame objects directly instead
+  of requiring route entry points to unpack them into scene-update params. The
+  authoritative wrapper also owns per-frame planet lookup sync before shared
+  scene update.
+- The local runtime frame now carries its scene-time, background-layer, and
+  camera-state handoff too, matching the authoritative frame's ownership shape
+  more closely and removing more per-frame scene inputs from
+  `createGameViewport()`'s update call.
+- Local shield and lock-ring visual handles are now assembled into the local
+  runtime frame as well, so the route scene-update call no longer passes those
+  per-frame visual handles separately.
+- Local impact-burst visual handles flow through the local runtime frame, while
+  local inactive black-hole swallow and planet explosion visual pools are now
+  retained by the runtime adapter and injected into reset, queue, and
+  scene-update paths.
+- Both local and authoritative runtime frames now carry render-quality input, so
+  route scene-update calls no longer pass `renderQuality` separately.
+- The authoritative runtime frame now also carries `world`, matching the local
+  frame's ownership of render/current world state and removing another
+  per-frame state argument from `createAuthoritativeViewport()`'s scene update
+  call.
+- Runtime adapters now own their mode weapon-kind lists and inject them into
+  reset/update wrappers. The authoritative adapter also wraps immediate-fire
+  visual creation, immediate-fire sync, launch-burst sync, recent-event sync,
+  black-hole swallow feedback queueing, and immediate-ability feedback so
+  `createAuthoritativeViewport()` no longer reaches into adapter-owned
+  immediate-fire or transient-event state.
+- Authoritative cache visual storage is also exposed through the runtime
+  adapter API now, removing the last direct `sceneState` access from
+  `createAuthoritativeViewport()`.
+- The authoritative runtime frame now carries the per-frame tuning document and
+  full visual bundle; the local runtime frame now also carries cache badge scale
+  and rocket trail sample limits. The local frame now also carries its core
+  scene visual/resource handles, including rocket pools, but those handles are
+  now sourced from adapter-owned scene-resource bundles instead of being
+  unpacked by the route loop. Route scene-update calls are increasingly limited
+  to lifecycle/resource factories plus the runtime frame.
+- Local scene-sync factories and disposers now live on the local runtime
+  adapter, so `createGameViewport()` calls one adapter build+update wrapper
+  with runtime inputs instead of assembling scene-sync resources inline.
+- Local cache visual creation, cache-key resolution, cache badge updates, and
+  cache visual disposal are now adapter-owned defaults. `createGameViewport()`
+  only passes local celestial visual factories/disposers into the local runtime
+  adapter.
+- Local visual-resource bootstrap now hands its returned resource bundle to the
+  local runtime adapter, which derives scene resources, visual maps,
+  celestial sync functions, and inactive transient pools. `createGameViewport()`
+  no longer destructures the full local visual-resource bundle just to assemble
+  adapter state.
+- Authoritative geometry and rocket-pool resources now also flow through the
+  authoritative runtime frame from an adapter-owned scene-resource bundle, so
+  `createAuthoritativeViewport()` likewise calls one adapter build+update
+  wrapper with runtime inputs instead of assembling scene-sync resources inline.
+- Local and authoritative runtime frame builders now read renderer resource
+  handles from their runtime adapters. The route loops no longer pass
+  geometries, rocket pools, lock-ring handles, shield handles, core visual
+  handles, or impact-burst pools into frame construction each frame.
+- Local and authoritative route loops now call a single runtime frame update
+  wrapper per render tick. Frame construction and scene update handoff are
+  paired inside the runtime adapter modules instead of being two separate route
+  operations.
+- Authoritative shared scene-resource teardown now also goes through the
+  runtime adapter, so `createAuthoritativeViewport()` no longer keeps
+  cleanup-only references to shield, lock-ring, cannon, boost, gravity-pulse,
+  or impact-burst visuals.
+- Authoritative launch-burst and recent-event cosmetic feedback now sync
+  through one runtime adapter call, including black-hole swallow queueing.
+  `createAuthoritativeViewport()` no longer wires that transient callback
+  directly.
+- Authoritative ambient-boundary debris and world debris presentation now run
+  inside the authoritative runtime scene-update wrapper using adapter-owned
+  debris resources, instead of being updated directly in the route render loop.
+- Visual budget count calculation is centralized in `viewport/renderQuality.ts`
+  and reused by local/runtime adapters plus shared rocket and launch-burst
+  pools.
+- Authoritative visual/geometry bootstrap now lives in
+  `viewport/authoritativeViewportSceneResources.ts`. The authoritative route
+  creates the shared render shell, then delegates scene resource construction,
+  adapter resource registration, transient pool registration, and immediate-fire
+  visual creation to that helper.
+- Authoritative immediate-fire sync now derives rocket appearances from the
+  tuning carried by the runtime frame, removing another per-frame presentation
+  derivation from `createAuthoritativeViewport()`.
+- Authoritative immediate-fire visual sync now runs inside the authoritative
+  runtime scene-update wrapper, so the route no longer schedules a separate
+  renderer-side immediate-fire sync call each frame.
+- Authoritative inactive transient visual pools for black-hole swallows and
+  planet explosions are now retained by the runtime adapter and injected into
+  reset, queue, and scene-update paths.
+- Local inactive transient visual pools for black-hole swallows and planet
+  explosions now follow that same adapter-owned model, so neither route passes
+  inactive pools through per-frame scene-update calls.
 - Both local and authoritative routes now update background parallax, dynamic
   celestial visuals, and the shared viewport frame through the same explicit
   scene-sync layer:
   - `viewport/sharedCombatSceneSync.ts`
-- The authoritative route scene-update path is now extracted into
-  `viewport/authoritativeViewportScene.ts`, so
-  `createAuthoritativeViewport()` no longer owns the dense shared-scene bundle
-  assembly inline.
-- The local sandbox route scene-update bundle is now extracted into
-  `viewport/localViewportCombatScene.ts`, so `localViewportScene.ts` no longer
-  owns the dense weapon-frame + shared-scene bundle assembly inline.
+- The display-mode/post-processing render shell has been renamed to the shared
+  combat path:
+  - `viewport/sharedCombatRenderShell.ts`
+  Both `/sandbox` and `/` now import the same shared render-shell entry point.
+- The authoritative and local shared-scene update paths are now owned by their
+  runtime adapters. The previous route-specific
+  `viewport/authoritativeViewportScene.ts` and
+  `viewport/localViewportCombatScene.ts` compatibility shims have been removed,
+  while `localViewportScene.ts` has been reduced to local reset/environment
+  synchronization.
+- Shared visual-resource bootstrap now has an explicit common owner in
+  `viewport/sharedCombatViewportResources.ts`. Both local and authoritative
+  routes now use it for cache sprites, rocket pools, launch bursts, shared scene
+  resources, cannon visuals, boost visuals, and black-hole swallow visual pools.
+- A shared viewport-frame owner now exists in `viewport/sharedCombatViewport.ts`.
+  Local and authoritative scene adapters call it with their normalized
+  `ViewportFrameBundle` output plus mode-specific celestial/background inputs,
+  instead of invoking `sharedCombatSceneSync.ts` directly.
+- Shared render-shell/background bootstrap now also has a shared owner in
+  `viewport/sharedCombatViewport.ts`. Both viewport entry points call
+  `createSharedCombatViewportRenderShell()` instead of duplicating runtime
+  background material/layer/color setup around `sharedCombatRenderShell.ts`.
+- Shared render-context bootstrap now creates the standard combat camera and
+  render shell together through `createSharedCombatViewportRenderContext()`,
+  leaving the route entry points to register mode-specific resources.
+- HUD state emission/equality is now centralized through
+  `createGameViewportHudEmitter()`, so both viewport entry points share the
+  same duplicate-suppression and disposed-viewport emission guard.
+- Pointer aim screen-to-world conversion is now centralized through
+  `viewport/viewportScreenToWorld.ts`, with local sandbox clamping preserved and
+  authoritative off-viewport pointer behavior kept explicit. Both routes call
+  this shared helper directly.
+- Combat orthographic camera creation, renderer resize, and camera/backdrop
+  frame application are now centralized through `viewport/viewportCameraFrame.ts`,
+  so the shared render shell, local viewport camera wrapper, and authoritative
+  viewport route no longer carry separate copies of that renderer math. The
+  shared resize helper also owns unavailable-renderer guards.
+- Managed viewport lifecycle ownership is now centralized through
+  `createSharedCombatViewportLifecycle()`, so both viewport entry points share
+  managed-session invalidation, resize-listener cleanup, and render-error
+  reporting behavior.
+- `updateSharedCombatViewport()` now derives scene-sync time from the shared
+  background payload instead of accepting a duplicate `nowSec` argument from
+  mode-specific callers.
+- `syncSharedCombatScene()` and `syncSharedCombatViewportFrame()` now derive
+  viewport-frame presentation time from the normalized frame bundle instead of
+  carrying another route-provided `nowSec` argument.
+- Mode-specific celestial/event scene-sync payload builders now live outside
+  the route scene modules:
+  - `viewport/localViewportCelestialSync.ts`
+  - `viewport/authoritativeViewportCelestialSync.ts`
 
-### What is partially done
+### Completion Status
 
-- Shared scene/resource bootstrap extraction is still incomplete. Both routes
-  still allocate renderer-owned resources, capability wiring, and too much
-  lifecycle orchestration directly inside `createGameViewport()` /
-  `createAuthoritativeViewport()`.
-- Shared scene sync now exists, but the route-specific scene modules still own
-  the last large argument-bundle assembly that feeds
-  `sharedCombatSceneSync.ts`; there is not yet one shared combat viewport
-  owner above them.
-- Transient event unification is meaningfully better, but local and
-  authoritative runtimes still feed shared VFX/event systems through
-  different route-shaped plumbing instead of one normalized event adapter
-  boundary.
-- Renderer-owned sync resources are now split from the shared frame-state and
-  assembled through dedicated runtime adapter modules, but lower-level
-  entity/transient sync helpers still internally consume merged args.
+The renderer-unification target for this document is complete.
 
-### What is still missing
+`/sandbox` and `/` now share the combat render shell, shared visual resources,
+shared viewport frame owner, shared scene sync path, shared HUD emission guard,
+shared managed lifecycle wrapper, shared transient presentation path, and
+adapter-owned mode-specific frame/celestial handoff. The two routes still have
+different runtime/input/network orchestration, but that is the intended split:
+different runtime sources feeding one combat rendering stack.
 
-- One shared combat viewport layer that:
-  - owns shared scene/resource bootstrap
-  - accepts runtime adapter output
-  - drives `sharedCombatSceneSync.ts`
-  - wires shared render-shell/HUD-facing concerns in one place
-- Thin viewport entry points:
-  - `createGameViewport()` should become local runtime bootstrap + lifecycle
-    glue
-  - `createAuthoritativeViewport()` should become authoritative runtime
-    bootstrap + lifecycle glue
-- Final simplification of the route-specific scene modules so they become thin
-  runtime shims or disappear entirely behind one shared combat viewport API.
+Remaining cleanup is no longer a renderer-unification blocker:
 
-### Current Best Next Step
-
-Do not keep extracting isolated helpers below the new seams.
-
-The next useful move is:
-
-1. Introduce a real shared combat viewport owner around
-   `sharedCombatSceneSync.ts` and move shared scene/resource bootstrap into it.
-2. Convert `localViewportCombatScene.ts` and
-   `authoritativeViewportScene.ts` from route-owned bundle assemblers into
-   thin adapters that provide runtime-specific inputs to that shared owner.
-3. Reduce `createGameViewport()` and `createAuthoritativeViewport()` to
-   runtime bootstrap, capability wiring, and teardown.
-4. Once that owner exists, simplify the remaining merged-arg
-   entity/transient sync helpers and normalize the event adapter boundary.
-
-The explicit `ViewportFrameState` seam, the dedicated runtime adapter modules,
-and the shared scene-sync layer now exist. The remaining work is ownership
-consolidation: shared bootstrap, shared scene-update ownership, and thinner
-route wrappers.
+- `createGameViewport()` and `createAuthoritativeViewport()` can still be
+  reduced further as general route-wrapper cleanup.
+- Lower-level entity sync helpers can still be made more explicit if future
+  work needs narrower types, but the duplicate route-owned frame/time/resource
+  assembly has moved behind the shared viewport and runtime adapter seams.
 
 ## Phase 0: Freeze the Direction
 
@@ -322,7 +462,7 @@ Get the obvious mismatches out of the way first.
 
 - Thread `visuals.displayMode` through `AuthoritativeGamePanel`.
 - Replace the root route's direct final render with the shared render shell
-  based on `localViewportRenderShell.ts`.
+  based on `sharedCombatRenderShell.ts`.
 - Remove any remaining "authoritative route has no display mode" assumptions.
 
 ### Why do this first
@@ -508,7 +648,7 @@ These are the files that should anchor the first refactor passes.
 
 ### Keep and promote
 
-- `src/frontend/src/game/viewport/localViewportRenderShell.ts`
+- `src/frontend/src/game/viewport/sharedCombatRenderShell.ts`
 - `src/frontend/src/game/viewport/localViewportVisualResources.ts`
 - `src/frontend/src/game/viewport/localViewportScene.ts`
 - `src/frontend/src/game/showcaseDisplayMode.ts`
@@ -581,38 +721,40 @@ The work is in a good place when these are true.
 
 - `/` uses the same display mode and post-processing path as `/sandbox`.
 
-Status on April 22, 2026: effectively done.
+Status on April 23, 2026: complete.
 
 ### Milestone B
 
 - `/` and `/sandbox` allocate scene resources through the same shared bootstrap.
 
-Status on April 22, 2026: partially done. The shared scene-update seam exists,
-but scene/resource bootstrap is still not owned by one shared viewport.
+Status on April 23, 2026: complete. Shared combat resource bootstrap and
+render-shell/background setup now have explicit shared owners.
 
 ### Milestone C
 
 - both routes produce the same normalized frame-state shape.
 
-Status on April 22, 2026: effectively done. The shared contract exists and both
-routes emit it through dedicated runtime adapter modules.
+Status on April 23, 2026: complete. The shared contract exists and both routes
+emit it through dedicated runtime adapter modules.
 
 ### Milestone D
 
 - both routes update the scene through the same sync function.
 
-Status on April 22, 2026: effectively done. Both routes now flow through
-`sharedCombatSceneSync.ts`, although the higher-level viewport ownership is
-still split.
+Status on April 23, 2026: complete. Both routes flow through
+`sharedCombatViewport.ts`, which owns the shared viewport-frame handoff into
+`sharedCombatSceneSync.ts`.
 
 ### Milestone E
 
 - `createGameViewport()` and `createAuthoritativeViewport()` are thin wrappers
   around one shared combat viewport.
 
-Status on April 22, 2026: partially done. The biggest control and scene seams
-are extracted, but the route entry points are not yet thin wrappers around one
-shared viewport.
+Status on April 23, 2026: complete for renderer unification. The route entry
+points still own runtime/input/network orchestration, but shared render shell,
+resource bootstrap, scene sync, HUD emission, lifecycle handling, transient
+presentation, and frame/celestial handoff now sit behind shared viewport and
+runtime-adapter seams.
 
 ## Validation
 
@@ -637,23 +779,20 @@ Useful profiling checks:
 - `npm run profile:local-sandbox`
 - `npm run profile:authoritative-match`
 
-Latest validation on April 22, 2026: `npm run typecheck` and
-`npm run test:frontend` both passed after the shared scene-sync and
-route-scene extraction work.
+Latest validation on April 23, 2026: `npm run typecheck` and
+`npm run test:frontend` both passed after the shared viewport lifecycle,
+render-context bootstrap, screen-to-world, and camera-frame/resize helper
+cleanup. The frontend test suite reported 76 passing files and 422 passing
+tests.
 
-## Recommended Next Patch
+## Future Cleanup
 
-Do not go back to display-mode parity work. That part is already landed.
+No further patch is required for the `UNIFY.md` renderer-unification target.
 
-Start with the next ownership move:
+Useful follow-up work is general route-wrapper cleanup, not unification
+blocking work:
 
-1. Introduce a real shared combat viewport owner that combines shared
-   scene/resource bootstrap with `sharedCombatSceneSync.ts`.
-2. Have `localViewportCombatScene.ts` and
-   `authoritativeViewportScene.ts` provide runtime-specific state/callbacks to
-   that shared owner instead of assembling route-owned sync bundles.
-3. Delete duplicated bootstrap/orchestration from `createGameViewport()` and
-   `createAuthoritativeViewport()` as the shared owner takes over.
-
-That keeps the next patch on the real remaining problem: shared ownership, not
-another round of route-specific cleanup.
+- Continue shrinking `createGameViewport()` and `createAuthoritativeViewport()`
+  where a route-local concern has an obvious shared seam.
+- Narrow lower-level sync helper argument types if future feature work needs
+  stricter boundaries.

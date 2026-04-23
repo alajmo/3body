@@ -55,10 +55,12 @@ export const deriveAuthoritativeRocketLaunchBursts = ({
       : {
           x:
             rocket.pos.x -
-            dir.x * (ROCKET_SPECS[rocket.rocketKind].radius + ROCKET_SPAWN_CLEARANCE),
+            dir.x *
+              (ROCKET_SPECS[rocket.rocketKind].radius + ROCKET_SPAWN_CLEARANCE),
           y:
             rocket.pos.y -
-            dir.y * (ROCKET_SPECS[rocket.rocketKind].radius + ROCKET_SPAWN_CLEARANCE),
+            dir.y *
+              (ROCKET_SPECS[rocket.rocketKind].radius + ROCKET_SPAWN_CLEARANCE),
         };
     const launchPlanetRadius = launchPlanet?.radius ?? 0;
     const origin = add(
@@ -75,8 +77,7 @@ export const deriveAuthoritativeRocketLaunchBursts = ({
       (rocket.pos.x - origin.x) * dir.x + (rocket.pos.y - origin.y) * dir.y,
     );
     const startedAtSec =
-      snapshotReceivedAtSec -
-      (speed > 0 ? distanceAlongDirection / speed : 0);
+      snapshotReceivedAtSec - (speed > 0 ? distanceAlongDirection / speed : 0);
 
     bursts.push({
       dir,

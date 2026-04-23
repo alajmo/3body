@@ -17,6 +17,7 @@ import {
   type CacheContents,
   clamp,
   consumeBlackHoleBodies,
+  createBoundaryAsteroidSpawn,
   DEBRIS_TTL_SEC,
   type Debris,
   type DeltaSnapshotMsg,
@@ -25,21 +26,21 @@ import {
   fromAngle,
   GRAVITY_PULSE_IMPULSE,
   GRAVITY_PULSE_RADIUS,
-  createBoundaryAsteroidSpawn,
+  getBaseShieldLoad,
+  getBlackHoleKillRadiusAtTick,
+  getBlackHoleMassAtTick,
   getBoundaryAsteroidDamage,
   getBoundaryAsteroidExplosionBaseSpeed,
   getBoundaryAsteroidExplosionPieces,
   getBoundaryAsteroidExplosionSpeedVariance,
   getBoundaryAsteroidImpactRadius,
-  getBaseShieldLoad,
-  getBlackHoleKillRadiusAtTick,
-  getBlackHoleMassAtTick,
+  getOuterRingMax,
+  getOuterRingMin,
   getUmbraDragDurationTicks,
   getUmbraDragStepMultiplier,
   hasCrossedBlackHoleHorizon,
-  getOuterRingMax,
-  getOuterRingMin,
   len,
+  type NeutronStar,
   normalize,
   PLANET_HP,
   type PlanetPrivateState,
@@ -52,11 +53,18 @@ import {
   rollCacheContents,
   SHIELD_EXT_MULTIPLIER,
   SHIELD_SPEC,
-  sampleBoundaryAsteroidSpawnCount,
-  shouldDespawnBoundaryAsteroid,
+  type SnapshotCacheUpdateRow,
+  type SnapshotDebrisUpdateRow,
   type SnapshotEvent,
+  type SnapshotNeutronStarUpdateRow,
+  type SnapshotPlanetUpdateRow,
+  type SnapshotRocketUpdateRow,
+  type SnapshotSunUpdateRow,
+  type SnapshotV2Msg,
   type Sun,
+  sampleBoundaryAsteroidSpawnCount,
   scale,
+  shouldDespawnBoundaryAsteroid,
   stepBody,
   stepBodyWithGravityScale,
   stepNeutronStars,
@@ -70,6 +78,8 @@ import type { AppConfig } from "./config";
 import type { RocketRuntimeState, Room } from "./room";
 
 const TICK_MS_FLOOR = 1;
+const MAX_TICK_CATCHUP_STEPS = 5;
+const TIMER_EPSILON_MS = 0.001;
 const DEFAULT_INPUT_DIR: Vec2 = { x: 1, y: 0 };
 const PLANET_DEBRIS_PIECES = 20;
 const PLANET_DEBRIS_SPEED = 220;
@@ -82,6 +92,7 @@ const CACHE_DEBRIS_SPEED = 140;
 const CACHE_DEBRIS_SPEED_VARIANCE = 92;
 const BOUNDARY_ASTEROID_TIERS = ["micro", "small", "large"] as const;
 const LAG_COMP_MAX_REWIND_MS = 100;
+const ROCKET_OWNER_COLLISION_GRACE_MS = 75;
 const NEAR_MISS_DISTANCE = 48;
 const AUTHORITATIVE_BOT_ACTIONS_ENABLED = false;
 
@@ -152,6 +163,9 @@ const lagCompMaxRewindTicks = (tickHz: number): number =>
 
 const lagCompHistoryEntries = (tickHz: number): number =>
   lagCompMaxRewindTicks(tickHz) + 2;
+
+const rocketOwnerCollisionGraceTicks = (tickHz: number): number =>
+  Math.max(1, Math.round((ROCKET_OWNER_COLLISION_GRACE_MS * tickHz) / 1000));
 
 const shieldArcDotThreshold = (): number =>
   Math.cos(((SHIELD_SPEC.arcDeg / 2) * Math.PI) / 180);
@@ -227,9 +241,10 @@ const createDebrisBurst = (
   baseSpeed: number,
   speedVariance: number,
   tick: number,
+  tickHz: number,
   ownerPlayerId?: PlayerId,
 ): Debris[] => {
-  const ttlUntilTick = tick + getAbilityTicks(DEBRIS_TTL_SEC, 120);
+  const ttlUntilTick = tick + getAbilityTicks(DEBRIS_TTL_SEC, tickHz);
   const debris: Debris[] = [];
 
   for (let index = 0; index < pieces; index += 1) {
@@ -361,6 +376,165 @@ const diffEntityCollection = <T extends { id: number }>(
     ...(removed.length > 0 ? { removed } : {}),
   };
 };
+
+interface CompactEntityDiff<T, TRow extends readonly [number, ...unknown[]]> {
+  removed?: number[];
+  spawns?: T[];
+  updates?: TRow[];
+}
+
+const sameJson = (left: unknown, right: unknown): boolean =>
+  JSON.stringify(left) === JSON.stringify(right);
+
+const rowChanged = <TRow extends readonly [number, ...unknown[]]>(
+  previous: TRow,
+  current: TRow,
+): boolean => !sameJson(previous, current);
+
+const diffCompactEntityCollection = <
+  T extends { id: number },
+  TRow extends readonly [number, ...unknown[]],
+>(
+  previous: readonly T[],
+  current: readonly T[],
+  options: {
+    hasStaticChanged: (previous: T, current: T) => boolean;
+    toUpdateRow: (entity: T) => TRow;
+  },
+): CompactEntityDiff<T, TRow> => {
+  const previousById = new Map(previous.map((entity) => [entity.id, entity]));
+  const currentById = new Map(current.map((entity) => [entity.id, entity]));
+  const spawns: T[] = [];
+  const updates: TRow[] = [];
+  const removed: number[] = [];
+
+  for (const entity of current) {
+    const previousEntity = previousById.get(entity.id);
+    if (
+      previousEntity === undefined ||
+      options.hasStaticChanged(previousEntity, entity)
+    ) {
+      spawns.push(entity);
+      continue;
+    }
+
+    const previousRow = options.toUpdateRow(previousEntity);
+    const currentRow = options.toUpdateRow(entity);
+    if (rowChanged(previousRow, currentRow)) {
+      updates.push(currentRow);
+    }
+  }
+
+  for (const entity of previous) {
+    if (!currentById.has(entity.id)) {
+      removed.push(entity.id);
+    }
+  }
+
+  return {
+    ...(removed.length > 0 ? { removed } : {}),
+    ...(spawns.length > 0 ? { spawns } : {}),
+    ...(updates.length > 0 ? { updates } : {}),
+  };
+};
+
+const sunUpdateRow = (sun: Sun): SnapshotSunUpdateRow => [
+  sun.id,
+  sun.pos.x,
+  sun.pos.y,
+  sun.vel.x,
+  sun.vel.y,
+  sun.mass,
+  sun.radius,
+];
+
+const neutronStarUpdateRow = (
+  neutronStar: NeutronStar,
+): SnapshotNeutronStarUpdateRow => [
+  neutronStar.id,
+  neutronStar.pos.x,
+  neutronStar.pos.y,
+  neutronStar.vel.x,
+  neutronStar.vel.y,
+  neutronStar.mass,
+  neutronStar.radius,
+];
+
+const planetUpdateRow = (planet: PlanetPublic): SnapshotPlanetUpdateRow => [
+  planet.id,
+  planet.pos.x,
+  planet.pos.y,
+  planet.vel.x,
+  planet.vel.y,
+  planet.hp,
+  planet.shieldAimDir.x,
+  planet.shieldAimDir.y,
+  planet.shieldActive ? 1 : 0,
+  planet.shieldLoad,
+  planet.shieldMaxLoad,
+  planet.debuffs,
+];
+
+const rocketUpdateRow = (rocket: Rocket): SnapshotRocketUpdateRow => [
+  rocket.id,
+  rocket.pos.x,
+  rocket.pos.y,
+  rocket.vel.x,
+  rocket.vel.y,
+  rocket.ttlUntilTick,
+];
+
+const cacheUpdateRow = (cache: Cache): SnapshotCacheUpdateRow => [
+  cache.id,
+  cache.pos.x,
+  cache.pos.y,
+  cache.vel.x,
+  cache.vel.y,
+];
+
+const debrisUpdateRow = (debris: Debris): SnapshotDebrisUpdateRow => [
+  debris.id,
+  debris.pos.x,
+  debris.pos.y,
+  debris.vel.x,
+  debris.vel.y,
+  debris.ttlUntilTick,
+];
+
+const hasSunStaticChanged = (previous: Sun, current: Sun): boolean =>
+  previous.kind !== current.kind;
+
+const hasNeutronStarStaticChanged = (
+  previous: NeutronStar,
+  current: NeutronStar,
+): boolean => previous.kind !== current.kind;
+
+const hasPlanetStaticChanged = (
+  previous: PlanetPublic,
+  current: PlanetPublic,
+): boolean =>
+  previous.kind !== current.kind ||
+  previous.playerId !== current.playerId ||
+  previous.archetype !== current.archetype ||
+  previous.radius !== current.radius;
+
+const hasRocketStaticChanged = (previous: Rocket, current: Rocket): boolean =>
+  previous.kind !== current.kind ||
+  previous.radius !== current.radius ||
+  previous.rocketKind !== current.rocketKind ||
+  previous.ownerId !== current.ownerId ||
+  previous.targetId !== current.targetId;
+
+const hasCacheStaticChanged = (previous: Cache, current: Cache): boolean =>
+  previous.kind !== current.kind ||
+  previous.radius !== current.radius ||
+  !sameJson(previous.contents, current.contents);
+
+const hasDebrisStaticChanged = (previous: Debris, current: Debris): boolean =>
+  previous.kind !== current.kind ||
+  previous.radius !== current.radius ||
+  previous.ownerPlayerId !== current.ownerPlayerId ||
+  previous.asteroidTier !== current.asteroidTier;
 
 const getRocketRuntime = (room: Room, rocket: Rocket): RocketRuntimeState => {
   const existing = room.rocketRuntime.get(rocket.id);
@@ -583,6 +757,13 @@ const activateWildcard = (
     playerPlanet.pos,
     GRAVITY_PULSE_RADIUS,
     GRAVITY_PULSE_IMPULSE * 1.15,
+  );
+  applyImpulseAwayFromPoint(
+    room.world.debris,
+    playerPlanet.pos,
+    GRAVITY_PULSE_RADIUS,
+    GRAVITY_PULSE_IMPULSE,
+    isBoundaryAsteroidDebris,
   );
   applyImpulseAwayFromPoint(
     room.world.caches,
@@ -954,6 +1135,7 @@ const applyPlanetCollisions = (
   suns: readonly Sun[],
   blackHole: BlackHole | undefined,
   nextTick: number,
+  tickHz: number,
   debrisSink: Debris[],
 ): {
   planets: PlanetPublic[];
@@ -1043,6 +1225,7 @@ const applyPlanetCollisions = (
         PLANET_DEBRIS_SPEED,
         PLANET_DEBRIS_SPEED_VARIANCE,
         nextTick,
+        tickHz,
         planet.playerId,
       ),
     );
@@ -1100,6 +1283,7 @@ const applyBoundaryEffects = (
         PLANET_DEBRIS_SPEED,
         PLANET_DEBRIS_SPEED_VARIANCE,
         nextTick,
+        config.tickHz,
         planet.playerId,
       ),
     );
@@ -1177,6 +1361,7 @@ const applyBoundaryAsteroidImpacts = ({
   blackHole,
   nextTick,
   dtSec,
+  tickHz,
   debrisSink,
 }: {
   room: Room;
@@ -1185,6 +1370,7 @@ const applyBoundaryAsteroidImpacts = ({
   blackHole: BlackHole | undefined;
   nextTick: number;
   dtSec: number;
+  tickHz: number;
   debrisSink: Debris[];
 }): {
   debris: Debris[];
@@ -1243,6 +1429,7 @@ const applyBoundaryAsteroidImpacts = ({
         getBoundaryAsteroidExplosionBaseSpeed(piece.asteroidTier),
         getBoundaryAsteroidExplosionSpeedVariance(piece.asteroidTier),
         nextTick,
+        tickHz,
       );
       debrisSink.push(...impactBurst);
 
@@ -1265,6 +1452,7 @@ const applyBoundaryAsteroidImpacts = ({
               PLANET_DEBRIS_SPEED,
               PLANET_DEBRIS_SPEED_VARIANCE,
               nextTick,
+              tickHz,
               planet.playerId,
             ),
           );
@@ -1343,6 +1531,7 @@ const applyRocketCollisions = (
           ROCKET_DEBRIS_SPEED,
           ROCKET_DEBRIS_SPEED_VARIANCE,
           nextTick,
+          config.tickHz,
         ),
       );
       continue;
@@ -1358,6 +1547,7 @@ const applyRocketCollisions = (
           ROCKET_DEBRIS_SPEED,
           ROCKET_DEBRIS_SPEED_VARIANCE,
           nextTick,
+          config.tickHz,
         ),
       );
       continue;
@@ -1385,6 +1575,7 @@ const applyRocketCollisions = (
           ROCKET_DEBRIS_SPEED,
           ROCKET_DEBRIS_SPEED_VARIANCE,
           nextTick,
+          config.tickHz,
         ),
       );
       continue;
@@ -1401,6 +1592,7 @@ const applyRocketCollisions = (
           ROCKET_DEBRIS_SPEED,
           ROCKET_DEBRIS_SPEED_VARIANCE,
           nextTick,
+          config.tickHz,
         ),
       );
       continue;
@@ -1422,6 +1614,7 @@ const applyRocketCollisions = (
           ROCKET_DEBRIS_SPEED,
           ROCKET_DEBRIS_SPEED_VARIANCE,
           nextTick,
+          config.tickHz,
         ),
       );
       continue;
@@ -1447,6 +1640,7 @@ const applyRocketCollisions = (
           ROCKET_DEBRIS_SPEED,
           ROCKET_DEBRIS_SPEED_VARIANCE,
           nextTick,
+          config.tickHz,
         ),
       );
       continue;
@@ -1454,6 +1648,14 @@ const applyRocketCollisions = (
 
     for (let planetIndex = 0; planetIndex < planets.length; planetIndex += 1) {
       const planet = planets[planetIndex]!;
+      if (
+        planet.playerId === rocket.ownerId &&
+        nextTick - runtime.spawnedAtTick <=
+          rocketOwnerCollisionGraceTicks(config.tickHz)
+      ) {
+        continue;
+      }
+
       if (dist(rocket.pos, planet.pos) <= rocket.radius + planet.radius) {
         const absorbedByShield = shieldProtectsImpact(
           planet,
@@ -1505,6 +1707,7 @@ const applyRocketCollisions = (
                 PLANET_DEBRIS_SPEED,
                 PLANET_DEBRIS_SPEED_VARIANCE,
                 nextTick,
+                config.tickHz,
                 planet.playerId,
               ),
             );
@@ -1528,6 +1731,7 @@ const applyRocketCollisions = (
           ROCKET_DEBRIS_SPEED,
           ROCKET_DEBRIS_SPEED_VARIANCE,
           nextTick,
+          config.tickHz,
         ),
       );
       continue;
@@ -1561,6 +1765,7 @@ const applyRocketCollisions = (
           CACHE_DEBRIS_SPEED,
           CACHE_DEBRIS_SPEED_VARIANCE,
           nextTick,
+          config.tickHz,
         ),
       );
       queueCacheRespawn(room, nextTick + getCacheRespawnTicks(config.tickHz));
@@ -1600,6 +1805,7 @@ const applyCacheCollisions = (
           CACHE_DEBRIS_SPEED,
           CACHE_DEBRIS_SPEED_VARIANCE,
           nextTick,
+          config.tickHz,
         ),
       );
       queueCacheRespawn(room, nextTick + getCacheRespawnTicks(config.tickHz));
@@ -1815,6 +2021,7 @@ const updateWorld = (room: Room, config: AppConfig): void => {
     survivingSuns,
     blackHole,
     nextTick,
+    config.tickHz,
     debris,
   );
   nextPlanets = planetCollisionState.planets;
@@ -1876,6 +2083,7 @@ const updateWorld = (room: Room, config: AppConfig): void => {
     planets: rocketCollisionState.planets,
     room,
     suns: survivingSuns,
+    tickHz: config.tickHz,
   });
 
   applyCooldownsAndRegen(room, nextTick, config);
@@ -1966,9 +2174,121 @@ export const buildRoomDeltaSnapshot = (
   };
 };
 
+export const buildRoomSnapshotV2 = (
+  room: Room,
+  baseTick: number,
+): SnapshotV2Msg | null => {
+  if (!room.world) {
+    return null;
+  }
+
+  const baseState = room.snapshotStateFor(baseTick);
+  if (!baseState) {
+    return null;
+  }
+
+  const suns = diffCompactEntityCollection(
+    baseState.world.suns,
+    room.world.suns,
+    {
+      hasStaticChanged: hasSunStaticChanged,
+      toUpdateRow: sunUpdateRow,
+    },
+  );
+  const neutronStars = diffCompactEntityCollection(
+    baseState.world.neutronStars,
+    room.world.neutronStars,
+    {
+      hasStaticChanged: hasNeutronStarStaticChanged,
+      toUpdateRow: neutronStarUpdateRow,
+    },
+  );
+  const planets = diffCompactEntityCollection(
+    baseState.world.planets,
+    room.world.planets,
+    {
+      hasStaticChanged: hasPlanetStaticChanged,
+      toUpdateRow: planetUpdateRow,
+    },
+  );
+  const rockets = diffCompactEntityCollection(
+    baseState.world.rockets,
+    room.world.rockets,
+    {
+      hasStaticChanged: hasRocketStaticChanged,
+      toUpdateRow: rocketUpdateRow,
+    },
+  );
+  const caches = diffCompactEntityCollection(
+    baseState.world.caches,
+    room.world.caches,
+    {
+      hasStaticChanged: hasCacheStaticChanged,
+      toUpdateRow: cacheUpdateRow,
+    },
+  );
+  const debris = diffCompactEntityCollection(
+    baseState.world.debris,
+    room.world.debris,
+    {
+      hasStaticChanged: hasDebrisStaticChanged,
+      toUpdateRow: debrisUpdateRow,
+    },
+  );
+  const previousBlackHole = baseState.world.blackHole ?? null;
+  const currentBlackHole = room.world.blackHole ?? null;
+  const previousOrbitStarMotion = baseState.world.orbitStarMotion ?? null;
+  const currentOrbitStarMotion = room.world.orbitStarMotion ?? null;
+
+  return {
+    type: "snapshotV2",
+    tick: room.tick,
+    baseTick,
+    spawns: {
+      ...(suns.spawns ? { suns: suns.spawns } : {}),
+      ...(neutronStars.spawns ? { neutronStars: neutronStars.spawns } : {}),
+      ...(planets.spawns ? { planets: planets.spawns } : {}),
+      ...(rockets.spawns ? { rockets: rockets.spawns } : {}),
+      ...(caches.spawns ? { caches: caches.spawns } : {}),
+      ...(debris.spawns ? { debris: debris.spawns } : {}),
+      ...(previousBlackHole === null && currentBlackHole !== null
+        ? { blackHole: currentBlackHole }
+        : {}),
+    },
+    updates: {
+      ...(suns.updates ? { suns: suns.updates } : {}),
+      ...(neutronStars.updates ? { neutronStars: neutronStars.updates } : {}),
+      ...(planets.updates ? { planets: planets.updates } : {}),
+      ...(rockets.updates ? { rockets: rockets.updates } : {}),
+      ...(caches.updates ? { caches: caches.updates } : {}),
+      ...(debris.updates ? { debris: debris.updates } : {}),
+      ...(previousBlackHole !== null &&
+      currentBlackHole !== null &&
+      !sameJson(previousBlackHole, currentBlackHole)
+        ? { blackHole: currentBlackHole }
+        : {}),
+      ...(!sameJson(previousOrbitStarMotion, currentOrbitStarMotion)
+        ? { orbitStarMotion: currentOrbitStarMotion }
+        : {}),
+    },
+    removed: {
+      ...(suns.removed ? { suns: suns.removed } : {}),
+      ...(neutronStars.removed ? { neutronStars: neutronStars.removed } : {}),
+      ...(planets.removed ? { planets: planets.removed } : {}),
+      ...(rockets.removed ? { rockets: rockets.removed } : {}),
+      ...(caches.removed ? { caches: caches.removed } : {}),
+      ...(debris.removed ? { debris: debris.removed } : {}),
+      ...(previousBlackHole !== null && currentBlackHole === null
+        ? { blackHole: true as const }
+        : {}),
+    },
+  };
+};
+
 export class RoomTicker {
   #running = false;
   #lastLoopAtMs = 0;
+  #nextLoopAtMs = 0;
   #accumulatorMs = 0;
   #timeout?: ReturnType<typeof setTimeout>;
 
@@ -1988,7 +2308,10 @@ export class RoomTicker {
     }
 
     this.#running = true;
-    this.#lastLoopAtMs = Date.now();
+    const nowMs = performance.now();
+    const dtMs = 1000 / this.config.tickHz;
+    this.#lastLoopAtMs = nowMs;
+    this.#nextLoopAtMs = nowMs + dtMs;
     this.#accumulatorMs = 0;
     this.scheduleNextLoop();
   }
@@ -2009,7 +2332,7 @@ export class RoomTicker {
 
     const tickMs = Math.max(
       TICK_MS_FLOOR,
-      Math.round(1000 / this.config.tickHz),
+      this.#nextLoopAtMs - performance.now(),
     );
     this.#timeout = setTimeout(() => {
       this.loop();
@@ -2026,36 +2349,52 @@ export class RoomTicker {
       return;
     }
 
-    const nowMs = Date.now();
     const dtMs = 1000 / this.config.tickHz;
+    const nowMs = performance.now();
     this.#accumulatorMs += nowMs - this.#lastLoopAtMs;
     this.#lastLoopAtMs = nowMs;
 
-    const steps = Math.max(1, Math.floor(this.#accumulatorMs / dtMs));
+    const steps = Math.floor((this.#accumulatorMs + TIMER_EPSILON_MS) / dtMs);
+    if (steps <= 0) {
+      this.scheduleNextLoop();
+      return;
+    }
+
+    const stepsToRun = Math.min(steps, MAX_TICK_CATCHUP_STEPS);
     this.#accumulatorMs = Math.max(0, this.#accumulatorMs - steps * dtMs);
 
     let endedThisLoop = false;
-    for (let step = 0; step < steps; step += 1) {
+    for (let step = 0; step < stepsToRun; step += 1) {
       updateWorld(this.room, this.config);
       if (this.room.phase !== "combat") {
         endedThisLoop = true;
+        this.onBroadcast(this.room, {
+          emitDeltaSnapshot: false,
+          emitFullSnapshot: true,
+        });
         break;
       }
-    }
 
-    this.onBroadcast(this.room, {
-      emitDeltaSnapshot:
-        !endedThisLoop &&
+      if (
         this.room.tick > 0 &&
-        this.room.tick % this.config.snapshotIntervalTicks === 0,
-      emitFullSnapshot: endedThisLoop,
-    });
+        this.room.tick % this.config.snapshotIntervalTicks === 0
+      ) {
+        this.onBroadcast(this.room, {
+          emitDeltaSnapshot: true,
+          emitFullSnapshot: false,
+        });
+      }
+    }
 
     if (endedThisLoop) {
       this.stop();
       return;
     }
 
+    this.#nextLoopAtMs += stepsToRun * dtMs;
+    if (this.#nextLoopAtMs <= nowMs) {
+      this.#nextLoopAtMs = nowMs + Math.max(0, dtMs - this.#accumulatorMs);
+    }
     this.scheduleNextLoop();
   }
 }

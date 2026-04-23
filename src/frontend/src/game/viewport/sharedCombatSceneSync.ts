@@ -1,13 +1,16 @@
 import type { Vec2 } from "@3body/shared";
 import type { SharedCombatCacheBody } from "./cacheVisuals";
-import { syncSharedCombatBackgroundParallax, type SharedCombatBackgroundLayerHost } from "./sharedCombatBackgroundParallax";
 import {
-  syncSharedCombatDynamicNeutronStarPresentation,
-  syncSharedCombatDynamicPlanetPresentation,
-  syncSharedCombatDynamicSunPresentation,
+  type SharedCombatBackgroundLayerHost,
+  syncSharedCombatBackgroundParallax,
+} from "./sharedCombatBackgroundParallax";
+import {
   type SharedCombatDynamicNeutronStarPresentationArgs,
   type SharedCombatDynamicPlanetPresentationArgs,
   type SharedCombatDynamicSunPresentationArgs,
+  syncSharedCombatDynamicNeutronStarPresentation,
+  syncSharedCombatDynamicPlanetPresentation,
+  syncSharedCombatDynamicSunPresentation,
 } from "./sharedCombatDynamicCelestialSync";
 import type { SharedCombatRocketBody } from "./sharedCombatRocketPools";
 import { syncSharedCombatViewportFrame } from "./sharedCombatViewportFrame";
@@ -20,7 +23,7 @@ export interface SharedCombatSceneBackgroundSync {
   renderCenterY: number;
 }
 
-export interface SharedCombatSceneSyncParams<
+interface SharedCombatSceneSyncParams<
   SunBody extends {
     id: number;
     pos: Vec2;
@@ -40,7 +43,6 @@ export interface SharedCombatSceneSyncParams<
     pos: Vec2;
   },
   PlanetVisual,
-  TrailVisual,
   CacheBody extends SharedCombatCacheBody,
   Rocket extends SharedCombatRocketBody & { radius: number },
   Burst extends {
@@ -54,16 +56,11 @@ export interface SharedCombatSceneSyncParams<
       NeutronStarBody,
       NeutronStarVisual
     >;
-    planet: SharedCombatDynamicPlanetPresentationArgs<
-      PlanetBody,
-      PlanetVisual,
-      TrailVisual
-    >;
+    planet: SharedCombatDynamicPlanetPresentationArgs<PlanetBody, PlanetVisual>;
     sun: SharedCombatDynamicSunPresentationArgs<SunBody, SunVisual>;
   };
   viewport: {
     bundle: ViewportFrameBundle<CacheBody, Rocket, Burst>;
-    nowSec: number;
   };
 }
 
@@ -87,7 +84,6 @@ export const syncSharedCombatScene = <
     pos: Vec2;
   },
   PlanetVisual,
-  TrailVisual,
   CacheBody extends SharedCombatCacheBody,
   Rocket extends SharedCombatRocketBody & { radius: number },
   Burst extends {
@@ -105,7 +101,6 @@ export const syncSharedCombatScene = <
   NeutronStarVisual,
   PlanetBody,
   PlanetVisual,
-  TrailVisual,
   CacheBody,
   Rocket,
   Burst
@@ -117,7 +112,6 @@ export const syncSharedCombatScene = <
 
   return syncSharedCombatViewportFrame({
     frame: viewport.bundle.frame,
-    nowSec: viewport.nowSec,
     resources: viewport.bundle.resources,
   });
 };

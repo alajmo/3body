@@ -1666,5 +1666,16 @@ export const scoreGravityPulseOpportunity = ({
     }
   }
 
+  for (const piece of world.debris) {
+    if (piece.asteroidTier === undefined) {
+      continue;
+    }
+
+    const distance = dist(self.pos, piece.pos);
+    if (distance <= GRAVITY_PULSE_RADIUS) {
+      score += clamp01(1 - distance / GRAVITY_PULSE_RADIUS) * 0.35;
+    }
+  }
+
   return score;
 };

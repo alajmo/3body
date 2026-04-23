@@ -1,6 +1,6 @@
 import type { PlanetPrivateState, PlanetPublic, World } from "../entities";
 import type { BotDifficulty } from "../protocol";
-import { dot, len, normalize, scale, } from "../vec2";
+import { dot, len, normalize, scale } from "../vec2";
 import type { Vec2 } from "../vec2";
 import { defaultCombatAiAimDir } from "./blackboard";
 import { COMBAT_AI_TUNING } from "./runtimeTuning";
@@ -285,7 +285,6 @@ const chooseShotForIntent = (
 const buildAbilityPolicy = ({
   bestMoveDelta,
   boostCommitThreshold,
-  chosenShot,
   intent,
   lastBoostTick,
   moveGoal,
@@ -301,7 +300,6 @@ const buildAbilityPolicy = ({
 }: {
   bestMoveDelta: number;
   boostCommitThreshold: number;
-  chosenShot: CombatAiShotScore | null;
   intent: CombatAiIntent;
   lastBoostTick: number;
   moveGoal: CombatAiMoveGoal | null;
@@ -439,7 +437,7 @@ const buildFireGate = ({
     (executionState === "cacheRun" &&
       chosenShot.confidence <
         COMBAT_AI_TUNING.execution.cacheRunFireConfidence &&
-        !lowAmmoLightOverride);
+      !lowAmmoLightOverride);
   const pressureLightOverride =
     intent.kind === "pressure" && isPressureLightProbeShot(chosenShot);
   const allowFire =
@@ -591,7 +589,6 @@ export const buildCombatAiPlan = ({
   const abilityPolicy = buildAbilityPolicy({
     bestMoveDelta,
     boostCommitThreshold,
-    chosenShot,
     intent,
     lastBoostTick: blackboard.history.lastBoostTick,
     moveGoal,

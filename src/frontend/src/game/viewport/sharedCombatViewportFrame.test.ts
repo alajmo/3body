@@ -69,6 +69,7 @@ describe("syncSharedCombatViewportFrame", () => {
       transient: {
         impactBursts: {
           bursts: [],
+          nowSec: 0.75,
           resolveBurst: () => null,
         },
         nowSec: 1,
@@ -158,7 +159,6 @@ describe("syncSharedCombatViewportFrame", () => {
 
     const result = syncSharedCombatViewportFrame({
       frame: frame as never,
-      nowSec: 4,
       resources: resources as never,
     });
 
@@ -184,7 +184,7 @@ describe("syncSharedCombatViewportFrame", () => {
       viewportFrameMocks.syncSharedCombatPresentationFrame,
     ).toHaveBeenCalledWith({
       frame: frame.presentation,
-      nowSec: 4,
+      nowSec: 1,
       visuals: resources.presentation,
     });
     expect(
@@ -194,14 +194,13 @@ describe("syncSharedCombatViewportFrame", () => {
       impactBursts: {
         ...resources.transient.impactBursts,
         ...frame.transient.impactBursts,
-        nowSec: frame.transient.nowSec,
       },
       nowSec: frame.transient.nowSec,
       planetExplosions: resources.transient.planetExplosions,
     });
     const entityCallOrder =
-      viewportFrameMocks.syncSharedCombatEntityPresentationFrame
-        .mock.invocationCallOrder[0];
+      viewportFrameMocks.syncSharedCombatEntityPresentationFrame.mock
+        .invocationCallOrder[0];
     const presentationCallOrder =
       viewportFrameMocks.syncSharedCombatPresentationFrame.mock
         .invocationCallOrder[0];
@@ -211,12 +210,8 @@ describe("syncSharedCombatViewportFrame", () => {
     expect(entityCallOrder).toBeDefined();
     expect(presentationCallOrder).toBeDefined();
     expect(transientCallOrder).toBeDefined();
-    expect(
-      entityCallOrder!,
-    ).toBeLessThan(presentationCallOrder!);
-    expect(
-      presentationCallOrder!,
-    ).toBeLessThan(transientCallOrder!);
+    expect(entityCallOrder!).toBeLessThan(presentationCallOrder!);
+    expect(presentationCallOrder!).toBeLessThan(transientCallOrder!);
     expect(result).toBe(presentationState);
   });
 });

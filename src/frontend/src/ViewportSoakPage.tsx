@@ -38,7 +38,9 @@ export function ViewportSoakPage() {
     {
       eyebrow: "Secondary",
       title: "Orbit interaction",
-      viewport: <SunInteractionViewportPanel className="viewport-soak-page__surface" />,
+      viewport: (
+        <SunInteractionViewportPanel className="viewport-soak-page__surface" />
+      ),
     },
   ].slice(0, secondaryCount);
 

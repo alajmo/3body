@@ -1,4 +1,4 @@
-import { PLANET_HP } from "../constants";
+import { PLANET_HP, SIM_HZ } from "../constants";
 import type {
   Cache,
   CacheContents,
@@ -43,8 +43,8 @@ import type {
 const DEFAULT_DIR: Vec2 = { x: 1, y: 0 };
 const EXPLORE_ANGLE_SECTORS = 12;
 const EXPLORE_RING_CENTERS = [0.18, 0.32, 0.46, 0.58] as const;
-const EXPLORE_UNSEEN_BONUS_TICKS = 8 * 120;
-const EXPLORE_AGE_CAP_TICKS = 18 * 120;
+const EXPLORE_UNSEEN_BONUS_TICKS = 8 * SIM_HZ;
+const EXPLORE_AGE_CAP_TICKS = 18 * SIM_HZ;
 const BOUNDARY_THREAT_START_RATIO = 0.84;
 
 const normalizeDir = (dir: Vec2, fallback: Vec2 = DEFAULT_DIR): Vec2 => {
@@ -504,7 +504,7 @@ const buildExploreFact = ({
         score,
         ageTicks,
         safety,
-        reason: `explore ${sectorKey} stale ${(ageTicks / 120).toFixed(1)}s safe ${Math.round(safety * 100)}%`,
+        reason: `explore ${sectorKey} stale ${(ageTicks / SIM_HZ).toFixed(1)}s safe ${Math.round(safety * 100)}%`,
       };
 
       if (

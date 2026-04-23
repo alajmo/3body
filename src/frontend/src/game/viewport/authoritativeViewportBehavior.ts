@@ -7,12 +7,14 @@ import type {
   Vec2,
 } from "@3body/shared";
 import {
+  ARCHETYPES,
   BOOST_SPEC,
   clamp,
   len,
   lerp,
   normalize as normalizeVec2,
   ROCKET_SPECS,
+  SIM_HZ,
   SNAPSHOT_HZ,
   sub,
 } from "@3body/shared";
@@ -24,20 +26,20 @@ import type {
 const AUTHORITATIVE_SEEKER_LOCK_SELECTION_DISTANCE = 96;
 const DEFAULT_AUTHORITATIVE_AIM_DIR = { x: 1, y: 0 } satisfies Vec2;
 
-export interface AuthoritativePendingAbilityRequests {
+interface AuthoritativePendingAbilityRequests {
   boost: boolean;
   gravityPulse: boolean;
   shield: boolean;
 }
 
-export interface AuthoritativeSeekerLockResolution {
+interface AuthoritativeSeekerLockResolution {
   progress: number;
   seekerLockStartedAtSec: number | null;
   seekerLockTarget: PlanetPublic | null;
   seekerLockTargetId: number | null;
 }
 
-export interface AuthoritativeCombatControlStepResolution {
+interface AuthoritativeCombatControlStepResolution {
   aimDir: Vec2 | null;
   boostAvailable: boolean;
   dispatchEnabled: boolean;
@@ -60,6 +62,15 @@ const AUTHORITATIVE_ABILITY_SLOTS_BY_MASK = [
   ["q", "w", "g"] as const,
 ] satisfies readonly (readonly AbilitySlot[])[];
 
+const cooldownKeyByRocketKind = {
+  heavy: "heavyReloadUntilTick",
+  light: "lightReloadUntilTick",
+  seeker: "seekerReloadUntilTick",
+} as const satisfies Record<
+  RocketKind,
+  "heavyReloadUntilTick" | "lightReloadUntilTick" | "seekerReloadUntilTick"
+>;
+
 export const getAuthoritativeAbilitySlots = (
   pendingAbilityRequests: AuthoritativePendingAbilityRequests,
 ): readonly AbilitySlot[] => {
@@ -77,7 +88,7 @@ export const getAuthoritativeAbilitySlots = (
   return AUTHORITATIVE_ABILITY_SLOTS_BY_MASK[mask]!;
 };
 
-export const getAuthoritativeAimDirection = ({
+const getAuthoritativeAimDirection = ({
   aimWorld,
   playerPos,
 }: {
@@ -86,10 +97,12 @@ export const getAuthoritativeAimDirection = ({
 }): Vec2 => {
   const aimDelta = sub(aimWorld, playerPos);
 
-  return len(aimDelta) > 0 ? normalizeVec2(aimDelta) : DEFAULT_AUTHORITATIVE_AIM_DIR;
+  return len(aimDelta) > 0
+    ? normalizeVec2(aimDelta)
+    : DEFAULT_AUTHORITATIVE_AIM_DIR;
 };
 
-export const getAuthoritativeBoostRepeatIntervalSec = (): number =>
+const getAuthoritativeBoostRepeatIntervalSec = (): number =>
   Math.max(1 / SNAPSHOT_HZ, BOOST_SPEC.cooldownSec * 0.9);
 
 const findAimLockTargetPlanet = ({
@@ -137,7 +150,7 @@ const getAuthoritativeSeekerLockProgress = (
   return clamp((nowSec - lockStartedAtSec) / ROCKET_SPECS.seeker.lockSec, 0, 1);
 };
 
-export const resolveAuthoritativeSeekerLock = ({
+const resolveAuthoritativeSeekerLock = ({
   aimWorld,
   nowSec,
   planets,
@@ -198,7 +211,7 @@ export const resolveAuthoritativeSeekerLock = ({
   };
 };
 
-export const shouldDispatchAuthoritativeInput = ({
+const shouldDispatchAuthoritativeInput = ({
   inputSendIntervalMs,
   lastInputSentAtMs,
   shieldActive,
@@ -211,7 +224,7 @@ export const shouldDispatchAuthoritativeInput = ({
 }): boolean =>
   !shieldActive && timeMs - lastInputSentAtMs >= inputSendIntervalMs;
 
-export const shouldDispatchAuthoritativeShieldAim = ({
+const shouldDispatchAuthoritativeShieldAim = ({
   lastShieldAimSentAtMs,
   shieldActive,
   shieldAimSendIntervalMs,
@@ -222,10 +235,9 @@ export const shouldDispatchAuthoritativeShieldAim = ({
   shieldAimSendIntervalMs: number;
   timeMs: number;
 }): boolean =>
-  shieldActive &&
-  timeMs - lastShieldAimSentAtMs >= shieldAimSendIntervalMs;
+  shieldActive && timeMs - lastShieldAimSentAtMs >= shieldAimSendIntervalMs;
 
-export const getAuthoritativeQueuedAbilitySlots = ({
+const getAuthoritativeQueuedAbilitySlots = ({
   boostAvailable,
   lastBoostAbilitySentAtSec,
   nowSec,
@@ -245,7 +257,7 @@ export const getAuthoritativeQueuedAbilitySlots = ({
         getAuthoritativeBoostRepeatIntervalSec(),
   });
 
-export const resolveAuthoritativeFireTargetId = ({
+const resolveAuthoritativeFireTargetId = ({
   seekerLockProgress,
   seekerLockTarget,
   selectedRocketKind,
@@ -258,6 +270,62 @@ export const resolveAuthoritativeFireTargetId = ({
     ? seekerLockTarget?.id
     : undefined;
 
+export const getAuthoritativeRocketReloadTicks = (
+  rocketKind: RocketKind,
+  archetype: PlanetPublic["archetype"],
+): number =>
+  Math.max(
+    1,
+    Math.round(
+      ROCKET_SPECS[rocketKind].reloadSec *
+        ARCHETYPES[archetype].rocketReloadMultiplier *
+        SIM_HZ,
+    ),
+  );
+
+export const canDispatchAuthoritativeRocketFire = ({
+  actionTick,
+  lastFireSentAtTick,
+  playerPlanet,
+  rocketKind,
+  self,
+}: {
+  actionTick: number;
+  lastFireSentAtTick: number;
+  playerPlanet: PlanetPublic | null;
+  rocketKind: RocketKind;
+  self: PlanetPrivateState | null;
+}): boolean => {
+  if (self === null || playerPlanet === null) {
+    return false;
+  }
+
+  if (playerPlanet.shieldActive && playerPlanet.shieldLoad > 0) {
+    return false;
+  }
+
+  const safeActionTick = Number.isFinite(actionTick)
+    ? Math.max(0, Math.trunc(actionTick))
+    : 0;
+  if (self.ammo[rocketKind] <= 0) {
+    return false;
+  }
+
+  if (safeActionTick < self.cooldowns[cooldownKeyByRocketKind[rocketKind]]) {
+    return false;
+  }
+
+  const reloadTicks = getAuthoritativeRocketReloadTicks(
+    rocketKind,
+    playerPlanet.archetype,
+  );
+  const safeLastFireSentAtTick = Number.isFinite(lastFireSentAtTick)
+    ? Math.trunc(lastFireSentAtTick)
+    : Number.NEGATIVE_INFINITY;
+
+  return safeActionTick - safeLastFireSentAtTick >= reloadTicks;
+};
+
 export const smoothAuthoritativeCameraAxis = ({
   currentValue,
   followLerp,
@@ -269,11 +337,7 @@ export const smoothAuthoritativeCameraAxis = ({
   frameDeltaSec: number;
   targetValue: number;
 }): number =>
-  lerp(
-    currentValue,
-    targetValue,
-    1 - Math.exp(-followLerp * frameDeltaSec),
-  );
+  lerp(currentValue, targetValue, 1 - Math.exp(-followLerp * frameDeltaSec));
 
 export const resolveAuthoritativeCombatControlStep = ({
   connectionState,
@@ -350,8 +414,7 @@ export const resolveAuthoritativeCombatControlStep = ({
     aimWorld: inputState.aimWorld,
     playerPos: playerPlanet.pos,
   });
-  const shieldActive =
-    playerPlanet.shieldActive && playerPlanet.shieldLoad > 0;
+  const shieldActive = playerPlanet.shieldActive && playerPlanet.shieldLoad > 0;
 
   return {
     aimDir,

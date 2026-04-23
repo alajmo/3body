@@ -10,7 +10,7 @@ import {
   type MeshBasicNodeMaterial,
   type Scene,
   type SphereGeometry,
-  Vector3,
+  type Vector3,
 } from "three/webgpu";
 import { getRuntimeTuningDocument } from "../runtimeTuning";
 

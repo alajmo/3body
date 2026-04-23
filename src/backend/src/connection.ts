@@ -1,25 +1,29 @@
 import {
-  ARCHETYPE_IDS,
   type AbilityMsg,
+  ARCHETYPE_IDS,
   type ArchetypeId,
   type BotDifficulty,
   type ChatMsg,
+  decodeProtocolMessage,
   type ErrorCode,
+  encodeProtocolMessage,
   type FireRocketMsg,
   type HelloMsg,
   type InputMsg,
   type JoinRequest,
   type PingMsg,
-  type PongMsg,
   type PlanetPrivateState,
+  type PlayerId,
+  type PlayerName,
   type PlayerRole,
+  type PongMsg,
   type ProfileToken,
   type ResumeToken,
   type ServerMsg,
   type ShieldAimMsg,
+  SIM_HZ,
+  SNAPSHOT_HZ,
   type VoteRematchMsg,
-  type PlayerId,
-  type PlayerName,
 } from "@3body/shared";
 import { log } from "./log";
 import type { MatchmakingService } from "./matchmaking";
@@ -99,7 +103,10 @@ const isHelloMsg = (value: unknown): value is HelloMsg =>
   isJoinRequest(value.join) &&
   (value.profileToken === undefined ||
     typeof value.profileToken === "string") &&
-  (value.resumeToken === undefined || typeof value.resumeToken === "string");
+  (value.resumeToken === undefined || typeof value.resumeToken === "string") &&
+  (value.snapshotVersion === undefined ||
+    value.snapshotVersion === 1 ||
+    value.snapshotVersion === 2);
 
 const isPingMsg = (value: unknown): value is PingMsg =>
   isRecord(value) &&
@@ -166,6 +173,9 @@ type PreparedChatMessage =
       message: string;
     };
 
+type OutboundEncoding = "json" | "msgpack";
+const SNAPSHOT_ACK_RATE_LIMIT_HZ = SNAPSHOT_HZ * 2;
+
 export class Connection {
   ws?: Bun.ServerWebSocket<ConnectionWebSocketData>;
   playerId?: PlayerId;
@@ -175,6 +185,8 @@ export class Connection {
   resumeToken?: ResumeToken;
   roomId?: string;
   role?: PlayerRole;
+  outboundEncoding: OutboundEncoding = "msgpack";
+  snapshotVersion: 1 | 2 = 1;
   lastAckTick = 0;
   lastSentSelfStateSignature?: string;
   outboundQueuedBytes = 0;
@@ -182,7 +194,11 @@ export class Connection {
 
   #closed = false;
   #helloHandled = false;
-  #inputBucket = new RateBucket(120, 120);
+  #inputBucket = new RateBucket(SIM_HZ, SIM_HZ);
+  #snapshotAckBucket = new RateBucket(
+    SNAPSHOT_ACK_RATE_LIMIT_HZ,
+    SNAPSHOT_ACK_RATE_LIMIT_HZ,
+  );
   #actionBucket = new RateBucket(20, 20);
   #metaBucket = new RateBucket(10, 10);
   #chatSentAtMs: number[] = [];
@@ -218,6 +234,8 @@ export class Connection {
     this.resumeToken = undefined;
     this.roomId = undefined;
     this.role = undefined;
+    this.outboundEncoding = "msgpack";
+    this.snapshotVersion = 1;
     this.lastAckTick = 0;
     this.lastSentSelfStateSignature = undefined;
     this.outboundQueuedBytes = 0;
@@ -228,14 +246,38 @@ export class Connection {
       state === null ? "null" : JSON.stringify(state);
   }
 
+  #withSendTimestamp(message: ServerMsg): ServerMsg {
+    switch (message.type) {
+      case "deltaSnapshot":
+      case "fullSnapshot":
+      case "snapshotV2":
+        return {
+          ...message,
+          sentAtMs: performance.now(),
+        };
+      default:
+        return message;
+    }
+  }
+
   send(message: ServerMsg): boolean {
     if (!this.ws) {
       return false;
     }
 
-    // TODO: swap to @msgpack/msgpack when snapshot size matters.
-    const payload = JSON.stringify(message);
-    const status = this.ws.sendText(payload);
+    const outboundMessage = this.#withSendTimestamp(message);
+    const payload =
+      this.outboundEncoding === "json"
+        ? JSON.stringify(outboundMessage)
+        : encodeProtocolMessage(outboundMessage);
+    const payloadByteLength =
+      typeof payload === "string"
+        ? Buffer.byteLength(payload)
+        : payload.byteLength;
+    const status =
+      typeof payload === "string"
+        ? this.ws.sendText(payload)
+        : this.ws.sendBinary(payload);
     this.outboundQueuedBytes = this.ws.getBufferedAmount();
 
     if (status === 0) {
@@ -247,6 +289,8 @@ export class Connection {
       );
       return false;
     }
+
+    this.service.recordOutboundMessage(outboundMessage, payloadByteLength);
 
     if (
       status === -1 ||
@@ -318,6 +362,10 @@ export class Connection {
 
   consumeInputRateLimit(): boolean {
     return this.#inputBucket.consume();
+  }
+
+  consumeSnapshotAckRateLimit(): boolean {
+    return this.#snapshotAckBucket.consume();
   }
 
   consumeActionRateLimit(): boolean {
@@ -454,14 +502,19 @@ export class Connection {
       return;
     }
 
-    const text =
-      typeof rawMessage === "string" ? rawMessage : rawMessage.toString("utf8");
+    if (!this.#helloHandled) {
+      this.outboundEncoding =
+        typeof rawMessage === "string" ? "json" : "msgpack";
+    }
 
     let parsed: unknown;
     try {
-      parsed = JSON.parse(text);
+      parsed = decodeProtocolMessage(rawMessage);
     } catch {
-      this.rejectInvalidMessage("Malformed JSON", "invalid_json");
+      this.rejectInvalidMessage(
+        "Malformed WebSocket payload",
+        "invalid_payload_encoding",
+      );
       return;
     }
 
@@ -474,6 +527,7 @@ export class Connection {
         return;
       }
 
+      this.snapshotVersion = parsed.snapshotVersion === 2 ? 2 : 1;
       this.service.handleHello(this, parsed);
       return;
     }
@@ -558,13 +612,9 @@ export class Connection {
           this.rejectInvalidMessage("Invalid ack tick", "invalid_ack_snapshot");
           return;
         }
-        if (
-          !this.enforceRateLimit(
-            "input",
-            "ack_snapshot",
-            "Too many ackSnapshot messages",
-          )
-        ) {
+        if (!this.consumeSnapshotAckRateLimit()) {
+          this.logRateLimited("ack_snapshot", "Too many ackSnapshot messages");
+          this.sendError("rate_limited", "Too many ackSnapshot messages");
           return;
         }
         this.service.handleAckSnapshot(this, parsed.tick);
@@ -681,7 +731,7 @@ export class Connection {
     }
   }
 
-  onClose(): void {
+  onClose(code?: number, reason?: string): void {
     if (this.#closed) {
       return;
     }
@@ -690,6 +740,13 @@ export class Connection {
     this.alive = false;
     this.outboundQueuedBytes = 0;
     this.ws = undefined;
+    log.info(
+      "socket_closed",
+      this.logContextData({
+        code,
+        reason,
+      }),
+    );
     this.service.handleClosedConnection(this);
   }
 

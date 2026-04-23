@@ -46,7 +46,10 @@ const createLaunchBurstPools = (): Record<
   seeker: createMockLaunchBurstPool(),
 });
 
-const createRocketPools = (): Record<RocketKind, { scale: { x: number; y: number } }> => ({
+const createRocketPools = (): Record<
+  RocketKind,
+  { scale: { x: number; y: number } }
+> => ({
   heavy: { scale: { x: 20, y: 6 } },
   light: { scale: { x: 20, y: 6 } },
   seeker: { scale: { x: 20, y: 6 } },

@@ -6,7 +6,8 @@ export const buildCombatAiCommandDirective = (
 ): CombatAiCommandDirective => {
   const plan = blackboard.plan;
   const topThreat = blackboard.perception.threats[0];
-  const aimDir = plan?.aimGoal?.dir ?? plan?.moveGoal?.dir ?? defaultCombatAiAimDir();
+  const aimDir =
+    plan?.aimGoal?.dir ?? plan?.moveGoal?.dir ?? defaultCombatAiAimDir();
   const notes = [
     `intent ${blackboard.intent.kind}`,
     ...(plan === null ? ["no plan"] : [plan.reason]),
@@ -29,13 +30,12 @@ export const buildCombatAiCommandDirective = (
             targetPlayerId: plan.fireGate.targetPlayerId,
           }
         : undefined,
-    abilityPolicy:
-      plan?.abilityPolicy ?? {
-        shield: false,
-        boost: false,
-        gravityPulse: false,
-        reason: [],
-      },
+    abilityPolicy: plan?.abilityPolicy ?? {
+      shield: false,
+      boost: false,
+      gravityPulse: false,
+      reason: [],
+    },
     notes,
   };
 };

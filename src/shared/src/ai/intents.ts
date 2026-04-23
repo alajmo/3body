@@ -1,4 +1,4 @@
-import { PLANET_HP } from "../constants";
+import { PLANET_HP, SIM_HZ } from "../constants";
 import type { PlanetPrivateState, PlanetPublic, World } from "../entities";
 import type { BotDifficulty } from "../protocol";
 import { clamp01 } from "./blackboard";
@@ -145,7 +145,7 @@ export const scoreCombatAiIntents = ({
 
   const heavyZoneUnlocked =
     primaryTarget !== null &&
-    (primaryTarget.hp <= PLANET_HP * 0.85 || tick >= 4 * 120);
+    (primaryTarget.hp <= PLANET_HP * 0.85 || tick >= 4 * SIM_HZ);
 
   const zoneWithHeavyScore =
     primaryTargetFact === undefined ||

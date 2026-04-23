@@ -7,9 +7,7 @@ const { authoritativeGamePanelSpy } = vi.hoisted(() => ({
 }));
 
 vi.mock("./AuthoritativeGamePanel", () => ({
-  AuthoritativeGamePanel: (props: {
-    className?: string;
-  }) => {
+  AuthoritativeGamePanel: (props: { className?: string }) => {
     authoritativeGamePanelSpy(props);
     return <div data-testid="authoritative-game-panel" />;
   },

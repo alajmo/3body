@@ -99,6 +99,54 @@ const syncLerpedVec2 = (
   target.y = lerp(previous.y, current.y, alpha);
 };
 
+const syncHermiteVec2 = ({
+  alpha,
+  currentPos,
+  currentVel,
+  previousPos,
+  previousVel,
+  target,
+  tickSpanSec,
+}: {
+  alpha: number;
+  currentPos: Vec2;
+  currentVel: Vec2;
+  previousPos: Vec2 | undefined;
+  previousVel: Vec2 | undefined;
+  target: Vec2;
+  tickSpanSec: number | undefined;
+}) => {
+  if (
+    previousPos === undefined ||
+    previousVel === undefined ||
+    tickSpanSec === undefined ||
+    tickSpanSec <= 0 ||
+    alpha < 0 ||
+    alpha > 1
+  ) {
+    syncLerpedVec2(target, previousPos, currentPos, alpha);
+    return;
+  }
+
+  const t2 = alpha * alpha;
+  const t3 = t2 * alpha;
+  const h00 = 2 * t3 - 3 * t2 + 1;
+  const h10 = t3 - 2 * t2 + alpha;
+  const h01 = -2 * t3 + 3 * t2;
+  const h11 = t3 - t2;
+
+  target.x =
+    h00 * previousPos.x +
+    h10 * tickSpanSec * previousVel.x +
+    h01 * currentPos.x +
+    h11 * tickSpanSec * currentVel.x;
+  target.y =
+    h00 * previousPos.y +
+    h10 * tickSpanSec * previousVel.y +
+    h01 * currentPos.y +
+    h11 * tickSpanSec * currentVel.y;
+};
+
 const syncPlanetDebuffs = (
   target: PlanetPublic["debuffs"],
   current: PlanetPublic["debuffs"],
@@ -136,12 +184,21 @@ const syncSunInto = (
   previous: Sun | undefined,
   current: Sun,
   alpha: number,
+  tickSpanSec?: number,
 ) => {
   target.id = current.id;
   target.kind = current.kind;
   target.mass = current.mass;
   target.radius = current.radius;
-  syncLerpedVec2(target.pos, previous?.pos, current.pos, alpha);
+  syncHermiteVec2({
+    alpha,
+    currentPos: current.pos,
+    currentVel: current.vel,
+    previousPos: previous?.pos,
+    previousVel: previous?.vel,
+    target: target.pos,
+    tickSpanSec,
+  });
   syncLerpedVec2(target.vel, previous?.vel, current.vel, alpha);
 };
 
@@ -150,12 +207,21 @@ const syncNeutronStarInto = (
   previous: NeutronStar | undefined,
   current: NeutronStar,
   alpha: number,
+  tickSpanSec?: number,
 ) => {
   target.id = current.id;
   target.kind = current.kind;
   target.mass = current.mass;
   target.radius = current.radius;
-  syncLerpedVec2(target.pos, previous?.pos, current.pos, alpha);
+  syncHermiteVec2({
+    alpha,
+    currentPos: current.pos,
+    currentVel: current.vel,
+    previousPos: previous?.pos,
+    previousVel: previous?.vel,
+    target: target.pos,
+    tickSpanSec,
+  });
   syncLerpedVec2(target.vel, previous?.vel, current.vel, alpha);
 };
 
@@ -164,6 +230,7 @@ const syncPlanetInto = (
   previous: PlanetPublic | undefined,
   current: PlanetPublic,
   alpha: number,
+  tickSpanSec?: number,
 ) => {
   target.id = current.id;
   target.kind = current.kind;
@@ -171,7 +238,15 @@ const syncPlanetInto = (
   target.archetype = current.archetype;
   target.hp = current.hp;
   target.radius = current.radius;
-  syncLerpedVec2(target.pos, previous?.pos, current.pos, alpha);
+  syncHermiteVec2({
+    alpha,
+    currentPos: current.pos,
+    currentVel: current.vel,
+    previousPos: previous?.pos,
+    previousVel: previous?.vel,
+    target: target.pos,
+    tickSpanSec,
+  });
   syncLerpedVec2(target.vel, previous?.vel, current.vel, alpha);
   syncVec2(target.shieldAimDir, current.shieldAimDir);
   target.shieldActive = current.shieldActive;
@@ -185,6 +260,7 @@ const syncRocketInto = (
   previous: Rocket | undefined,
   current: Rocket,
   alpha: number,
+  tickSpanSec?: number,
 ) => {
   target.id = current.id;
   target.kind = current.kind;
@@ -193,7 +269,15 @@ const syncRocketInto = (
   target.targetId = current.targetId;
   target.ttlUntilTick = current.ttlUntilTick;
   target.radius = current.radius;
-  syncLerpedVec2(target.pos, previous?.pos, current.pos, alpha);
+  syncHermiteVec2({
+    alpha,
+    currentPos: current.pos,
+    currentVel: current.vel,
+    previousPos: previous?.pos,
+    previousVel: previous?.vel,
+    target: target.pos,
+    tickSpanSec,
+  });
   syncLerpedVec2(target.vel, previous?.vel, current.vel, alpha);
 };
 
@@ -202,12 +286,21 @@ const syncCacheInto = (
   previous: Cache | undefined,
   current: Cache,
   alpha: number,
+  tickSpanSec?: number,
 ) => {
   target.id = current.id;
   target.kind = current.kind;
   target.contents = syncCacheContents(target.contents, current.contents);
   target.radius = current.radius;
-  syncLerpedVec2(target.pos, previous?.pos, current.pos, alpha);
+  syncHermiteVec2({
+    alpha,
+    currentPos: current.pos,
+    currentVel: current.vel,
+    previousPos: previous?.pos,
+    previousVel: previous?.vel,
+    target: target.pos,
+    tickSpanSec,
+  });
   syncLerpedVec2(target.vel, previous?.vel, current.vel, alpha);
 };
 
@@ -216,6 +309,7 @@ const syncDebrisInto = (
   previous: Debris | undefined,
   current: Debris,
   alpha: number,
+  tickSpanSec?: number,
 ) => {
   target.id = current.id;
   target.kind = current.kind;
@@ -223,7 +317,15 @@ const syncDebrisInto = (
   target.ownerPlayerId = current.ownerPlayerId;
   target.ttlUntilTick = current.ttlUntilTick;
   target.radius = current.radius;
-  syncLerpedVec2(target.pos, previous?.pos, current.pos, alpha);
+  syncHermiteVec2({
+    alpha,
+    currentPos: current.pos,
+    currentVel: current.vel,
+    previousPos: previous?.pos,
+    previousVel: previous?.vel,
+    target: target.pos,
+    tickSpanSec,
+  });
   syncLerpedVec2(target.vel, previous?.vel, current.vel, alpha);
 };
 
@@ -232,13 +334,22 @@ const syncBlackHoleInto = (
   previous: BlackHole | undefined,
   current: BlackHole,
   alpha: number,
+  tickSpanSec?: number,
 ) => {
   target.id = current.id;
   target.kind = current.kind;
   target.mass = current.mass;
   target.killRadius = current.killRadius;
   target.radius = current.radius;
-  syncLerpedVec2(target.pos, previous?.pos, current.pos, alpha);
+  syncHermiteVec2({
+    alpha,
+    currentPos: current.pos,
+    currentVel: current.vel,
+    previousPos: previous?.pos,
+    previousVel: previous?.vel,
+    target: target.pos,
+    tickSpanSec,
+  });
   syncLerpedVec2(target.vel, previous?.vel, current.vel, alpha);
 };
 
@@ -252,8 +363,10 @@ const syncInterpolatedEntityArray = <T extends { id: number }>(
     previous: T | undefined,
     current: T,
     alpha: number,
+    tickSpanSec?: number,
   ) => void,
   alpha: number,
+  tickSpanSec?: number,
 ) => {
   for (let index = 0; index < currentEntities.length; index += 1) {
     const currentEntity = currentEntities[index]!;
@@ -269,6 +382,7 @@ const syncInterpolatedEntityArray = <T extends { id: number }>(
       getPrevious(currentEntity.id),
       currentEntity,
       alpha,
+      tickSpanSec,
     );
   }
 
@@ -299,6 +413,7 @@ export const syncAuthoritativeInterpolatedWorld = (
   previousWorld: World,
   currentWorld: World,
   alpha: number,
+  tickSpanSec?: number,
 ): World => {
   fillEntityMap(cache.previousSunsById, previousWorld.suns);
   fillEntityMap(cache.previousNeutronStarsById, previousWorld.neutronStars);
@@ -317,6 +432,7 @@ export const syncAuthoritativeInterpolatedWorld = (
     cloneSun,
     syncSunInto,
     alpha,
+    tickSpanSec,
   );
   syncInterpolatedEntityArray(
     targetWorld.neutronStars,
@@ -325,6 +441,7 @@ export const syncAuthoritativeInterpolatedWorld = (
     cloneNeutronStar,
     syncNeutronStarInto,
     alpha,
+    tickSpanSec,
   );
   syncInterpolatedEntityArray(
     targetWorld.planets,
@@ -333,6 +450,7 @@ export const syncAuthoritativeInterpolatedWorld = (
     clonePlanet,
     syncPlanetInto,
     alpha,
+    tickSpanSec,
   );
   syncInterpolatedEntityArray(
     targetWorld.rockets,
@@ -341,6 +459,7 @@ export const syncAuthoritativeInterpolatedWorld = (
     cloneRocket,
     syncRocketInto,
     alpha,
+    tickSpanSec,
   );
   syncInterpolatedEntityArray(
     targetWorld.caches,
@@ -349,6 +468,7 @@ export const syncAuthoritativeInterpolatedWorld = (
     cloneCache,
     syncCacheInto,
     alpha,
+    tickSpanSec,
   );
   syncInterpolatedEntityArray(
     targetWorld.debris,
@@ -357,6 +477,7 @@ export const syncAuthoritativeInterpolatedWorld = (
     cloneDebris,
     syncDebrisInto,
     alpha,
+    tickSpanSec,
   );
 
   if (currentWorld.blackHole === undefined) {
@@ -373,6 +494,7 @@ export const syncAuthoritativeInterpolatedWorld = (
       previousWorld.blackHole,
       currentWorld.blackHole,
       alpha,
+      tickSpanSec,
     );
   }
 

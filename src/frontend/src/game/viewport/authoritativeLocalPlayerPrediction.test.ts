@@ -11,6 +11,7 @@ import {
 } from "@3body/shared";
 import { describe, expect, it } from "vitest";
 import {
+  createAuthoritativeLocalPlayerPredictionSmoothingState,
   predictAuthoritativeLocalPlayerPlanet,
   syncAuthoritativeLocalPlayerPrediction,
 } from "./authoritativeLocalPlayerPrediction";
@@ -248,5 +249,100 @@ describe("authoritativeLocalPlayerPrediction", () => {
     expect(synced).toBe(renderWorld.planets[0]);
     expectVec2CloseTo(renderWorld.planets[0]!.pos, { x: 11, y: 19.5 });
     expectVec2CloseTo(renderWorld.planets[0]!.vel, { x: 40, y: -20 });
+  });
+
+  it("smooths local correction updates after initialization", () => {
+    const smoothingState =
+      createAuthoritativeLocalPlayerPredictionSmoothingState();
+    const renderWorld = buildWorld({
+      planets: [
+        buildPlanet({
+          pos: { x: 0, y: 0 },
+          vel: { x: 0, y: 0 },
+        }),
+      ],
+    });
+
+    const first = syncAuthoritativeLocalPlayerPrediction({
+      playerId: "player",
+      predictionMs: 0,
+      renderWorld,
+      smoothing: {
+        frameDeltaSec: 1 / 60,
+        state: smoothingState,
+      },
+      snapshotTick: 100,
+      snapshotWorld: buildWorld({
+        planets: [
+          buildPlanet({
+            pos: { x: 10, y: 20 },
+            vel: { x: 0, y: 0 },
+          }),
+        ],
+      }),
+    });
+
+    const second = syncAuthoritativeLocalPlayerPrediction({
+      playerId: "player",
+      predictionMs: 0,
+      renderWorld,
+      smoothing: {
+        frameDeltaSec: 1 / 60,
+        state: smoothingState,
+      },
+      snapshotTick: 102,
+      snapshotWorld: buildWorld({
+        planets: [
+          buildPlanet({
+            pos: { x: 20, y: 20 },
+            vel: { x: 0, y: 0 },
+          }),
+        ],
+      }),
+    });
+
+    expect(first).toBe(renderWorld.planets[0]);
+    expect(second).toBe(renderWorld.planets[0]);
+    expect(renderWorld.planets[0]!.pos.x).toBeGreaterThan(10);
+    expect(renderWorld.planets[0]!.pos.x).toBeLessThan(20);
+    expect(renderWorld.planets[0]!.pos.y).toBeCloseTo(20, 6);
+  });
+
+  it("snaps local smoothing across large corrections", () => {
+    const smoothingState =
+      createAuthoritativeLocalPlayerPredictionSmoothingState();
+    const renderWorld = buildWorld();
+
+    syncAuthoritativeLocalPlayerPrediction({
+      playerId: "player",
+      predictionMs: 0,
+      renderWorld,
+      smoothing: {
+        frameDeltaSec: 1 / 60,
+        state: smoothingState,
+      },
+      snapshotTick: 100,
+      snapshotWorld: buildWorld(),
+    });
+    syncAuthoritativeLocalPlayerPrediction({
+      playerId: "player",
+      predictionMs: 0,
+      renderWorld,
+      smoothing: {
+        frameDeltaSec: 1 / 60,
+        state: smoothingState,
+      },
+      snapshotTick: 102,
+      snapshotWorld: buildWorld({
+        planets: [
+          buildPlanet({
+            pos: { x: 1_000, y: -500 },
+            vel: { x: 0, y: 0 },
+          }),
+        ],
+      }),
+    });
+
+    expectVec2CloseTo(renderWorld.planets[0]!.pos, { x: 1_000, y: -500 });
   });
 });

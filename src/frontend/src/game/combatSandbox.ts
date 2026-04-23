@@ -58,14 +58,14 @@ import {
   getBoundaryAsteroidExplosionPieces,
   getBoundaryAsteroidExplosionSpeedVariance,
   getBoundaryAsteroidImpactRadius,
-  getPreferredLocalPlayerOrbitIndex,
-  getUmbraDragDurationTicks,
-  getUmbraDragStepMultiplier,
   getOrbitPatternDistanceScaleAtElapsedSec,
   getOuterRingMax,
   getOuterRingMin,
+  getPreferredLocalPlayerOrbitIndex,
   getSeekerLockTicks,
   getShieldLoadCapacity,
+  getUmbraDragDurationTicks,
+  getUmbraDragStepMultiplier,
   hasCrossedBlackHoleHorizon,
   len,
   lerp,
@@ -1764,6 +1764,7 @@ const activateWildcard = (
   planets: CombatSandboxPlanet[],
   rockets: CombatSandboxRocket[],
   caches: CombatSandboxCache[],
+  debris: CombatSandboxDebris[],
   player: CombatSandboxPlayerState,
 ): boolean => {
   const playerPlanetIndex = findPlayerPlanetIndex(planets, player.planetId);
@@ -1787,6 +1788,13 @@ const activateWildcard = (
     playerPlanet.pos,
     GRAVITY_PULSE_RADIUS,
     GRAVITY_PULSE_IMPULSE * 1.15,
+  );
+  applyImpulseAwayFromPoint(
+    debris,
+    playerPlanet.pos,
+    GRAVITY_PULSE_RADIUS,
+    GRAVITY_PULSE_IMPULSE,
+    isBoundaryAsteroidDebris,
   );
   applyImpulseAwayFromPoint(
     caches,
@@ -2066,6 +2074,7 @@ export const stepSandbox = (
   let planets = state.planets.slice();
   let rockets = state.rockets.slice();
   let caches = state.caches.slice();
+  let debris = state.debris.slice();
   const cacheRespawnAtTicks = [...state.cacheRespawnAtTicks];
   let nextEntityId = state.nextEntityId;
 
@@ -2082,7 +2091,7 @@ export const stepSandbox = (
   const botWorld = createCombatBotWorld({
     blackHole,
     caches,
-    debris: state.debris,
+    debris,
     elapsedSec: state.elapsedSec,
     neutronStars: state.neutronStars,
     planets,
@@ -2190,6 +2199,7 @@ export const stepSandbox = (
         planets,
         rockets,
         caches,
+        debris,
         controller,
       );
       if (consumed) {
@@ -2736,7 +2746,7 @@ export const stepSandbox = (
   }
 
   const steppedDebris = stepDebris(
-    state.debris,
+    debris,
     activeSuns,
     blackHole,
     nextTick,
@@ -2777,7 +2787,7 @@ export const stepSandbox = (
     nextEntityId += burst.length;
   }
 
-  const debris = [...boundaryAsteroidImpactState.debris, ...debrisBursts];
+  debris = [...boundaryAsteroidImpactState.debris, ...debrisBursts];
   syncControllersToPlanets(planets, controllerByPlayerId);
   const nextStarMotion =
     state.starMotion.mode === "fixedPattern"

@@ -33,7 +33,9 @@ describe("renderer bootstrap backend policy", () => {
     });
 
     expect(hostElement.childElementCount).toBe(1);
-    const failureElement = hostElement.querySelector(".viewport-renderer-failure");
+    const failureElement = hostElement.querySelector(
+      ".viewport-renderer-failure",
+    );
     expect(failureElement).not.toBeNull();
     expect(failureElement?.textContent).toContain("test viewport failed");
     expect(failureElement?.textContent).toContain(
@@ -78,7 +80,9 @@ describe("renderer bootstrap backend policy", () => {
 
     const validationApi = (
       window as Window & {
-        __3bodyRendererValidation?: { getState: () => Array<Record<string, unknown>> };
+        __3bodyRendererValidation?: {
+          getState: () => Array<Record<string, unknown>>;
+        };
       }
     ).__3bodyRendererValidation;
 

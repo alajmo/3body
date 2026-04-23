@@ -8,7 +8,7 @@ import type {
   ViewportFrameState,
 } from "./viewportFrameState";
 
-export type SharedCombatViewportFrameState<
+type SharedCombatViewportFrameState<
   CacheBody extends SharedCombatCacheBody,
   Rocket extends SharedCombatRocketBody & { radius: number },
   Burst extends {
@@ -26,13 +26,13 @@ export const syncSharedCombatViewportFrame = <
   },
 >({
   frame,
-  nowSec,
   resources,
 }: {
   frame: SharedCombatViewportFrameState<CacheBody, Rocket, Burst>;
-  nowSec: number;
   resources: ViewportFrameResources<CacheBody, Rocket, Burst>;
 }) => {
+  const nowSec = frame.transient.nowSec;
+
   syncSharedCombatEntityPresentationFrame({
     frame: {
       caches:
@@ -71,7 +71,6 @@ export const syncSharedCombatViewportFrame = <
     impactBursts: {
       ...resources.transient.impactBursts,
       ...frame.transient.impactBursts,
-      nowSec: frame.transient.nowSec,
     },
     nowSec: frame.transient.nowSec,
     planetExplosions: resources.transient.planetExplosions,

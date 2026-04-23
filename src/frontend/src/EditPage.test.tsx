@@ -66,7 +66,8 @@ vi.mock("./EditGameViewportPanel", () => ({
 
 describe("EditPage", () => {
   const FIRST_SUN_LABEL = "Auric";
-  const GAMEPLAY_VIEW_BUTTON_NAME = /^GameplayBackdrop, hazards, and starfield$/i;
+  const GAMEPLAY_VIEW_BUTTON_NAME =
+    /^GameplayBackdrop, hazards, and starfield$/i;
   const fetchMock = vi.fn();
   const getLastEditorPreviewStageProps = () =>
     editorPreviewStageMock.mock.lastCall?.[0] as
@@ -832,23 +833,23 @@ describe("EditPage", () => {
     expect(savedDocument.gameplay.arena.asteroidField.micro.randomization).toBe(
       0.15,
     );
-    expect(savedDocument.gameplay.arena.asteroidField.micro.spawnRatePerSec).toBe(
-      4.25,
-    );
+    expect(
+      savedDocument.gameplay.arena.asteroidField.micro.spawnRatePerSec,
+    ).toBe(4.25);
     expect(savedDocument.gameplay.arena.asteroidField.small.damage).toBe(2.25);
     expect(savedDocument.gameplay.arena.asteroidField.small.randomization).toBe(
       0.35,
     );
-    expect(savedDocument.gameplay.arena.asteroidField.small.spawnRatePerSec).toBe(
-      1.4,
-    );
+    expect(
+      savedDocument.gameplay.arena.asteroidField.small.spawnRatePerSec,
+    ).toBe(1.4);
     expect(savedDocument.gameplay.arena.asteroidField.large.damage).toBe(9.5);
     expect(savedDocument.gameplay.arena.asteroidField.large.randomization).toBe(
       0.92,
     );
-    expect(savedDocument.gameplay.arena.asteroidField.large.spawnRatePerSec).toBe(
-      0.6,
-    );
+    expect(
+      savedDocument.gameplay.arena.asteroidField.large.spawnRatePerSec,
+    ).toBe(0.6);
   });
 
   it("forwards numeric input min and max attributes", async () => {

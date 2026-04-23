@@ -1,5 +1,5 @@
-import type { RocketKind, SunVisualProfile, Vec2 } from "@3body/shared";
-import { FIXED_STEP_SEC, getSunVisualProfile } from "@3body/shared";
+import type { RocketKind, Vec2 } from "@3body/shared";
+import { FIXED_STEP_SEC } from "@3body/shared";
 import type { Group, Mesh } from "three/webgpu";
 import type {
   CombatSandboxCache,
@@ -7,50 +7,38 @@ import type {
   CombatSandboxRocket,
   CombatSandboxState,
 } from "../combatSandbox";
-import {
-  getPlanetArchetypeVisuals,
-  getRenderedPlanetRadius,
-} from "../planetVisualTuning";
+import { getRenderedPlanetRadius } from "../planetVisualTuning";
 import { getCannonWorldLayout } from "../rocketVisibility";
-import { getRuntimeTuningDocument } from "../runtimeTuning";
+import type { getRuntimeTuningDocument } from "../runtimeTuning";
+import {
+  queueBlackHoleSwallowEffect,
+  type BlackHoleSwallowState,
+  type BlackHoleSwallowVisual,
+} from "./blackHoleVisuals";
 import type {
   CacheIconKey,
   CacheSpriteAssets,
   CacheVisual,
-  SharedCombatTrackedCacheBody,
 } from "./cacheVisuals";
-import { queueBlackHoleSwallowEffect, type BlackHoleSwallowState, type BlackHoleSwallowVisual } from "./blackHoleVisuals";
 import type { LocalSandboxGravityPulseState } from "./localSandboxSimulation";
 import { getLocalSandboxLockProgress } from "./localSandboxSimulation";
-import { getLocalViewportControlledBody, type LocalViewportCameraState } from "./localViewportCamera";
+import {
+  getLocalViewportControlledBody,
+  type LocalViewportCameraState,
+} from "./localViewportCamera";
+import type { LocalViewportCombatBlackHoleSwallowTracker } from "./localViewportCelestialSync";
 import { buildLocalViewportFrameBundle } from "./localViewportFrameAdapter";
 import type { ViewportRenderQualityProfile } from "./renderQuality";
-import type { SharedCombatTrackedRocketBody } from "./sharedCombatBlackHoleSwallowTracking";
 import type {
   SharedCombatBoostBurstState,
   SharedCombatBoostBurstVisual,
 } from "./sharedCombatBoostVisuals";
-import {
-  type SharedCombatNeutronStarVisual as NeutronStarVisual,
-  type SharedCombatSunVisual as SunVisual,
-  syncSharedCombatNeutronStarVisual,
-  syncSharedCombatSunVisual,
-} from "./sharedCombatCelestialVisuals";
-import type {
-  SharedCombatTrackedNeutronStarBody,
-  SharedCombatTrackedSunBody,
-} from "./sharedCombatDynamicCelestialSync";
 import type { SharedCombatLaunchBurstPoolVisual } from "./sharedCombatLaunchBurstPools";
 import type { SharedCombatLaunchBurstState } from "./sharedCombatLaunchBurstVisuals";
 import type {
   SharedCombatPlanetExplosionState,
   SharedCombatPlanetExplosionVisual,
 } from "./sharedCombatPlanetExplosions";
-import type { SharedCombatPlanetTrailVisual as TrailVisual } from "./sharedCombatPlanetTrails";
-import {
-  type SharedCombatPlanetVisual as PlanetVisual,
-  syncSharedCombatPlanetVisual,
-} from "./sharedCombatPlanetVisuals";
 import type { SharedCombatPresentationFrameState } from "./sharedCombatPresentationFrame";
 import type {
   SharedCombatCannonVisual,
@@ -61,36 +49,25 @@ import type {
   SharedCombatGravityPulseVisual as GravityPulseVisual,
   SharedCombatImpactBurstVisual as ImpactBurstVisual,
 } from "./sharedCombatSceneResources";
-import {
-  syncSharedCombatScene,
-  type SharedCombatSceneBackgroundSync,
-} from "./sharedCombatSceneSync";
-import type { SharedCombatRocketPoolVisual, SharedCombatRocketTrailState } from "./sharedCombatRocketPools";
+import type {
+  SharedCombatRocketPoolVisual,
+  SharedCombatRocketTrailState,
+} from "./sharedCombatRocketPools";
 
 const LOCAL_VIEWPORT_BLACK_HOLE_ROCKET_SWALLOW_COLOR = "#ffd7ac";
 const LOCAL_VIEWPORT_BLACK_HOLE_CACHE_SWALLOW_COLOR = "#fff0bb";
 
-interface LocalViewportCombatCannonFireState {
+export interface LocalViewportCombatCannonFireState {
   flashStartSec: number;
   lastAmmo: Record<RocketKind, number>;
 }
 
-interface LocalViewportCombatBlackHoleSwallowTracker {
-  previousCachesById: Map<number, SharedCombatTrackedCacheBody>;
-  previousNeutronStarsById: Map<number, SharedCombatTrackedNeutronStarBody>;
-  previousPlanetAliveById: Map<number, boolean>;
-  previousRocketsById: Map<number, SharedCombatTrackedRocketBody>;
-  previousSunsById: Map<number, SharedCombatTrackedSunBody>;
-  previousSunSwallowedAtById: Map<number, number | null>;
-}
-
-export interface UpdateLocalViewportCombatSceneParams {
+interface BuildLocalViewportCombatFrameBundleParams {
   activeBlackHoleSwallowEffects: BlackHoleSwallowState[];
   activeBoostBursts: SharedCombatBoostBurstState[];
   activeCacheIds: Set<number>;
   activeGravityPulse: LocalSandboxGravityPulseState | null;
   activePlanetExplosions: SharedCombatPlanetExplosionState[];
-  background: SharedCombatSceneBackgroundSync;
   blackHoleGroup: Group;
   blackHoleRing: Mesh;
   blackHoleSwallowTracker: LocalViewportCombatBlackHoleSwallowTracker;
@@ -107,25 +84,8 @@ export interface UpdateLocalViewportCombatSceneParams {
     cache: CombatSandboxCache,
     badgeMaterials: CacheSpriteAssets["badgeMaterials"],
   ) => CacheVisual;
-  createNeutronStarVisual: (args: {
-    neutronStar: CombatSandboxState["neutronStars"][number];
-  }) => NeutronStarVisual;
-  createPlanetVisual: (args: {
-    index: number;
-    planet: CombatSandboxPlanet;
-  }) => PlanetVisual;
-  createSunVisual: (args: {
-    index: number;
-    sun: CombatSandboxState["suns"][number];
-    sunProfile?: SunVisualProfile;
-  }) => SunVisual;
-  createTrailVisual: (args: { planet: CombatSandboxPlanet }) => TrailVisual;
   currentState: CombatSandboxState;
   disposeCacheVisual: (visual: CacheVisual) => void;
-  disposeNeutronStarVisual: (visual: NeutronStarVisual) => void;
-  disposePlanetVisual: (visual: PlanetVisual) => void;
-  disposeSunVisual: (visual: SunVisual) => void;
-  disposeTrailVisual: (trail: TrailVisual) => void;
   getCacheIconKey: (contents: CombatSandboxCache["contents"]) => CacheIconKey;
   gravityPulseDurationSec: number;
   gravityPulseVisual: GravityPulseVisual;
@@ -141,6 +101,7 @@ export interface UpdateLocalViewportCombatSceneParams {
   lockRingVisual: SharedCombatLockRingVisual;
   maxRocketTrailSamples: number;
   maxVisibleImpactBursts: number;
+  nowSec: number;
   playerBoostHeld: boolean;
   playerPlanet: CombatSandboxPlanet | null;
   renderPlanetsById: ReadonlyMap<number, CombatSandboxPlanet>;
@@ -156,10 +117,7 @@ export interface UpdateLocalViewportCombatSceneParams {
     remove: (object: CacheVisual["group"]) => void;
   };
   shieldVisual: SharedCombatShieldVisual;
-  sunVisuals: Map<number, SunVisual>;
-  neutronStarVisuals: Map<number, NeutronStarVisual>;
-  planetVisuals: Map<number, PlanetVisual>;
-  trailVisuals: Map<number, TrailVisual>;
+  tuning: ReturnType<typeof getRuntimeTuningDocument>;
   updateCacheVisualBadge: (
     visual: CacheVisual,
     badgeMaterials: CacheSpriteAssets["badgeMaterials"],
@@ -168,13 +126,12 @@ export interface UpdateLocalViewportCombatSceneParams {
   weaponKinds: readonly RocketKind[];
 }
 
-export const updateLocalViewportCombatScene = ({
+export const buildLocalViewportCombatFrameBundle = ({
   activeBlackHoleSwallowEffects,
   activeBoostBursts,
   activeCacheIds,
   activeGravityPulse,
   activePlanetExplosions,
-  background,
   blackHoleGroup,
   blackHoleRing,
   blackHoleSwallowTracker,
@@ -188,16 +145,8 @@ export const updateLocalViewportCombatScene = ({
   cannonVisual,
   controlsEnabled,
   createCacheVisual,
-  createNeutronStarVisual,
-  createPlanetVisual,
-  createSunVisual,
-  createTrailVisual,
   currentState,
   disposeCacheVisual,
-  disposeNeutronStarVisual,
-  disposePlanetVisual,
-  disposeSunVisual,
-  disposeTrailVisual,
   getCacheIconKey,
   gravityPulseDurationSec,
   gravityPulseVisual,
@@ -210,6 +159,7 @@ export const updateLocalViewportCombatScene = ({
   lockRingVisual,
   maxRocketTrailSamples,
   maxVisibleImpactBursts,
+  nowSec,
   playerBoostHeld,
   playerPlanet,
   renderPlanetsById,
@@ -222,23 +172,17 @@ export const updateLocalViewportCombatScene = ({
   rocketsByKind,
   scene,
   shieldVisual,
-  sunVisuals,
-  neutronStarVisuals,
-  planetVisuals,
-  trailVisuals,
+  tuning,
   updateCacheVisualBadge,
   weaponKinds,
-}: UpdateLocalViewportCombatSceneParams) => {
-  const nowSec = background.nowSec;
+}: BuildLocalViewportCombatFrameBundleParams) => {
   const blackHole = renderState.blackHole;
-  const tuning = getRuntimeTuningDocument();
   const worldUnitsPerPixel =
     cameraState.visibleWorldHeight / Math.max(1, hostElement.clientHeight);
   const cannonLayout = getCannonWorldLayout(
     tuning.visuals.cannon,
     worldUnitsPerPixel,
   );
-  const renderElapsedSec = renderState.elapsedSec;
   const shieldActive =
     currentState.player.shieldActive &&
     currentState.player.shieldLoad > 0 &&
@@ -321,7 +265,7 @@ export const updateLocalViewportCombatScene = ({
     }
   }
 
-  const viewportFrameBundle = buildLocalViewportFrameBundle({
+  return buildLocalViewportFrameBundle({
     runtime: {
       activeBoostBursts,
       activeGravityPulse,
@@ -358,28 +302,9 @@ export const updateLocalViewportCombatScene = ({
           targetPos: blackHole!.pos,
         });
       },
-      renderElapsedSec,
+      renderElapsedSec: renderState.elapsedSec,
       renderPlanetsById,
       renderState,
-      resolveImpactBurst: (burst) => {
-        const planet = renderPlanetsById.get(burst.planetId) ?? null;
-        if (planet === null) {
-          return null;
-        }
-
-        return {
-          absorbedByShield: burst.absorbedByShield,
-          durationSec: Math.max(
-            FIXED_STEP_SEC,
-            (burst.ttlUntilTick - burst.startedAtTick) * FIXED_STEP_SEC,
-          ),
-          normal: burst.normal,
-          startedAtSec: burst.startedAtSec,
-          targetPos: planet.pos,
-          targetRadius: planet.radius,
-          targetRenderedRadius: getRenderedPlanetRadius(planet),
-        };
-      },
       shieldActive,
       shieldRadius:
         playerPlanet === null ? 0 : getRenderedPlanetRadius(playerPlanet),
@@ -388,9 +313,7 @@ export const updateLocalViewportCombatScene = ({
       worldUnitsPerPixel,
     },
     sync: {
-      activeBlackHoleSwallowEffects,
       activeCacheIds,
-      activePlanetExplosions,
       cacheBadgeBaseSize: tuning.visuals.caches.badgeBaseSize,
       cacheBadgeScale,
       cacheSpriteAssets,
@@ -398,12 +321,8 @@ export const updateLocalViewportCombatScene = ({
       createCacheVisual,
       disposeCacheVisual,
       getCacheIconKey,
-      impactBurstVisuals,
-      inactiveBlackHoleSwallowVisuals,
-      inactivePlanetExplosionVisuals,
       launchBurstBudget: renderQuality.launchBurstBudget,
       maxRocketTrailSamples,
-      maxVisibleImpactBursts,
       presentationVisuals: {
         blackHole: {
           group: blackHoleGroup,
@@ -425,138 +344,46 @@ export const updateLocalViewportCombatScene = ({
       scene,
       updateCacheVisualBadge,
     },
-  });
-
-  syncSharedCombatScene({
-    background,
-    celestial: {
-      sun: {
-        blackHole,
-        createVisual: ({ index, sun, sunProfile }) =>
-          createSunVisual({
-            index,
-            sun,
-            sunProfile,
-          }),
-        currentNeutronStars: renderState.neutronStars,
-        disposeVisual: disposeSunVisual,
-        nowSec,
-        onSunAbsorbedByNeutronStar: () => {},
-        onSunStartedBlackHoleSwallow: ({ sun, sunProfile }) => {
-          if (blackHole === null) {
-            return;
+    transient: {
+      blackHoleSwallows: {
+        activeEffects: activeBlackHoleSwallowEffects,
+        inactiveVisuals: inactiveBlackHoleSwallowVisuals,
+      },
+      impactBursts: {
+        bursts: renderState.impactBursts,
+        maxVisibleBursts: maxVisibleImpactBursts,
+        nowSec: renderState.elapsedSec,
+        resolveBurst: (burst) => {
+          const planet = renderPlanetsById.get(burst.planetId) ?? null;
+          if (planet === null) {
+            return null;
           }
 
-          queueBlackHoleSwallowEffect({
-            activeEffects: activeBlackHoleSwallowEffects,
-            color: sunProfile.glowColor,
-            inactiveVisuals: inactiveBlackHoleSwallowVisuals,
-            radius: sun.radius,
-            startedAtSec: nowSec,
-            startPos: sun.pos,
-            targetPos: blackHole.pos,
-          });
+          return {
+            absorbedByShield: burst.absorbedByShield,
+            durationSec: Math.max(
+              FIXED_STEP_SEC,
+              (burst.ttlUntilTick - burst.startedAtTick) * FIXED_STEP_SEC,
+            ),
+            normal: burst.normal,
+            startedAtSec: burst.startedAtSec,
+            targetPos: planet.pos,
+            targetRadius: planet.radius,
+            targetRenderedRadius: getRenderedPlanetRadius(planet),
+          };
         },
-        onSunSwallowedByBlackHole: () => {},
-        previousNeutronStarsById:
-          blackHoleSwallowTracker.previousNeutronStarsById,
-        previousSunSwallowedAtById:
-          blackHoleSwallowTracker.previousSunSwallowedAtById,
-        previousSunsById: blackHoleSwallowTracker.previousSunsById,
-        resolveSunProfile: ({ index }) =>
-          getSunVisualProfile(tuning.visuals.suns, index),
-        resolveSwallowedAtSec: ({ sun }) => sun.swallowedAtSec,
-        sunVisuals,
-        suns: renderState.suns,
-        syncVisual: ({ index, sun, sunProfile, swallowedAtSec, visual }) => {
-          syncSharedCombatSunVisual({
-            index,
-            nowSec,
-            sun,
-            sunProfile,
-            swallowedAtSec,
-            visual,
-          });
+        visuals: impactBurstVisuals,
+        z: {
+          core: 2.65,
+          glow: 2.55,
+          ring: 2.75,
         },
       },
-      neutronStar: {
-        createVisual: ({ neutronStar }) =>
-          createNeutronStarVisual({
-            neutronStar,
-          }),
-        disposeVisual: disposeNeutronStarVisual,
-        neutronStarVisuals,
-        neutronStars: renderState.neutronStars,
-        nowSec,
-        previousNeutronStarsById:
-          blackHoleSwallowTracker.previousNeutronStarsById,
-        syncVisual: ({ index, neutronStar, visual }) => {
-          syncSharedCombatNeutronStarVisual({
-            gameplayTuning: tuning.gameplay.neutronStars,
-            index,
-            nowSec,
-            neutronStar,
-            visual,
-            visualTuning: tuning.visuals.neutronStars,
-          });
-        },
-      },
-      planet: {
-        createTrail: ({ planet }) =>
-          createTrailVisual({
-            planet,
-          }),
-        createVisual: ({ index, planet }) =>
-          createPlanetVisual({
-            index,
-            planet,
-          }),
-        disposeTrail: disposeTrailVisual,
-        disposeVisual: disposePlanetVisual,
-        onPlanetStartedBlackHoleSwallow: ({ planet }) => {
-          if (blackHole === null) {
-            return;
-          }
-
-          queueBlackHoleSwallowEffect({
-            activeEffects: activeBlackHoleSwallowEffects,
-            color: planet.color,
-            inactiveVisuals: inactiveBlackHoleSwallowVisuals,
-            radius: getRenderedPlanetRadius(planet),
-            startedAtSec: nowSec,
-            startPos: planet.pos,
-            targetPos: blackHole.pos,
-          });
-        },
-        planetTrails: trailVisuals,
-        planetVisuals,
-        planets: renderState.planets,
-        previousPlanetAliveById:
-          blackHoleSwallowTracker.previousPlanetAliveById,
-        resolveAlive: ({ planet }) => planet.alive,
-        shouldTriggerBlackHoleSwallow: ({ planet }) =>
-          planet.deathReason === "blackHole",
-        syncTrail: ({ trail }) => {
-          trail.points.visible = false;
-        },
-        syncVisual: ({ alive, planet, visual }) => {
-          const planetVisualTuning = getPlanetArchetypeVisuals(
-            planet.archetype,
-          );
-          syncSharedCombatPlanetVisual({
-            archetypeVisuals: planetVisualTuning,
-            nowSec,
-            planetPosition: planet.pos,
-            renderRadius: getRenderedPlanetRadius(planet),
-            visual,
-            visible: alive,
-          });
-        },
-      },
-    },
-    viewport: {
-      bundle: viewportFrameBundle,
       nowSec,
+      planetExplosions: {
+        activePlanetExplosions,
+        inactivePlanetExplosionVisuals,
+      },
     },
   });
 };

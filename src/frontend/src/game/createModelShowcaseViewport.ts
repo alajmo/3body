@@ -10,7 +10,7 @@ import {
   CylinderGeometry,
   Group,
   Mesh,
-  MeshBasicNodeMaterial,
+  type MeshBasicNodeMaterial,
   OrthographicCamera,
   PlaneGeometry,
   RenderPipeline,

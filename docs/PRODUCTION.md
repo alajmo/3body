@@ -114,7 +114,7 @@ For real public exposure, a CDN / proxy shield in front of Caddy is strongly rec
 SQLite is for durable, low-frequency data only. It is optional for the first playable gameplay slice; if cross-session stats are deferred, keep gameplay fully in memory and add the database when the follow-on V1 persistence slice lands.
 
 - When enabled, store player profiles, cumulative stats, highscores / leaderboards, and match history here.
-- Keep live rooms, the 120 Hz simulation, transient reconnect state, and snapshot buffers in memory.
+- Keep live rooms, the 60 Hz simulation, transient reconnect state, and snapshot buffers in memory.
 - If you use device-local `profileToken`s for no-account stats continuity, store only token hashes in SQLite; keep the raw token client-side.
 - Put the database on local SSD-backed disk, not on a network filesystem.
 - Enable `journal_mode=WAL`, `synchronous=FULL`, `foreign_keys=ON`, and a non-zero `busy_timeout`.

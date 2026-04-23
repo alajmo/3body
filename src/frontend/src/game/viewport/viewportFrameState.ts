@@ -18,7 +18,11 @@ import type {
 export type ViewportCacheFrameState<CacheBody extends SharedCombatCacheBody> =
   Pick<
     SharedCombatCachePresentationArgs<CacheBody>,
-    "blackHole" | "caches" | "nowSec" | "previousCachesById" | "queueSwallowEffect"
+    | "blackHole"
+    | "caches"
+    | "nowSec"
+    | "previousCachesById"
+    | "queueSwallowEffect"
   >;
 
 export type ViewportCacheSyncResources<
@@ -30,7 +34,11 @@ export type ViewportCacheSyncResources<
 
 export type ViewportLaunchBurstFrameState = Pick<
   SharedCombatLaunchBurstPresentationArgs,
-  "burstsByKind" | "cannonLayout" | "currentPlayerId" | "nowSec" | "worldUnitsPerPixel"
+  | "burstsByKind"
+  | "cannonLayout"
+  | "currentPlayerId"
+  | "nowSec"
+  | "worldUnitsPerPixel"
 >;
 
 export type ViewportLaunchBurstSyncResources = Omit<
@@ -75,7 +83,10 @@ export type ViewportImpactBurstFrameState<
     absorbedByShield: boolean;
     color: string;
   },
-> = Pick<SharedCombatImpactBurstFrame<Burst>, "bursts" | "resolveBurst">;
+> = Pick<
+  SharedCombatImpactBurstFrame<Burst>,
+  "bursts" | "nowSec" | "resolveBurst"
+>;
 
 export type ViewportImpactBurstSyncResources<
   Burst extends {
@@ -84,7 +95,7 @@ export type ViewportImpactBurstSyncResources<
   },
 > = Omit<
   SharedCombatImpactBurstFrame<Burst>,
-  keyof ViewportImpactBurstFrameState<Burst> | "nowSec"
+  keyof ViewportImpactBurstFrameState<Burst>
 >;
 
 export interface ViewportTransientFrameState<

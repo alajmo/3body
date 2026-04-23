@@ -4,7 +4,6 @@ import type {
   AuthoritativeImpactBurstState,
   ImmediateGravityPulseFeedbackState,
 } from "./authoritativeCosmeticFeedback";
-import type { BlackHoleSwallowState, BlackHoleSwallowVisual } from "./blackHoleVisuals";
 import type {
   CacheVisual,
   SharedCombatTrackedCacheBody,
@@ -12,15 +11,9 @@ import type {
   CacheSpriteMaterialMap,
 } from "./cacheVisuals";
 import type { SharedCombatTrackedRocketBody } from "./sharedCombatBlackHoleSwallowTracking";
-import type {
-  SharedCombatBoostBurstState,
-} from "./sharedCombatBoostVisuals";
+import type { SharedCombatBoostBurstState } from "./sharedCombatBoostVisuals";
 import type { SharedCombatLaunchBurstPoolVisual } from "./sharedCombatLaunchBurstPools";
 import type { SharedCombatLaunchBurstState } from "./sharedCombatLaunchBurstVisuals";
-import type {
-  SharedCombatPlanetExplosionState,
-  SharedCombatPlanetExplosionVisual,
-} from "./sharedCombatPlanetExplosions";
 import type {
   SharedCombatPresentationFrameState,
   SharedCombatPresentationFrameVisuals,
@@ -29,9 +22,11 @@ import type {
   SharedCombatRocketPoolVisual,
   SharedCombatRocketTrailState,
 } from "./sharedCombatRocketPools";
-import type { SharedCombatResolvedImpactBurst } from "./sharedCombatImpactBursts";
-import type { SharedCombatImpactBurstVisual } from "./sharedCombatSceneResources";
 import type { SharedCombatImmediateShieldFeedbackState } from "./sharedCombatSupportVisuals";
+import {
+  buildSharedCombatViewportTransientBundle,
+  type SharedCombatViewportTransientInput,
+} from "./sharedCombatViewportTransients";
 import type { ViewportFrameBundle } from "./viewportFrameState";
 
 interface AuthoritativeViewportFrameRuntimeInput {
@@ -57,9 +52,6 @@ interface AuthoritativeViewportFrameRuntimeInput {
   queueRocketSwallowEffect: (
     previousRocket: SharedCombatTrackedRocketBody,
   ) => void;
-  resolveImpactBurst: (
-    burst: AuthoritativeImpactBurstState,
-  ) => SharedCombatResolvedImpactBurst | null;
   shieldActive: boolean;
   shieldImmediateFeedback: SharedCombatImmediateShieldFeedbackState | null;
   visibleWorldHeight: number;
@@ -69,10 +61,8 @@ interface AuthoritativeViewportFrameRuntimeInput {
 }
 
 interface AuthoritativeViewportFrameSyncInput {
-  activeBlackHoleSwallowEffects: BlackHoleSwallowState[];
   activeCacheIds: Set<number>;
   activeLaunchBurstsByKind: Record<RocketKind, SharedCombatLaunchBurstState[]>;
-  activePlanetExplosions: SharedCombatPlanetExplosionState[];
   badgeBaseSize: number;
   badgeMaterials: CacheSpriteMaterialMap;
   badgeScale: number;
@@ -81,12 +71,14 @@ interface AuthoritativeViewportFrameSyncInput {
     cache: World["caches"][number],
     badgeMaterials: CacheSpriteMaterialMap,
   ) => CacheVisual;
-  getCacheIconKey: (contents: World["caches"][number]["contents"]) => CacheIconKey;
-  impactBurstVisuals: readonly SharedCombatImpactBurstVisual[];
-  inactiveBlackHoleSwallowVisuals: BlackHoleSwallowVisual[];
-  inactivePlanetExplosionVisuals: SharedCombatPlanetExplosionVisual[];
+  getCacheIconKey: (
+    contents: World["caches"][number]["contents"],
+  ) => CacheIconKey;
   launchBurstBudget: number;
-  launchBurstPools: Record<RocketKind, SharedCombatLaunchBurstPoolVisual> | null;
+  launchBurstPools: Record<
+    RocketKind,
+    SharedCombatLaunchBurstPoolVisual
+  > | null;
   maxRocketTrailSamples: number;
   presentationVisuals: SharedCombatPresentationFrameVisuals;
   rocketKinds: readonly RocketKind[];
@@ -105,16 +97,20 @@ interface AuthoritativeViewportFrameSyncInput {
   ) => void;
 }
 
-export interface AuthoritativeViewportFrameAdapterParams {
+interface AuthoritativeViewportFrameAdapterParams {
   runtime: AuthoritativeViewportFrameRuntimeInput;
   sync: AuthoritativeViewportFrameSyncInput;
+  transient: SharedCombatViewportTransientInput<AuthoritativeImpactBurstState>;
 }
 
 export const buildAuthoritativeViewportFrameBundle = ({
   runtime,
   sync,
-}: AuthoritativeViewportFrameAdapterParams) =>
-  ({
+  transient,
+}: AuthoritativeViewportFrameAdapterParams) => {
+  const transientBundle = buildSharedCombatViewportTransientBundle(transient);
+
+  return {
     frame: {
       entity: {
         caches: {
@@ -183,11 +179,7 @@ export const buildAuthoritativeViewportFrameBundle = ({
         weapon: runtime.weaponFrame,
       },
       transient: {
-        impactBursts: {
-          bursts: runtime.activeImpactBursts,
-          resolveBurst: runtime.resolveImpactBurst,
-        },
-        nowSec: runtime.nowSec,
+        ...transientBundle.frame,
       },
     },
     resources: {
@@ -230,27 +222,12 @@ export const buildAuthoritativeViewportFrameBundle = ({
       },
       presentation: sync.presentationVisuals,
       transient: {
-        blackHoleSwallows: {
-          activeEffects: sync.activeBlackHoleSwallowEffects,
-          inactiveVisuals: sync.inactiveBlackHoleSwallowVisuals,
-        },
-        impactBursts: {
-          maxVisibleBursts: sync.impactBurstVisuals.length,
-          visuals: sync.impactBurstVisuals,
-          z: {
-            core: 5.15,
-            glow: 5.05,
-            ring: 5.25,
-          },
-        },
-        planetExplosions: {
-          activePlanetExplosions: sync.activePlanetExplosions,
-          inactivePlanetExplosionVisuals: sync.inactivePlanetExplosionVisuals,
-        },
+        ...transientBundle.resources,
       },
     },
-  }) satisfies ViewportFrameBundle<
+  } satisfies ViewportFrameBundle<
     World["caches"][number],
     World["rockets"][number],
     AuthoritativeImpactBurstState
   >;
+};

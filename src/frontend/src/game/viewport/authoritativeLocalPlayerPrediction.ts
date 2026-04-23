@@ -3,6 +3,7 @@ import type {
   PlanetPublic,
   PlayerId,
   Sun,
+  Vec2,
   World,
   WorldOrbitStarMotion,
 } from "@3body/shared";
@@ -11,6 +12,7 @@ import {
   clamp,
   FIXED_STEP_SEC,
   getUmbraDragStepMultiplier,
+  lerp,
   scale,
   SIM_HZ,
   stepBody,
@@ -19,7 +21,27 @@ import {
 } from "@3body/shared";
 
 const MAX_LOCAL_PLAYER_PREDICTION_MS = 50;
+const LOCAL_PLAYER_CORRECTION_LERP = 22;
+const LOCAL_PLAYER_CORRECTION_SNAP_RADIUS_MULTIPLIER = 8;
+const LOCAL_PLAYER_CORRECTION_SNAP_DISTANCE = 120;
 const UMBRA_DRAG_STEP_MULTIPLIER = getUmbraDragStepMultiplier(SIM_HZ);
+
+interface AuthoritativeLocalPlayerPredictionSmoothingState {
+  planetId: number | null;
+  playerId: PlayerId | null;
+  snapshotTick: number | null;
+  pos: Vec2;
+  vel: Vec2;
+}
+
+export const createAuthoritativeLocalPlayerPredictionSmoothingState =
+  (): AuthoritativeLocalPlayerPredictionSmoothingState => ({
+    planetId: null,
+    playerId: null,
+    pos: { x: 0, y: 0 },
+    snapshotTick: null,
+    vel: { x: 0, y: 0 },
+  });
 
 const clonePredictedPlanet = (planet: PlanetPublic): PlanetPublic => ({
   ...planet,
@@ -133,6 +155,74 @@ const syncPredictedPlanetInto = (
   return target;
 };
 
+const getDistance = (a: Vec2, b: Vec2): number =>
+  Math.hypot(a.x - b.x, a.y - b.y);
+
+const syncSmoothingStateToPlanet = (
+  state: AuthoritativeLocalPlayerPredictionSmoothingState,
+  playerId: PlayerId,
+  predicted: PlanetPublic,
+  snapshotTick: number,
+) => {
+  state.planetId = predicted.id;
+  state.playerId = playerId;
+  state.snapshotTick = snapshotTick;
+  state.pos.x = predicted.pos.x;
+  state.pos.y = predicted.pos.y;
+  state.vel.x = predicted.vel.x;
+  state.vel.y = predicted.vel.y;
+};
+
+const smoothPredictedPlanet = ({
+  frameDeltaSec,
+  playerId,
+  predicted,
+  snapshotTick,
+  state,
+}: {
+  frameDeltaSec: number;
+  playerId: PlayerId;
+  predicted: PlanetPublic;
+  snapshotTick: number;
+  state: AuthoritativeLocalPlayerPredictionSmoothingState;
+}): PlanetPublic => {
+  const snapDistance = Math.max(
+    LOCAL_PLAYER_CORRECTION_SNAP_DISTANCE,
+    predicted.radius * LOCAL_PLAYER_CORRECTION_SNAP_RADIUS_MULTIPLIER,
+  );
+  const shouldSnap =
+    state.planetId !== predicted.id ||
+    state.playerId !== playerId ||
+    state.snapshotTick === null ||
+    snapshotTick < state.snapshotTick ||
+    getDistance(state.pos, predicted.pos) > snapDistance;
+
+  if (shouldSnap) {
+    syncSmoothingStateToPlanet(state, playerId, predicted, snapshotTick);
+  } else {
+    const alpha =
+      1 -
+      Math.exp(-LOCAL_PLAYER_CORRECTION_LERP * clamp(frameDeltaSec, 0, 0.1));
+    state.snapshotTick = snapshotTick;
+    state.pos.x = lerp(state.pos.x, predicted.pos.x, alpha);
+    state.pos.y = lerp(state.pos.y, predicted.pos.y, alpha);
+    state.vel.x = lerp(state.vel.x, predicted.vel.x, alpha);
+    state.vel.y = lerp(state.vel.y, predicted.vel.y, alpha);
+  }
+
+  return {
+    ...predicted,
+    pos: {
+      x: state.pos.x,
+      y: state.pos.y,
+    },
+    vel: {
+      x: state.vel.x,
+      y: state.vel.y,
+    },
+  };
+};
+
 export const predictAuthoritativeLocalPlayerPlanet = ({
   playerId,
   predictionMs,
@@ -185,24 +275,39 @@ export const syncAuthoritativeLocalPlayerPrediction = ({
   playerId,
   predictionMs,
   renderWorld,
+  smoothing,
   snapshotTick,
   snapshotWorld,
 }: {
   playerId: PlayerId;
   predictionMs: number;
   renderWorld: World;
+  smoothing?: {
+    frameDeltaSec: number;
+    state: AuthoritativeLocalPlayerPredictionSmoothingState;
+  };
   snapshotTick: number;
   snapshotWorld: World;
 }): PlanetPublic | null => {
-  const predicted = predictAuthoritativeLocalPlayerPlanet({
+  const rawPredicted = predictAuthoritativeLocalPlayerPlanet({
     playerId,
     predictionMs,
     snapshotTick,
     world: snapshotWorld,
   });
-  if (predicted === null) {
+  if (rawPredicted === null) {
     return null;
   }
+  const predicted =
+    smoothing === undefined
+      ? rawPredicted
+      : smoothPredictedPlanet({
+          frameDeltaSec: smoothing.frameDeltaSec,
+          playerId,
+          predicted: rawPredicted,
+          snapshotTick,
+          state: smoothing.state,
+        });
 
   const renderPlayerPlanet =
     renderWorld.planets.find((planet) => planet.playerId === playerId) ?? null;

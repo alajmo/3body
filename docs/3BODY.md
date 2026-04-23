@@ -16,7 +16,7 @@
 
 - **Platform:** Web (desktop browser first, mobile as stretch).
 - **Rendering:** Three.js for the arena render, with React for HUD / lobby / match-flow UI layered over the canvas.
-- **Physics:** Custom N-body simulation (no off-the-shelf physics — gravity is the game). Symplectic integrator (Velocity Verlet or Leapfrog) for stable orbits at fixed timestep (120 Hz sim on the server).
+- **Physics:** Custom N-body simulation (no off-the-shelf physics — gravity is the game). Symplectic integrator (Velocity Verlet or Leapfrog) for stable orbits at fixed timestep (60 Hz sim on the server).
 - **Networking:** WebSockets over a custom Bun server. The server is authoritative; clients send intent and render/interpolate snapshots.
 - **Backend:** Bun + TypeScript. Single-process room model; one room = one match.
 - **AI fallback:** Server spawns bot controllers for any unfilled slot at match start, and replaces dropped players mid-match.
@@ -178,7 +178,7 @@ Caches are pickup objects that drift in the outer ring of the arena. Each Cache 
 | **Boost charge +1**    | Refills one Boost charge (above the normal max).                                                                                                                                                                                                                              |
 | **Shield extender**    | Next Shield activation lasts 2× as long.                                                                                                                                                                                                                                      |
 | **Foresight extender** | Next Foresight lasts 2× as long and remains accurate further out.                                                                                                                                                                                                             |
-| **Gravity Pulse**      | A one-shot extra ability, bound to **G** until used. On activation it briefly nudges nearby planets, rockets, and caches outward from your planet. |
+| **Gravity Pulse**      | A one-shot extra ability, bound to **G** until used. On activation it briefly nudges nearby planets, rockets, boundary asteroids, and caches outward from your planet. |
 
 The Wildcard is intentionally rare (~10% of cache rolls) and game-swinging — it gives behind-players a comeback path and creates dramatic moments.
 
@@ -220,11 +220,11 @@ Default mid-match dropouts spawn at **Normal**. Lobby fill defaults to a difficu
 
 ## 11. Networking Model
 
-- **Server-authoritative simulation.** Server runs the full N-body sim at 120 Hz, broadcasts state at 30 Hz (positions, velocities, HP, ability states).
+- **Server-authoritative simulation.** Server runs the full N-body sim at 60 Hz and broadcasts state at 60 Hz (positions, velocities, HP, ability states).
 - **Immediate local feedback, not local authority:** Firing and abilities should feel instant, but the client never becomes authoritative. Fire may spawn a short-lived ghost rocket; Shield may raise the owner-local arc immediately; Foresight may render immediately from the latest local snapshot; Boost and Wildcard may play owner-local cast VFX/SFX immediately. None of those cues may author movement, hits, cooldowns, teleports, or any other world transform. Movement is *not* client-predicted — the sim is server-only because chaotic systems diverge fast under prediction.
 - **Snapshot visibility split:** Snapshots always contain the full **public** world state for every client; owner-only data such as ammo, cooldowns, and wildcard inventory is delivered separately to that owning player.
 - **Trust boundary:** Clients send intent only (aim direction, key/button edges, fire/ability/drone actions). Clients never author positions, HP, cooldowns, or hit results.
-- **Bandwidth:** 7 planets + 3 suns + ~20 active rockets ≈ 30 entities × ~32 bytes × 30 Hz ≈ 30 KB/s per client. Well within budget.
+- **Bandwidth:** Compact `snapshotV2` keeps the representative 60 Hz stream roughly under 100 KB/s per client before framing in current profiling.
 - **Lag compensation:** Rocket fire is timestamped; server rewinds the firing planet's launch origin by ~100ms before spawning the rocket. It does not rewind target positions or historical hit results.
 - **Tick-locked determinism is not required** because the server is authoritative — but the integrator must still be stable and reproducible for replays.
 

@@ -2,39 +2,57 @@ import {
   ARCHETYPE_IDS,
   type ClientMsg,
   type DeltaSnapshotMsg,
+  decodeProtocolMessage,
   type ErrorMsg,
   type EventMsg,
+  encodeProtocolMessage,
   type FullSnapshotMsg,
   type LobbyStateMsg,
   type MatchEndMsg,
   type PickStateMsg,
   type PongMsg,
   type RematchStateMsg,
+  type SnapshotV2Msg,
   type WelcomeMsg,
 } from "@3body/shared";
-import { startTransition, useEffect, useRef, useState } from "react";
-import { CombatHud } from "./CombatHud";
-import { formatAuthoritativeWinnerLabel } from "./authoritativeMatchLabels";
 import {
-  applyDeltaSnapshotToWorld,
-  createInitialAuthoritativeMatchRuntimeState,
+  startTransition,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+import { formatAuthoritativeWinnerLabel } from "./authoritativeMatchLabels";
+import { CombatHud } from "./CombatHud";
+import {
   type AuthoritativeMatchRuntimeState,
+  appendAuthoritativeSnapshot,
+  applyDeltaSnapshotToWorld,
+  applySnapshotV2ToWorld,
+  createInitialAuthoritativeMatchRuntimeState,
+  resetAuthoritativeSnapshotBuffer,
 } from "./game/authoritativeMatchRuntime";
 import { createAuthoritativeViewport } from "./game/createAuthoritativeViewport";
 import { getRuntimeTuningDocument } from "./game/runtimeTuning";
 import {
-  createInitialHudState,
-  type GameViewportController,
-} from "./game/viewportHud";
+  createAuthoritativeNetworkDiagnostics,
+  getSocketPayloadByteLength,
+} from "./game/viewport/authoritativeDiagnostics";
 import {
   loadViewportSettings,
   persistProfilingEnabled,
 } from "./game/viewport/settings";
+import {
+  createInitialHudState,
+  type GameViewportController,
+} from "./game/viewportHud";
 
 const PROFILE_TOKEN_STORAGE_KEY = "3body.profileToken";
 const RESUME_TOKEN_STORAGE_KEY = "3body.resumeToken";
 const ROOM_ID_STORAGE_KEY = "3body.roomId";
 const PLAYER_NAME_STORAGE_KEY = "3body.playerName";
+const DIRECT_WS_QUERY_PARAM = "directWs";
+const DIRECT_WS_BACKEND_PORT = "8080";
 
 const readStoredViewportProfilingEnabled = (): boolean => {
   if (typeof window === "undefined") {
@@ -59,12 +77,74 @@ interface MatchPanelUiState {
 }
 
 const buildSocketUrl = (windowTarget: Window): string => {
+  const configuredUrl = import.meta.env.VITE_WS_URL?.trim();
+  if (configuredUrl) {
+    return configuredUrl;
+  }
+
   const url = new URL(windowTarget.location.href);
+  if (url.searchParams.get(DIRECT_WS_QUERY_PARAM) === "1") {
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    url.port = DIRECT_WS_BACKEND_PORT;
+    url.pathname = "/ws";
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  }
+
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   url.pathname = "/ws";
   url.search = "";
   url.hash = "";
   return url.toString();
+};
+
+const INITIAL_RECONNECT_DELAY_MS = 1500;
+const MAX_RECONNECT_DELAY_MS = 12_000;
+const SESSION_RECLAIMED_CLOSE_CODE = 4001;
+const SLOW_CONSUMER_CLOSE_CODE = 1013;
+
+const formatSocketCloseError = (event: CloseEvent): string => {
+  const reason = event.reason.trim();
+  if (event.code === SESSION_RECLAIMED_CLOSE_CODE) {
+    return "This session was opened somewhere else, so this tab stopped reconnecting.";
+  }
+  if (event.code === SLOW_CONSUMER_CLOSE_CODE) {
+    return "The server closed this connection because the browser fell behind reading snapshots.";
+  }
+  if (reason.length > 0) {
+    return `Connection closed (${event.code}: ${reason}).`;
+  }
+  return `Connection closed (${event.code}).`;
+};
+
+const sendClientMessage = (socket: WebSocket, message: ClientMsg): number => {
+  const payload = encodeProtocolMessage(message);
+  socket.send(payload);
+  return payload.byteLength;
+};
+
+const isSupportedSocketPayload = (
+  value: unknown,
+): value is string | ArrayBuffer | ArrayBufferView =>
+  typeof value === "string" ||
+  value instanceof ArrayBuffer ||
+  ArrayBuffer.isView(value);
+
+const decodeServerMessage = (value: unknown): { type?: string } | null => {
+  if (!isSupportedSocketPayload(value)) {
+    return null;
+  }
+
+  try {
+    const decoded = decodeProtocolMessage(value);
+    if (typeof decoded !== "object" || decoded === null) {
+      return null;
+    }
+    return decoded as { type?: string };
+  } catch {
+    return null;
+  }
 };
 
 const readStoredPlayerName = (storage: Storage | null): string =>
@@ -233,6 +313,7 @@ export function AuthoritativeGamePanel({
   const controllerRef = useRef<GameViewportController | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const runtimeRef = useRef(createInitialAuthoritativeMatchRuntimeState());
+  const networkDiagnosticsRef = useRef(createAuthoritativeNetworkDiagnostics());
   const uiStateRef = useRef<MatchPanelUiState>(
     snapshotUiState(runtimeRef.current),
   );
@@ -246,18 +327,34 @@ export function AuthoritativeGamePanel({
   );
   const [nowMs, setNowMs] = useState(() => Date.now());
 
-  const dispatchRuntimeMessage = (message: ClientMsg): boolean => {
-    const socket = socketRef.current;
-    if (socket?.readyState !== WebSocket.OPEN) {
-      return false;
-    }
+  const sendMeasuredClientMessage = useCallback(
+    (socket: WebSocket, message: ClientMsg): void => {
+      const byteLength = sendClientMessage(socket, message);
+      networkDiagnosticsRef.current.recordOutbound(
+        message.type,
+        byteLength,
+        performance.now(),
+      );
+    },
+    [],
+  );
 
-    socket.send(JSON.stringify(message));
-    return true;
-  };
+  const dispatchRuntimeMessage = useCallback(
+    (message: ClientMsg): boolean => {
+      const socket = socketRef.current;
+      if (socket?.readyState !== WebSocket.OPEN) {
+        return false;
+      }
+
+      sendMeasuredClientMessage(socket, message);
+      return true;
+    },
+    [sendMeasuredClientMessage],
+  );
 
   const resetAuthoritativeProfiling = () => {
     authoritativePerformanceStateRef.current.resetToken += 1;
+    networkDiagnosticsRef.current.reset(performance.now());
     startTransition(() => {
       setHudState((current) => ({
         ...current,
@@ -305,6 +402,21 @@ export function AuthoritativeGamePanel({
     };
   }
 
+  const queueFreshMatch = useCallback(() => {
+    clearStoredRoomSession(window.localStorage);
+    runtimeRef.current = createInitialAuthoritativeMatchRuntimeState();
+    networkDiagnosticsRef.current.reset(performance.now());
+    uiStateRef.current = snapshotUiState(runtimeRef.current);
+    startTransition(() => {
+      setUiState(uiStateRef.current);
+      setHudState((current) => ({
+        ...createInitialHudState(),
+        profilingEnabled: current.profilingEnabled,
+      }));
+    });
+    setConnectionSessionVersion((current) => current + 1);
+  }, []);
+
   useEffect(() => {
     const timerId = window.setInterval(() => {
       startTransition(() => {
@@ -326,6 +438,8 @@ export function AuthoritativeGamePanel({
     return createAuthoritativeViewport(viewportElement, {
       dispatchMessage: dispatchRuntimeMessage,
       displayMode,
+      getNetworkDiagnostics: (timeMs) =>
+        networkDiagnosticsRef.current.getSnapshot(timeMs),
       getPerformanceState: () => authoritativePerformanceStateRef.current,
       getRuntimeState: () => runtimeRef.current,
       onHudStateChange: (nextHudState) => {
@@ -334,12 +448,14 @@ export function AuthoritativeGamePanel({
         });
       },
     });
-  }, [displayMode]);
+  }, [displayMode, dispatchRuntimeMessage]);
 
   useEffect(() => {
+    void connectionSessionVersion;
     const storage = window.localStorage;
     let disposed = false;
     let reconnectTimer: number | null = null;
+    let reconnectAttempt = 0;
     let pingTimer: number | null = null;
 
     const syncUiState = () => {
@@ -374,13 +490,11 @@ export function AuthoritativeGamePanel({
           return;
         }
 
-        socket.send(
-          JSON.stringify({
-            clientSentAtMs: Date.now(),
-            id: `${Date.now()}`,
-            type: "ping",
-          }),
-        );
+        sendMeasuredClientMessage(socket, {
+          clientSentAtMs: Date.now(),
+          id: `${Date.now()}`,
+          type: "ping",
+        });
       }, 2000);
     };
 
@@ -421,12 +535,10 @@ export function AuthoritativeGamePanel({
       const nextArchetype =
         ARCHETYPE_IDS.find((archetype) => !usedArchetypes.has(archetype)) ??
         ARCHETYPE_IDS[0];
-      socket.send(
-        JSON.stringify({
-          id: nextArchetype,
-          type: "pickArchetype",
-        }),
-      );
+      sendMeasuredClientMessage(socket, {
+        id: nextArchetype,
+        type: "pickArchetype",
+      });
     };
 
     const scheduleReconnect = () => {
@@ -437,10 +549,15 @@ export function AuthoritativeGamePanel({
       runtimeRef.current.connectionState = "reconnecting";
       runtimeRef.current.phase = "reconnecting";
       syncUiState();
+      const reconnectDelayMs = Math.min(
+        MAX_RECONNECT_DELAY_MS,
+        INITIAL_RECONNECT_DELAY_MS * 2 ** Math.min(3, reconnectAttempt),
+      );
+      reconnectAttempt += 1;
       reconnectTimer = window.setTimeout(() => {
         reconnectTimer = null;
         connect();
-      }, 1500);
+      }, reconnectDelayMs);
     };
 
     const connect = () => {
@@ -452,53 +569,61 @@ export function AuthoritativeGamePanel({
       syncUiState();
 
       const socket = new WebSocket(buildSocketUrl(window));
+      socket.binaryType = "arraybuffer";
       socketRef.current = socket;
 
       socket.addEventListener("open", () => {
-        if (disposed) {
+        if (disposed || socketRef.current !== socket) {
           socket.close();
           return;
         }
+        reconnectAttempt = 0;
 
         const roomId = storage.getItem(ROOM_ID_STORAGE_KEY)?.trim();
         const resumeToken = storage.getItem(RESUME_TOKEN_STORAGE_KEY)?.trim();
         const profileToken = storage.getItem(PROFILE_TOKEN_STORAGE_KEY)?.trim();
-        socket.send(
-          JSON.stringify({
-            join:
-              roomId && resumeToken
-                ? {
-                    kind: "joinRoom",
-                    roomId,
-                  }
-                : {
-                    kind: "quickGame",
-                  },
-            name: readStoredPlayerName(storage),
-            profileToken: profileToken || undefined,
-            resumeToken: resumeToken || undefined,
-            type: "hello",
-          }),
-        );
+        sendMeasuredClientMessage(socket, {
+          join:
+            roomId && resumeToken
+              ? {
+                  kind: "joinRoom",
+                  roomId,
+                }
+              : {
+                  kind: "quickGame",
+                },
+          name: readStoredPlayerName(storage),
+          profileToken: profileToken || undefined,
+          resumeToken: resumeToken || undefined,
+          snapshotVersion: 2,
+          type: "hello",
+        });
         runtimeRef.current.connectionState = "connected";
         syncUiState();
         startPingLoop(socket);
       });
 
       socket.addEventListener("message", (event) => {
-        if (typeof event.data !== "string") {
+        if (disposed || socketRef.current !== socket) {
           return;
         }
 
-        let parsed: { type?: string } | null = null;
-        try {
-          parsed = JSON.parse(event.data) as { type?: string } | null;
-        } catch {
-          return;
-        }
+        const receivedAtMs = performance.now();
+        const inboundByteLength = getSocketPayloadByteLength(event.data);
+        const parsed = decodeServerMessage(event.data);
         if (parsed === null || typeof parsed.type !== "string") {
+          networkDiagnosticsRef.current.recordInbound(
+            "unreadable",
+            inboundByteLength,
+            receivedAtMs,
+          );
           return;
         }
+        networkDiagnosticsRef.current.recordInbound(
+          parsed.type,
+          inboundByteLength,
+          receivedAtMs,
+        );
 
         pruneEvents(Date.now());
 
@@ -548,22 +673,24 @@ export function AuthoritativeGamePanel({
 
           case "fullSnapshot": {
             const message = parsed as FullSnapshotMsg;
-            const nowAtMs = performance.now();
             const phaseChanged = runtimeRef.current.phase !== "combat";
-            runtimeRef.current.previousSnapshot = runtimeRef.current.snapshot;
-            runtimeRef.current.snapshot = {
-              receivedAtMs: nowAtMs,
+            networkDiagnosticsRef.current.recordSnapshot(
+              parsed.type,
+              message.tick,
+              receivedAtMs,
+              message.sentAtMs,
+            );
+            resetAuthoritativeSnapshotBuffer(runtimeRef.current, {
+              receivedAtMs,
               self: message.self,
               tick: message.tick,
               world: message.world,
-            };
+            });
             runtimeRef.current.phase = "combat";
-            socket.send(
-              JSON.stringify({
-                tick: message.tick,
-                type: "ackSnapshot",
-              }),
-            );
+            sendMeasuredClientMessage(socket, {
+              tick: message.tick,
+              type: "ackSnapshot",
+            });
             if (phaseChanged) {
               syncUiState();
             }
@@ -578,9 +705,14 @@ export function AuthoritativeGamePanel({
 
             const deltaSnapshot = parsed as DeltaSnapshotMsg;
             const phaseChanged = runtimeRef.current.phase !== "combat";
-            runtimeRef.current.previousSnapshot = currentSnapshot;
-            runtimeRef.current.snapshot = {
-              receivedAtMs: performance.now(),
+            networkDiagnosticsRef.current.recordSnapshot(
+              parsed.type,
+              deltaSnapshot.tick,
+              receivedAtMs,
+              deltaSnapshot.sentAtMs,
+            );
+            appendAuthoritativeSnapshot(runtimeRef.current, {
+              receivedAtMs,
               self:
                 deltaSnapshot.self === undefined
                   ? currentSnapshot.self
@@ -590,14 +722,46 @@ export function AuthoritativeGamePanel({
                 currentSnapshot.world,
                 deltaSnapshot,
               ),
-            };
+            });
             runtimeRef.current.phase = "combat";
-            socket.send(
-              JSON.stringify({
-                tick: deltaSnapshot.tick,
-                type: "ackSnapshot",
-              }),
+            sendMeasuredClientMessage(socket, {
+              tick: deltaSnapshot.tick,
+              type: "ackSnapshot",
+            });
+            if (phaseChanged) {
+              syncUiState();
+            }
+            return;
+          }
+
+          case "snapshotV2": {
+            const currentSnapshot = runtimeRef.current.snapshot;
+            if (currentSnapshot === null) {
+              return;
+            }
+
+            const snapshot = parsed as SnapshotV2Msg;
+            const phaseChanged = runtimeRef.current.phase !== "combat";
+            networkDiagnosticsRef.current.recordSnapshot(
+              parsed.type,
+              snapshot.tick,
+              receivedAtMs,
+              snapshot.sentAtMs,
             );
+            appendAuthoritativeSnapshot(runtimeRef.current, {
+              receivedAtMs,
+              self:
+                snapshot.self === undefined
+                  ? currentSnapshot.self
+                  : (snapshot.self ?? null),
+              tick: snapshot.tick,
+              world: applySnapshotV2ToWorld(currentSnapshot.world, snapshot),
+            });
+            runtimeRef.current.phase = "combat";
+            sendMeasuredClientMessage(socket, {
+              tick: snapshot.tick,
+              type: "ackSnapshot",
+            });
             if (phaseChanged) {
               syncUiState();
             }
@@ -616,6 +780,7 @@ export function AuthoritativeGamePanel({
           case "matchEnd":
             runtimeRef.current.matchEnd = parsed as MatchEndMsg;
             runtimeRef.current.phase = "ended";
+            clearStoredRoomSession(storage);
             syncUiState();
             return;
 
@@ -648,19 +813,35 @@ export function AuthoritativeGamePanel({
         }
       });
 
-      socket.addEventListener("close", () => {
+      socket.addEventListener("close", (event) => {
+        if (socketRef.current !== socket) {
+          return;
+        }
+
         stopPingLoop();
-        if (socketRef.current === socket) {
-          socketRef.current = null;
+        socketRef.current = null;
+        if (disposed) {
+          return;
         }
-        if (!disposed) {
-          scheduleReconnect();
+
+        runtimeRef.current.connectionError = formatSocketCloseError(event);
+        if (event.code === SESSION_RECLAIMED_CLOSE_CODE) {
+          runtimeRef.current.connectionState = "error";
+          runtimeRef.current.phase = "error";
+          syncUiState();
+          return;
         }
+
+        scheduleReconnect();
       });
 
       socket.addEventListener("error", () => {
+        if (disposed || socketRef.current !== socket) {
+          return;
+        }
+
         runtimeRef.current.connectionError =
-          "Authoritative match connection failed.";
+          "Authoritative match socket failed before a close code was reported.";
         runtimeRef.current.connectionState = "reconnecting";
         syncUiState();
       });
@@ -677,21 +858,7 @@ export function AuthoritativeGamePanel({
       socketRef.current?.close();
       socketRef.current = null;
     };
-  }, [connectionSessionVersion]);
-
-  const queueFreshMatch = () => {
-    clearStoredRoomSession(window.localStorage);
-    runtimeRef.current = createInitialAuthoritativeMatchRuntimeState();
-    uiStateRef.current = snapshotUiState(runtimeRef.current);
-    startTransition(() => {
-      setUiState(uiStateRef.current);
-      setHudState((current) => ({
-        ...createInitialHudState(),
-        profilingEnabled: current.profilingEnabled,
-      }));
-    });
-    setConnectionSessionVersion((current) => current + 1);
-  };
+  }, [connectionSessionVersion, queueFreshMatch, sendMeasuredClientMessage]);
 
   const requestRematch = () => {
     if (
@@ -736,15 +903,17 @@ export function AuthoritativeGamePanel({
                 {uiState.connectionError}
               </div>
             ) : null}
-            {uiState.phase === "ended" ? (
+            {uiState.phase === "ended" || uiState.phase === "error" ? (
               <div className="edit-panel__actions">
-                <button
-                  type="button"
-                  className="edit-action-button"
-                  onClick={requestRematch}
-                >
-                  {rematchVotePending ? "Vote Sent" : "Play Again"}
-                </button>
+                {uiState.phase === "ended" ? (
+                  <button
+                    type="button"
+                    className="edit-action-button"
+                    onClick={requestRematch}
+                  >
+                    {rematchVotePending ? "Vote Sent" : "Play Again"}
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   className="edit-action-button"

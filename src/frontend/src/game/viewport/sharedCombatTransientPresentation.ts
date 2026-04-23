@@ -40,7 +40,7 @@ export interface SharedCombatPlanetExplosionPresentationFrame {
   inactivePlanetExplosionVisuals: SharedCombatPlanetExplosionVisual[];
 }
 
-export interface SharedCombatTransientPresentationFrameState<
+interface SharedCombatTransientPresentationFrameState<
   Burst extends {
     absorbedByShield: boolean;
     color: string;

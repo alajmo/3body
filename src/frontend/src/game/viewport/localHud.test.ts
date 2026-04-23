@@ -1,9 +1,9 @@
 import {
+  type AbilitySpec,
   BLACK_HOLE_SPEC,
   BOOST_SPEC,
   getShieldLoadCapacity,
   len,
-  type AbilitySpec,
 } from "@3body/shared";
 import { describe, expect, it } from "vitest";
 import { createSandboxState, getSandboxDebugSnapshot } from "../combatSandbox";
@@ -21,6 +21,16 @@ const PROFILER_SNAPSHOT: ViewportPerformanceSnapshot = {
     averageMs: 14.2,
     latestMs: 15.3,
     maxMs: 20.1,
+  },
+  frameGap: {
+    averageMs: 16.7,
+    latestMs: 16.6,
+    maxMs: 24.1,
+  },
+  frameGapSpikes: {
+    count: 0,
+    lastAgeSec: null,
+    thresholdMs: 1000 / 30,
   },
   frames: 72,
   interpolation: {
@@ -48,6 +58,11 @@ const PROFILER_SNAPSHOT: ViewportPerformanceSnapshot = {
     averageMs: 0.8,
     latestMs: 0.9,
     maxMs: 1.3,
+  },
+  submitSpikes: {
+    count: 0,
+    lastAgeSec: null,
+    thresholdMs: 20,
   },
 };
 

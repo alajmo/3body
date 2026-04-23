@@ -18,13 +18,12 @@ export const PRODUCTION_VIEWPORT_RENDERER_BACKEND_POLICY: ViewportRendererBacken
       "Use native WebGPU when the current browser exposes WebGPU capability.",
   };
 
-const WEBGL_VIEWPORT_RENDERER_BACKEND_POLICY: ViewportRendererBackendPolicy =
-  {
-    forceWebGL: true,
-    label: "webgl",
-    reason:
-      "Use Three.js WebGL because WebGPU capability is unavailable in the current browser/device.",
-  };
+const WEBGL_VIEWPORT_RENDERER_BACKEND_POLICY: ViewportRendererBackendPolicy = {
+  forceWebGL: true,
+  label: "webgl",
+  reason:
+    "Use Three.js WebGL because WebGPU capability is unavailable in the current browser/device.",
+};
 
 export interface ViewportRendererBootstrap {
   dispose: () => void;
@@ -270,7 +269,8 @@ export const initializeViewportRendererSession = async ({
     const renderer = bootstrap.renderer;
     const resolvedBackendPolicy = resolveViewportRendererBackendPolicy(
       hostElement,
-      bootstrapOptions.backendPolicy ?? PRODUCTION_VIEWPORT_RENDERER_BACKEND_POLICY,
+      bootstrapOptions.backendPolicy ??
+        PRODUCTION_VIEWPORT_RENDERER_BACKEND_POLICY,
     );
 
     if (isDisposed()) {

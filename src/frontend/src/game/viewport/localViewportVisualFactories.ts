@@ -7,7 +7,6 @@ import {
 } from "@3body/shared";
 import {
   abs,
-  attribute,
   color,
   dot,
   float,
@@ -33,12 +32,10 @@ import {
 } from "three/tsl";
 import {
   AdditiveBlending,
-  BufferGeometry,
+  type BufferGeometry,
   CanvasTexture,
   type CircleGeometry,
   Color,
-  DynamicDrawUsage,
-  Float32BufferAttribute,
   Group,
   LinearFilter,
   Mesh,

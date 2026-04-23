@@ -1,13 +1,13 @@
+import { applyCombatAiTuning } from "./ai/runtimeTuning";
 import type {
   BlackHole,
   EntityBase,
   RocketKind,
   WildcardKind,
 } from "./entities";
-import { applyCombatAiTuning } from "./ai/runtimeTuning";
 import {
-  CURRENT_GAME_TUNING,
   type ArenaAsteroidFieldTuning,
+  CURRENT_GAME_TUNING,
   type GameplayTuning,
 } from "./tuning";
 
@@ -91,7 +91,7 @@ export const ARENA_RADIUS_MIN = 1_400;
 export let ARENA_RADIUS = initialGameplay.arena.radius;
 export const OUTER_RING_MIN = 1300;
 export const OUTER_RING_MAX = 1825;
-export const SIM_HZ = 120;
+export const SIM_HZ = 60;
 export const FIXED_STEP_SEC = 1 / SIM_HZ;
 export const SNAPSHOT_HZ = 60;
 export const PLANET_HP = 100;
@@ -236,7 +236,9 @@ export const DEBRIS_TTL_SEC = 1.35;
 export const getSeekerLockTicks = (): number =>
   Math.max(0, Math.round(ROCKET_SPECS.seeker.lockSec / FIXED_STEP_SEC));
 
-export const WILDCARD_KINDS = ["gravityPulse"] as const satisfies readonly WildcardKind[];
+export const WILDCARD_KINDS = [
+  "gravityPulse",
+] as const satisfies readonly WildcardKind[];
 
 export const applyGameplayTuning = (gameplay: GameplayTuning) => {
   applyCombatAiTuning(gameplay.ai);

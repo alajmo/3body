@@ -3,40 +3,40 @@ import {
   BLACK_HOLE_SPEC,
   BOOST_SPEC,
   FIXED_STEP_SEC,
-  ROCKET_SPECS,
-  SHIELD_SPEC,
   getShieldLoadCapacity,
   type PlanetPrivateState,
   type PlanetPublic,
+  ROCKET_SPECS,
   type RocketKind,
+  SHIELD_SPEC,
   type SnapshotEvent,
-  type WildcardKind,
   type World,
 } from "@3body/shared";
 import type { AuthoritativeEventRecord } from "../authoritativeMatchRuntime";
+import { getPlanetArchetypeVisuals } from "../planetVisualTuning";
+import { getRuntimeTuningDocument } from "../runtimeTuning";
 import {
   createHudMinimapState,
   createInitialHudState,
-  getPlayerMotionHud,
   type GameViewportConnectionState,
   type GameViewportHudAbility,
   type GameViewportHudState,
   type GameViewportShortcut,
+  getPlayerMotionHud,
 } from "../viewportHud";
+import type {
+  AuthoritativeNetworkDiagnosticsSnapshot,
+  AuthoritativeNetworkTypeRate,
+  AuthoritativeRenderDiagnostics,
+} from "./authoritativeDiagnostics";
 import type { ViewportPerformanceSnapshot } from "./performanceProfiler";
 import type { ViewportEffectsQuality } from "./renderQuality";
-import { getPlanetArchetypeVisuals } from "../planetVisualTuning";
-import { getRuntimeTuningDocument } from "../runtimeTuning";
 
 const KILL_FEED_WINDOW_SEC = 4;
 const WEAPON_LABELS: Record<RocketKind, string> = {
   heavy: "Heavy",
   light: "Light",
   seeker: "Seeker",
-};
-
-const describeWildcard = (wildcard: WildcardKind): string => {
-  return wildcard === "gravityPulse" ? "Gravity Pulse" : wildcard;
 };
 
 const getShieldDisplayCapacity = (planet: PlanetPublic): number => {
@@ -58,11 +58,14 @@ interface BuildAuthoritativeHudStateParams {
   extrapolating: boolean;
   hudFlicker: number;
   currentMaxPixelRatio: number;
+  currentRenderModeLabel?: string;
   playerId: string | null;
   playerPlanet: PlanetPublic | null;
+  networkDiagnostics?: AuthoritativeNetworkDiagnosticsSnapshot | null;
   profilerSnapshot: ViewportPerformanceSnapshot | null;
   profilingEnabled: boolean;
   recentEventsNowMs: number;
+  renderDiagnostics?: AuthoritativeRenderDiagnostics | null;
   rosterNameByPlayerId: ReadonlyMap<string, string>;
   runtimeStats: {
     fps: number;
@@ -80,72 +83,132 @@ const formatProfilerTiming = (
 ): string =>
   `${latestMs.toFixed(2)} ms · avg ${averageMs.toFixed(2)} · max ${maxMs.toFixed(2)}`;
 
+const formatBytesPerSec = (bytesPerSec: number): string =>
+  bytesPerSec >= 1024
+    ? `${(bytesPerSec / 1024).toFixed(1)} KB/s`
+    : `${Math.round(bytesPerSec)} B/s`;
+
+const formatMessagesPerSec = (messagesPerSec: number): string =>
+  `${messagesPerSec >= 10 ? messagesPerSec.toFixed(0) : messagesPerSec.toFixed(1)} msg/s`;
+
+const formatSnapshotRate = (snapshotsPerSec: number): string =>
+  `${snapshotsPerSec >= 10 ? snapshotsPerSec.toFixed(0) : snapshotsPerSec.toFixed(1)}/s`;
+
+const formatDiagnosticMs = (valueMs: number | null): string =>
+  valueMs === null ? "--" : `${valueMs.toFixed(1)} ms`;
+
+const formatDiagnosticTick = (tick: number | null): string =>
+  tick === null ? "--" : tick.toFixed(1);
+
+const formatSpikeAge = (lastAgeSec: number | null): string =>
+  lastAgeSec === null ? "--" : `${lastAgeSec.toFixed(1)}s ago`;
+
+const formatTypeRates = (
+  rates: readonly AuthoritativeNetworkTypeRate[],
+): string =>
+  rates
+    .map((rate) => `${rate.type} ${formatBytesPerSec(rate.bytesPerSec)}`)
+    .join(" · ");
+
 const buildProfilerDebugItems = ({
   connection,
   currentEffectsQuality,
   currentMaxPixelRatio,
+  currentRenderModeLabel,
   extrapolating,
+  networkDiagnostics = null,
   profilerSnapshot,
   profilingEnabled,
+  renderDiagnostics = null,
   world,
 }: Pick<
   BuildAuthoritativeHudStateParams,
   | "connection"
   | "currentEffectsQuality"
   | "currentMaxPixelRatio"
+  | "currentRenderModeLabel"
   | "extrapolating"
+  | "networkDiagnostics"
   | "profilerSnapshot"
   | "profilingEnabled"
+  | "renderDiagnostics"
   | "world"
 >): GameViewportHudState["debugItems"] => {
-  if (
-    !profilingEnabled ||
-    profilerSnapshot === null ||
-    profilerSnapshot.frames <= 0
-  ) {
+  if (!profilingEnabled) {
     return [];
   }
 
-  return [
-    {
-      label: "Sample",
-      value: `${profilerSnapshot.frames}f · ${profilerSnapshot.sampledDurationSec.toFixed(1)}s`,
-    },
-    {
-      label: "Frame CPU",
-      value: formatProfilerTiming(
-        profilerSnapshot.frameCpu.latestMs,
-        profilerSnapshot.frameCpu.averageMs,
-        profilerSnapshot.frameCpu.maxMs,
-      ),
-    },
-    {
-      label: "Lerp CPU",
-      value: formatProfilerTiming(
-        profilerSnapshot.interpolation.latestMs,
-        profilerSnapshot.interpolation.averageMs,
-        profilerSnapshot.interpolation.maxMs,
-      ),
-    },
-    {
-      label: "Scene CPU",
-      value: formatProfilerTiming(
-        profilerSnapshot.renderCpu.latestMs,
-        profilerSnapshot.renderCpu.averageMs,
-        profilerSnapshot.renderCpu.maxMs,
-      ),
-    },
-    {
-      label: "Submit CPU",
-      value: formatProfilerTiming(
-        profilerSnapshot.submit.latestMs,
-        profilerSnapshot.submit.averageMs,
-        profilerSnapshot.submit.maxMs,
-      ),
-    },
+  const debugItems: GameViewportHudState["debugItems"] = [];
+
+  if (profilerSnapshot !== null && profilerSnapshot.frames > 0) {
+    debugItems.push(
+      {
+        label: "Sample",
+        value: `${profilerSnapshot.frames}f · ${profilerSnapshot.sampledDurationSec.toFixed(1)}s`,
+      },
+      {
+        label: "Frame CPU",
+        value: formatProfilerTiming(
+          profilerSnapshot.frameCpu.latestMs,
+          profilerSnapshot.frameCpu.averageMs,
+          profilerSnapshot.frameCpu.maxMs,
+        ),
+      },
+      {
+        label: "Frame Gap",
+        value: formatProfilerTiming(
+          profilerSnapshot.frameGap.latestMs,
+          profilerSnapshot.frameGap.averageMs,
+          profilerSnapshot.frameGap.maxMs,
+        ),
+      },
+      {
+        label: "Lerp CPU",
+        value: formatProfilerTiming(
+          profilerSnapshot.interpolation.latestMs,
+          profilerSnapshot.interpolation.averageMs,
+          profilerSnapshot.interpolation.maxMs,
+        ),
+      },
+      {
+        label: "Scene CPU",
+        value: formatProfilerTiming(
+          profilerSnapshot.renderCpu.latestMs,
+          profilerSnapshot.renderCpu.averageMs,
+          profilerSnapshot.renderCpu.maxMs,
+        ),
+      },
+      {
+        label: "Submit CPU",
+        value: formatProfilerTiming(
+          profilerSnapshot.submit.latestMs,
+          profilerSnapshot.submit.averageMs,
+          profilerSnapshot.submit.maxMs,
+        ),
+      },
+      {
+        label: "Spikes",
+        value: `gap>${profilerSnapshot.frameGapSpikes.thresholdMs.toFixed(
+          0,
+        )} ${profilerSnapshot.frameGapSpikes.count} · last ${formatSpikeAge(
+          profilerSnapshot.frameGapSpikes.lastAgeSec,
+        )} · submit>${profilerSnapshot.submitSpikes.thresholdMs.toFixed(
+          0,
+        )} ${profilerSnapshot.submitSpikes.count} · last ${formatSpikeAge(
+          profilerSnapshot.submitSpikes.lastAgeSec,
+        )}`,
+      },
+    );
+  }
+
+  debugItems.push(
     {
       label: "Quality",
-      value: `PR ${currentMaxPixelRatio.toFixed(1)} · FX ${currentEffectsQuality}`,
+      value: `PR ${currentMaxPixelRatio.toFixed(1)} · FX ${currentEffectsQuality}${
+        currentRenderModeLabel === undefined
+          ? ""
+          : ` · ${currentRenderModeLabel}`
+      }`,
     },
     {
       label: "Entities",
@@ -155,7 +218,98 @@ const buildProfilerDebugItems = ({
       label: "Net State",
       value: `${connection.state}${extrapolating ? " · extrapolating" : ""}`,
     },
-  ];
+  );
+
+  if (networkDiagnostics !== null) {
+    debugItems.push(
+      {
+        label: "Net RX",
+        value: `${formatBytesPerSec(
+          networkDiagnostics.inboundBytesPerSec,
+        )} · ${formatMessagesPerSec(networkDiagnostics.inboundMessagesPerSec)}`,
+      },
+      {
+        label: "Net TX",
+        value: `${formatBytesPerSec(
+          networkDiagnostics.outboundBytesPerSec,
+        )} · ${formatMessagesPerSec(
+          networkDiagnostics.outboundMessagesPerSec,
+        )}`,
+      },
+      {
+        label: "Snapshots",
+        value: `${formatSnapshotRate(
+          networkDiagnostics.snapshotMessagesPerSec,
+        )} · gap ${networkDiagnostics.snapshotGapAverageMs.toFixed(
+          1,
+        )}/${networkDiagnostics.snapshotGapP90Ms.toFixed(
+          1,
+        )}/${networkDiagnostics.snapshotGapMaxMs.toFixed(
+          1,
+        )} ms · late ${networkDiagnostics.snapshotLateCount}`,
+      },
+      {
+        label: "Net Jitter",
+        value: `gap>50 ${networkDiagnostics.snapshotGapOver50Count} · last ${formatSpikeAge(
+          networkDiagnostics.snapshotLastGapOver50AgeMs === null
+            ? null
+            : networkDiagnostics.snapshotLastGapOver50AgeMs / 1000,
+        )} · gap>100 ${networkDiagnostics.snapshotGapOver100Count} · last ${formatSpikeAge(
+          networkDiagnostics.snapshotLastGapOver100AgeMs === null
+            ? null
+            : networkDiagnostics.snapshotLastGapOver100AgeMs / 1000,
+        )}`,
+      },
+      {
+        label: "Server Snap",
+        value: `gap ${networkDiagnostics.serverSnapshotGapAverageMs.toFixed(
+          1,
+        )}/${networkDiagnostics.serverSnapshotGapP90Ms.toFixed(
+          1,
+        )}/${networkDiagnostics.serverSnapshotGapMaxMs.toFixed(
+          1,
+        )} ms · late ${networkDiagnostics.serverSnapshotLateCount}`,
+      },
+    );
+
+    if (networkDiagnostics.inboundByType.length > 0) {
+      debugItems.push({
+        label: "RX Types",
+        value: formatTypeRates(networkDiagnostics.inboundByType),
+      });
+    }
+    if (networkDiagnostics.outboundByType.length > 0) {
+      debugItems.push({
+        label: "TX Types",
+        value: formatTypeRates(networkDiagnostics.outboundByType),
+      });
+    }
+  }
+
+  if (renderDiagnostics !== null) {
+    debugItems.push(
+      {
+        label: "Interp",
+        value: `alpha ${renderDiagnostics.interpolationAlpha.toFixed(
+          2,
+        )} · depth ${renderDiagnostics.bufferDepth} · behind ${
+          renderDiagnostics.tickBehindLatest === null
+            ? "--"
+            : renderDiagnostics.tickBehindLatest.toFixed(1)
+        }t${renderDiagnostics.visuallyExtrapolating ? " · extrapolating" : ""}`,
+      },
+      {
+        label: "Snap Age",
+        value: `${formatDiagnosticMs(
+          renderDiagnostics.latestSnapshotAgeMs,
+        )} · desired ${formatDiagnosticTick(
+          renderDiagnostics.desiredRenderTick,
+        )} · render ${formatDiagnosticTick(renderDiagnostics.renderTick)}`,
+      },
+    );
+  }
+
+  return debugItems;
 };
 
 const describeEvent = (
@@ -280,15 +434,18 @@ export const buildAuthoritativeHudState = ({
   currentEffectsQuality,
   currentTick,
   currentMaxPixelRatio,
+  currentRenderModeLabel,
   damageFlash,
   eventLog,
   extrapolating,
   hudFlicker,
+  networkDiagnostics,
   playerId,
   playerPlanet,
   profilerSnapshot,
   profilingEnabled,
   recentEventsNowMs,
+  renderDiagnostics,
   rosterNameByPlayerId,
   runtimeStats,
   selectedWeapon,
@@ -478,9 +635,12 @@ export const buildAuthoritativeHudState = ({
       connection,
       currentEffectsQuality,
       currentMaxPixelRatio,
+      currentRenderModeLabel,
       extrapolating,
+      networkDiagnostics,
       profilerSnapshot,
       profilingEnabled,
+      renderDiagnostics,
       world,
     }),
     damageFlash,

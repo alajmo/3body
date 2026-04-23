@@ -1,4 +1,15 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  decodeProtocolMessage,
+  encodeProtocolMessage,
+  type ProtocolMessage,
+} from "@3body/shared";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthoritativeGamePanel } from "./AuthoritativeGamePanel";
 
@@ -39,7 +50,8 @@ class FakeWebSocket {
   static readonly CLOSED = 3;
   static instances: FakeWebSocket[] = [];
 
-  readonly sent: string[] = [];
+  binaryType: BinaryType = "blob";
+  readonly sent: Array<string | BufferSource> = [];
   readyState = FakeWebSocket.CONNECTING;
   private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
 
@@ -57,13 +69,17 @@ class FakeWebSocket {
     this.listeners.get(type)?.delete(listener);
   }
 
-  send(data: string) {
+  send(data: string | BufferSource) {
     this.sent.push(data);
   }
 
-  close() {
+  close(code = 1000, reason = "") {
     this.readyState = FakeWebSocket.CLOSED;
-    this.emit("close");
+    this.emit("close", {
+      code,
+      reason,
+      wasClean: code === 1000,
+    });
   }
 
   open() {
@@ -72,7 +88,9 @@ class FakeWebSocket {
   }
 
   receive(message: unknown) {
-    this.emit("message", { data: JSON.stringify(message) });
+    this.emit("message", {
+      data: encodeProtocolMessage(message as ProtocolMessage),
+    });
   }
 
   private emit(type: string, event: unknown = {}) {
@@ -82,8 +100,16 @@ class FakeWebSocket {
   }
 }
 
+const getSentMessage = (socket: FakeWebSocket, index: number) => {
+  const payload = socket.sent[index];
+  if (payload === undefined) {
+    throw new Error(`Expected sent socket message at index ${index}`);
+  }
+  return decodeProtocolMessage(payload);
+};
+
 const getLastSentMessage = (socket: FakeWebSocket) =>
-  JSON.parse(socket.sent[socket.sent.length - 1] ?? "{}");
+  getSentMessage(socket, socket.sent.length - 1);
 
 describe("AuthoritativeGamePanel", () => {
   beforeEach(() => {
@@ -91,6 +117,7 @@ describe("AuthoritativeGamePanel", () => {
     combatHudSpy.mockClear();
     createAuthoritativeViewportMock.mockClear();
     getRuntimeTuningDocumentMock.mockReset();
+    window.history.pushState({}, "", "/");
     getRuntimeTuningDocumentMock.mockReturnValue({
       visuals: {
         displayMode: "default",
@@ -102,6 +129,7 @@ describe("AuthoritativeGamePanel", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -192,13 +220,14 @@ describe("AuthoritativeGamePanel", () => {
     const firstSocket = FakeWebSocket.instances[0];
     expect(firstSocket).toBeDefined();
     firstSocket!.open();
-    expect(JSON.parse(firstSocket!.sent[0] ?? "{}")).toEqual(
+    expect(getSentMessage(firstSocket!, 0)).toEqual(
       expect.objectContaining({
         join: {
           kind: "joinRoom",
           roomId: "room-1",
         },
         resumeToken: "resume-token",
+        snapshotVersion: 2,
         type: "hello",
       }),
     );
@@ -216,18 +245,76 @@ describe("AuthoritativeGamePanel", () => {
     secondSocket.open();
 
     await waitFor(() => {
-      expect(JSON.parse(secondSocket.sent[0] ?? "{}")).toEqual(
+      expect(getSentMessage(secondSocket, 0)).toEqual(
         expect.objectContaining({
           join: {
             kind: "quickGame",
           },
           name: "Pilot",
+          snapshotVersion: 2,
           type: "hello",
         }),
       );
     });
     expect(window.localStorage.getItem("3body.resumeToken")).toBeNull();
     expect(window.localStorage.getItem("3body.roomId")).toBeNull();
+  });
+
+  it("can connect directly to the backend websocket for proxy diagnostics", () => {
+    window.history.pushState({}, "", "/?directWs=1");
+
+    render(<AuthoritativeGamePanel />);
+
+    expect(FakeWebSocket.instances[0]?.url).toBe("ws://localhost:8080/ws");
+  });
+
+  it("does not reconnect when a stale socket closes after a newer socket exists", async () => {
+    vi.useFakeTimers();
+
+    render(<AuthoritativeGamePanel />);
+
+    const firstSocket = FakeWebSocket.instances[0];
+    expect(firstSocket).toBeDefined();
+    firstSocket!.open();
+    firstSocket!.close();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    const secondSocket = FakeWebSocket.instances[1]!;
+    secondSocket.open();
+
+    firstSocket!.close();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(12_000);
+    });
+
+    expect(FakeWebSocket.instances).toHaveLength(2);
+  });
+
+  it("does not reconnect after the active session is reclaimed elsewhere", async () => {
+    vi.useFakeTimers();
+
+    render(<AuthoritativeGamePanel />);
+
+    const socket = FakeWebSocket.instances[0];
+    expect(socket).toBeDefined();
+    await act(async () => {
+      socket!.open();
+      socket!.close(4001, "session_reclaimed");
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(12_000);
+    });
+
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    expect(
+      screen.getAllByText(/opened somewhere else/i).length,
+    ).toBeGreaterThan(0);
   });
 
   it("does not rerender the React shell for unchanged combat snapshots", async () => {

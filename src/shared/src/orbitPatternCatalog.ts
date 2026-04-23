@@ -120,9 +120,7 @@ export const scaleOrbitPatternVelocity = (
   mass: number,
   worldScale: number,
 ): Vec2 => {
-  const velocityScale = Math.sqrt(
-    (ORBIT_PATTERN_GRAVITY * mass) / worldScale,
-  );
+  const velocityScale = Math.sqrt((ORBIT_PATTERN_GRAVITY * mass) / worldScale);
 
   return {
     x: normalizedVelocity.x * velocityScale,

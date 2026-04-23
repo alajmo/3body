@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   collectSharedCombatVisibleBoostWakeBursts,
-  getSharedCombatHeldBoostDirectionOverride,
   getSharedCombatBoostWakeBendAmount,
   getSharedCombatBoostWakeCurveOffset,
+  getSharedCombatHeldBoostDirectionOverride,
   pruneSharedCombatBoostBursts,
   queueSharedCombatBoostBurst,
   syncSharedCombatBoostPresentation,
@@ -328,5 +328,64 @@ describe("shared boost presentation helpers", () => {
       direction: { x: 1, y: 0 },
       planetId: 2,
     });
+  });
+
+  it("uses current aim for the focused player's active boost wake even after boost is released", () => {
+    const directionOverride = syncSharedCombatBoostPresentation({
+      activeBursts: [
+        {
+          direction: { x: -1, y: 0 },
+          origin: { x: 0, y: 0 },
+          planetId: 7,
+          radius: 10,
+          startedAtSec: 0.1,
+          tick: 4,
+        },
+      ],
+      aimTarget: { x: 10, y: 20 },
+      boostVisual: null,
+      heldBoosting: false,
+      maxParticlesPerBurst: 0,
+      nowSec: 0.2,
+      playerBody: {
+        alive: true,
+        id: 7,
+        pos: { x: 10, y: 10 },
+        radius: 10,
+      },
+    });
+
+    expect(directionOverride).toEqual({
+      direction: { x: 0, y: 1 },
+      planetId: 7,
+    });
+  });
+
+  it("does not apply the focused player aim to remote boost wakes", () => {
+    const directionOverride = syncSharedCombatBoostPresentation({
+      activeBursts: [
+        {
+          direction: { x: -1, y: 0 },
+          origin: { x: 0, y: 0 },
+          planetId: 8,
+          radius: 10,
+          startedAtSec: 0.1,
+          tick: 4,
+        },
+      ],
+      aimTarget: { x: 10, y: 20 },
+      boostVisual: null,
+      heldBoosting: false,
+      maxParticlesPerBurst: 0,
+      nowSec: 0.2,
+      playerBody: {
+        alive: true,
+        id: 7,
+        pos: { x: 10, y: 10 },
+        radius: 10,
+      },
+    });
+
+    expect(directionOverride).toBeNull();
   });
 });
