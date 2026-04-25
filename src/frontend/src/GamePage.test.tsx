@@ -46,7 +46,7 @@ describe("GamePage", () => {
         className: "app-shell",
         defaultBotsEnabled: false,
         displayMode: "vhs",
-        showPerformanceTools: true,
+        showPerformanceTools: import.meta.env.DEV,
       }),
     );
   });
@@ -66,7 +66,7 @@ describe("GamePage", () => {
         className: "app-shell",
         defaultBotsEnabled: false,
         displayMode: "default",
-        showPerformanceTools: true,
+        showPerformanceTools: import.meta.env.DEV,
       }),
     );
   });

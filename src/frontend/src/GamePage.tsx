@@ -3,13 +3,14 @@ import { getRuntimeTuningDocument } from "./game/runtimeTuning";
 
 export function GamePage() {
   const displayMode = getRuntimeTuningDocument().visuals.displayMode;
+  const showPerformanceTools = import.meta.env.DEV;
 
   return (
     <GameViewportPanel
       className="app-shell"
       defaultBotsEnabled={false}
       displayMode={displayMode}
-      showPerformanceTools
+      showPerformanceTools={showPerformanceTools}
     />
   );
 }

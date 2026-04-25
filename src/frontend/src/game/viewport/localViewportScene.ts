@@ -10,7 +10,10 @@ import type {
   Vector3,
 } from "three/webgpu";
 import type { CombatSandboxPlanet, CombatSandboxState } from "../combatSandbox";
-import { getSandboxDebugSnapshot } from "../combatSandbox";
+import {
+  getEffectiveSandboxArenaRadius,
+  getSandboxDebugSnapshot,
+} from "../combatSandbox";
 import { getRuntimeTuningDocument } from "../runtimeTuning";
 import {
   type AmbientBoundaryDebrisVisual,
@@ -350,10 +353,20 @@ export const syncLocalViewportSceneEnvironment = ({
     sceneState,
     weaponKinds,
   });
-  const arenaRadius = Math.max(
+  const tuning = getRuntimeTuningDocument();
+  const baseArenaRadius = Math.max(0, tuning.gameplay.arena.radius);
+  const effectiveArenaRadius = Math.max(
     0,
-    getRuntimeTuningDocument().gameplay.arena.radius,
+    getEffectiveSandboxArenaRadius(
+      baseArenaRadius,
+      renderState.elapsedSec,
+      tuning.gameplay.blackHole,
+      tuning.visuals.orbits.boundaryDebris.blackHoleCollapseSec,
+    ),
   );
+  const baseRadii = getAmbientBoundaryDebrisRadii(baseArenaRadius);
+  const radiusScale =
+    baseArenaRadius > 0 ? effectiveArenaRadius / baseArenaRadius : 0;
   updateAmbientBoundaryDebrisVisual({
     blackHoleBody:
       renderState.blackHole === null
@@ -362,7 +375,8 @@ export const syncLocalViewportSceneEnvironment = ({
             pos: renderState.blackHole.pos,
             radius: renderState.blackHole.killRadius,
           },
-    ...getAmbientBoundaryDebrisRadii(arenaRadius),
+    innerRadius: baseRadii.innerRadius * radiusScale,
+    outerRadius: baseRadii.outerRadius * radiusScale,
     enableFallingDebris: false,
     nowSec,
     neutronStarBodies: renderState.neutronStars,

@@ -846,6 +846,7 @@ export function CombatHud({
                   return (
                     <article
                       key={weapon.kind}
+                      data-ability-key={weapon.kind}
                       className={`ability-card ability-card--compact weapon-card ability-card--${cardState}${
                         weapon.selected ? " weapon-card--selected" : ""
                       }`}
@@ -885,6 +886,7 @@ export function CombatHud({
                   return (
                     <article
                       key={ability.id}
+                      data-ability-key={ability.id}
                       className={`ability-card ability-card--compact ability-card--${ability.mode}`}
                       style={
                         {

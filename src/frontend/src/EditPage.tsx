@@ -279,6 +279,9 @@ const ORBIT_BOUNDARY_DEBRIS_SPEED_MIN = 0.1;
 const ORBIT_BOUNDARY_DEBRIS_SPEED_STEP = 0.05;
 const ORBIT_BOUNDARY_DEBRIS_THICKNESS_MIN = 24;
 const ORBIT_BOUNDARY_DEBRIS_THICKNESS_STEP = 2;
+const ORBIT_BOUNDARY_DEBRIS_BLACK_HOLE_COLLAPSE_MIN = 0.5;
+const ORBIT_BOUNDARY_DEBRIS_BLACK_HOLE_COLLAPSE_MAX = 600;
+const ORBIT_BOUNDARY_DEBRIS_BLACK_HOLE_COLLAPSE_STEP = 0.5;
 const ARENA_ASTEROID_DAMAGE_STEP = 0.1;
 const ARENA_ASTEROID_RANDOMIZATION_STEP = 0.01;
 const ARENA_ASTEROID_SPAWN_RATE_STEP = 0.05;
@@ -3699,6 +3702,19 @@ export function EditPage() {
                   previewDebrisNumber("thickness", value)
                 }
                 onCommit={(value) => commitDebrisNumber("thickness", value)}
+              />
+              <NumberField
+                label="Black hole collapse"
+                min={ORBIT_BOUNDARY_DEBRIS_BLACK_HOLE_COLLAPSE_MIN}
+                max={ORBIT_BOUNDARY_DEBRIS_BLACK_HOLE_COLLAPSE_MAX}
+                step={ORBIT_BOUNDARY_DEBRIS_BLACK_HOLE_COLLAPSE_STEP}
+                value={debrisVisuals.blackHoleCollapseSec}
+                onPreviewChange={(value) =>
+                  previewDebrisNumber("blackHoleCollapseSec", value)
+                }
+                onCommit={(value) =>
+                  commitDebrisNumber("blackHoleCollapseSec", value)
+                }
               />
               <ColorField
                 label="Cool rim color"

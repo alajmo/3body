@@ -307,33 +307,199 @@ body {
   font-family: "Press Start 2P", "VT323", monospace;
 }
 
-.play-menu__bg {
+.play-menu__bg-stack {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.play-menu__bg-ring {
   position: absolute;
   inset: 0;
   background: url("/screen.png") center / cover no-repeat;
   transform-origin: 51% 47%;
-  transition:
-    transform 900ms cubic-bezier(0.6, 0, 0.85, 0.4),
-    filter 900ms ease-in;
+  transform: scale(1) rotate(0deg);
   will-change: transform, filter;
-  z-index: 0;
 }
 
-.play-menu--zooming .play-menu__bg {
-  transform: scale(4);
-  filter: brightness(1.4) saturate(1.25);
+.play-menu__bg-ring--1 {
+  -webkit-mask: radial-gradient(
+    circle at 51% 47%,
+    #000 0%,
+    #000 14%,
+    transparent 22%
+  );
+  mask: radial-gradient(
+    circle at 51% 47%,
+    #000 0%,
+    #000 14%,
+    transparent 22%
+  );
 }
 
-.play-menu--zooming .play-menu__title,
-.play-menu--zooming .play-menu__actions {
+.play-menu__bg-ring--2 {
+  -webkit-mask: radial-gradient(
+    circle at 51% 47%,
+    transparent 12%,
+    #000 20%,
+    #000 32%,
+    transparent 40%
+  );
+  mask: radial-gradient(
+    circle at 51% 47%,
+    transparent 12%,
+    #000 20%,
+    #000 32%,
+    transparent 40%
+  );
+}
+
+.play-menu__bg-ring--3 {
+  -webkit-mask: radial-gradient(
+    circle at 51% 47%,
+    transparent 30%,
+    #000 38%,
+    #000 50%,
+    transparent 58%
+  );
+  mask: radial-gradient(
+    circle at 51% 47%,
+    transparent 30%,
+    #000 38%,
+    #000 50%,
+    transparent 58%
+  );
+}
+
+.play-menu__bg-ring--4 {
+  -webkit-mask: radial-gradient(
+    circle at 51% 47%,
+    transparent 48%,
+    #000 56%,
+    #000 70%,
+    transparent 78%
+  );
+  mask: radial-gradient(
+    circle at 51% 47%,
+    transparent 48%,
+    #000 56%,
+    #000 70%,
+    transparent 78%
+  );
+}
+
+.play-menu__bg-ring--5 {
+  -webkit-mask: radial-gradient(
+    circle at 51% 47%,
+    transparent 66%,
+    #000 76%,
+    #000 100%
+  );
+  mask: radial-gradient(
+    circle at 51% 47%,
+    transparent 66%,
+    #000 76%,
+    #000 100%
+  );
+}
+
+@keyframes play-menu-ring-1 {
+  to {
+    transform: scale(5) rotate(20deg);
+    filter: brightness(0.4) saturate(0.7);
+  }
+}
+
+@keyframes play-menu-ring-2 {
+  to {
+    transform: scale(5) rotate(80deg);
+    filter: brightness(0.4) saturate(0.7);
+  }
+}
+
+@keyframes play-menu-ring-3 {
+  to {
+    transform: scale(5) rotate(170deg);
+    filter: brightness(0.4) saturate(0.7);
+  }
+}
+
+@keyframes play-menu-ring-4 {
+  to {
+    transform: scale(5) rotate(290deg);
+    filter: brightness(0.4) saturate(0.7);
+  }
+}
+
+@keyframes play-menu-ring-5 {
+  to {
+    transform: scale(5) rotate(440deg);
+    filter: brightness(0.4) saturate(0.7);
+  }
+}
+
+.play-menu--zooming .play-menu__bg-ring--1 {
+  animation: play-menu-ring-1 1100ms cubic-bezier(0.55, 0, 0.85, 0.35) forwards;
+}
+.play-menu--zooming .play-menu__bg-ring--2 {
+  animation: play-menu-ring-2 1100ms cubic-bezier(0.55, 0, 0.85, 0.35) forwards;
+}
+.play-menu--zooming .play-menu__bg-ring--3 {
+  animation: play-menu-ring-3 1100ms cubic-bezier(0.55, 0, 0.85, 0.35) forwards;
+}
+.play-menu--zooming .play-menu__bg-ring--4 {
+  animation: play-menu-ring-4 1100ms cubic-bezier(0.55, 0, 0.85, 0.35) forwards;
+}
+.play-menu--zooming .play-menu__bg-ring--5 {
+  animation: play-menu-ring-5 1100ms cubic-bezier(0.55, 0, 0.85, 0.35) forwards;
+}
+
+.play-menu__title,
+.play-menu__actions {
+  transition:
+    transform 1000ms cubic-bezier(0.7, 0, 0.84, 0.3),
+    opacity 900ms cubic-bezier(0.7, 0, 0.84, 0.3),
+    filter 900ms ease-in;
+}
+
+.play-menu--zooming .play-menu__title {
+  transform: translate(-50%, 44vh) scale(0.02) rotate(-8deg);
   opacity: 0;
-  transition: opacity 250ms ease-out;
+  filter: blur(2px);
+  pointer-events: none;
+}
+
+.play-menu--zooming .play-menu__actions {
+  transform: translate(-50%, 28vh) scale(0.02) rotate(8deg);
+  opacity: 0;
+  filter: blur(2px);
   pointer-events: none;
 }
 
 .play-menu--zooming .play-menu__scanlines {
   opacity: 0;
   transition: opacity 600ms ease-in;
+}
+
+.play-menu__iris {
+  pointer-events: none;
+  position: absolute;
+  left: 51%;
+  top: 47%;
+  width: 260vmax;
+  height: 260vmax;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  box-shadow: 0 0 0 260vmax #000;
+  z-index: 3;
+  transition:
+    width 1100ms cubic-bezier(0.72, 0, 0.86, 0.28),
+    height 1100ms cubic-bezier(0.72, 0, 0.86, 0.28);
+}
+
+.play-menu--zooming .play-menu__iris {
+  width: 0;
+  height: 0;
 }
 
 @keyframes play-menu-static-burst {
@@ -344,8 +510,7 @@ body {
 }
 
 @keyframes play-menu-flash-burst {
-  0%, 65% { opacity: 0; }
-  82% { opacity: 1; }
+  0%, 50% { opacity: 0; }
   100% { opacity: 1; }
 }
 
@@ -353,7 +518,7 @@ body {
   pointer-events: none;
   position: absolute;
   inset: 0;
-  z-index: 3;
+  z-index: 4;
   opacity: 0;
   background-image:
     repeating-linear-gradient(
@@ -374,15 +539,9 @@ body {
   pointer-events: none;
   position: absolute;
   inset: 0;
-  z-index: 4;
+  z-index: 5;
   opacity: 0;
-  background: radial-gradient(
-    circle at 50% 47%,
-    #ffffff 0%,
-    #ffe66b 35%,
-    #ff3df0 70%,
-    #2b0a4a 100%
-  );
+  background: #000;
 }
 
 .play-menu--zooming .play-menu__static {
@@ -4746,4 +4905,100 @@ section.sandbox-panel--dock {
   50% {
     filter: brightness(1.18);
   }
+}
+
+.combat-hud {
+  --hud-panel-radius: 0;
+  --hud-pill-radius: 0;
+  --hud-card-radius: 0;
+  --hud-compact-card-radius: 0;
+  --hud-kill-feed-entry-radius: 0;
+}
+
+.combat-hud .hud-panel,
+.combat-hud .hud-pill,
+.combat-hud .planet-bar,
+.combat-hud .ability-card,
+.combat-hud .ability-card.ability-card--compact,
+.combat-hud .weapon-card.ability-card--compact,
+.combat-hud .cockpit-summary,
+.combat-hud .shortcut-chip,
+.combat-hud .sandbox-stat,
+.combat-hud .kill-feed__entry,
+.combat-hud .hud-button,
+.combat-hud .hud-button--compact,
+.combat-hud .hud-field__input,
+.combat-hud .hud-field__select,
+.combat-hud .sandbox-panel__section,
+.combat-hud .sandbox-panel .hud-button,
+.combat-hud .sandbox-panel .shortcut-chip,
+.combat-hud .planet-bar__track,
+.combat-hud .combat-tray__hp-track,
+.combat-hud .planet-bar__fill,
+.combat-hud .ability-card__meter,
+.combat-hud .ability-card__meter-fill,
+.combat-hud .cockpit-summary__track,
+.combat-hud .cockpit-summary__fill,
+.combat-hud .connection-indicator,
+.combat-hud .hud-compass__ring,
+.combat-hud .hud-compass__hub,
+.combat-hud .minimap-panel__map-frame,
+.combat-hud .minimap-panel__map-frame::before,
+.combat-hud .minimap-panel__map-frame::after,
+.combat-hud .ability-card__key,
+.combat-hud .shortcut-chip__key,
+.combat-hud .shortcut-row__key {
+  border-radius: 0;
+}
+
+.combat-hud .ability-card {
+  --meter-accent: var(--ability-accent, #8ed8ff);
+}
+
+.combat-hud .ability-card[data-ability-key="light"] {
+  --meter-accent: #cfe8ff;
+}
+
+.combat-hud .ability-card[data-ability-key="heavy"] {
+  --meter-accent: #ff8a3a;
+}
+
+.combat-hud .ability-card[data-ability-key="seeker"] {
+  --meter-accent: #ff5cd0;
+}
+
+.combat-hud .ability-card[data-ability-key="shield"] {
+  --meter-accent: #5fd9ff;
+}
+
+.combat-hud .ability-card[data-ability-key="boost"] {
+  --meter-accent: #6cf0a8;
+}
+
+.combat-hud .ability-card[data-ability-key="gravityPulse"] {
+  --meter-accent: #b78bff;
+}
+
+.combat-hud .ability-card__meter {
+  height: 6px;
+  background: rgba(0, 0, 0, 0.55);
+  box-shadow:
+    inset 0 0 0 1px
+      color-mix(in srgb, var(--meter-accent, #8ed8ff) 22%, transparent),
+    inset 0 1px 0 rgba(0, 0, 0, 0.6);
+}
+
+.combat-hud .ability-card__meter-fill {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--meter-accent, #8ed8ff) 55%, #06090f),
+    var(--meter-accent, #8ed8ff)
+  );
+  box-shadow:
+    0 0 8px color-mix(in srgb, var(--meter-accent, #8ed8ff) 45%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+.combat-hud .ability-card--ready .ability-card__status {
+  color: color-mix(in srgb, var(--meter-accent, #8ed8ff) 70%, white);
 }

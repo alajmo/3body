@@ -237,6 +237,7 @@ export interface CacheVisualTuning {
 }
 
 export interface OrbitBoundaryDebrisVisualTuning {
+  blackHoleCollapseSec: number;
   coolColor: string;
   density: number;
   dustSize: number;
@@ -703,6 +704,12 @@ const sanitizeOrbitBoundaryDebrisVisualTuning = (
       : undefined;
 
   return {
+    blackHoleCollapseSec: sanitizeNumber(
+      source.blackHoleCollapseSec,
+      fallback.blackHoleCollapseSec,
+      0.1,
+      600,
+    ),
     coolColor: sanitizeHexColor(source.coolColor, fallback.coolColor),
     density: sanitizeNumber(
       source.density,
@@ -1536,6 +1543,7 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
     },
     orbits: {
       boundaryDebris: {
+        blackHoleCollapseSec: 60,
         coolColor: "#8ca8c7",
         density: 1,
         dustSize: 3.6,

@@ -583,6 +583,7 @@ const createCombatBotWorld = (
     | "starMotion"
     | "suns"
   >,
+  arenaRadius: number,
 ): {
   orbitStarMotion?: import("@3body/shared").World["orbitStarMotion"];
   suns: CombatSandboxSun[];
@@ -601,7 +602,7 @@ const createCombatBotWorld = (
   caches: state.caches,
   blackHole: state.blackHole ?? undefined,
   debris: state.debris,
-  arenaRadius: ARENA_RADIUS,
+  arenaRadius,
   orbitStarMotion:
     state.starMotion.mode === "fixedPattern"
       ? {
@@ -782,6 +783,32 @@ const isEntityTouchingArenaBoundary = (
   entity: Pick<EntityBase, "pos" | "radius">,
   arenaRadius: number,
 ): boolean => len(entity.pos) + entity.radius >= arenaRadius;
+
+export const getEffectiveSandboxArenaRadius = (
+  baseArenaRadius: number,
+  elapsedSec: number,
+  blackHoleSpec: BlackHoleSpec,
+  collapseSec: number,
+): number => {
+  if (elapsedSec < blackHoleSpec.spawnSec || collapseSec <= 0) {
+    return baseArenaRadius;
+  }
+  const elapsedSinceSpawn = elapsedSec - blackHoleSpec.spawnSec;
+  const factor = Math.max(0, 1 - elapsedSinceSpawn / collapseSec);
+  return baseArenaRadius * factor;
+};
+
+const getSandboxArenaRadiusForState = (
+  elapsedSec: number,
+  blackHoleSpec: BlackHoleSpec,
+): number =>
+  getEffectiveSandboxArenaRadius(
+    ARENA_RADIUS,
+    elapsedSec,
+    blackHoleSpec,
+    getRuntimeTuningDocument().visuals.orbits.boundaryDebris
+      .blackHoleCollapseSec,
+  );
 
 const getBlackHoleBonusMass = (
   blackHole: BlackHole,
@@ -1437,6 +1464,7 @@ const markEnvironmentalPlanetDeaths = (
   swallowedPlanets: CombatSandboxPlanet[],
   controllers: ReadonlyMap<string, CombatSandboxControllerState>,
   tick: number,
+  arenaRadius: number,
 ) => {
   for (let index = 0; index < planets.length; index += 1) {
     const planet = planets[index]!;
@@ -1466,7 +1494,7 @@ const markEnvironmentalPlanetDeaths = (
     }
 
     const controller = controllers.get(planet.playerId);
-    if (len(planet.pos) > ARENA_RADIUS) {
+    if (len(planet.pos) > arenaRadius) {
       if (ARENA_BOUNDARY_SPEC.instantDeath) {
         planets[index] = killPlanet(planet, "boundary");
         deathPlanetIds.add(planet.id);
@@ -2020,6 +2048,10 @@ export const stepSandbox = (
   );
   const nextTick = state.tick + 1;
   const nextElapsedSec = state.elapsedSec + FIXED_STEP_SEC;
+  const effectiveArenaRadius = getSandboxArenaRadiusForState(
+    nextElapsedSec,
+    blackHoleSpec,
+  );
   const getPlanetImpactRadiusMultiplier = (
     _planet: Pick<CombatSandboxPlanet, "archetype">,
   ): number =>
@@ -2079,17 +2111,20 @@ export const stepSandbox = (
     refreshShieldLoad(controller);
   }
 
-  const botWorld = createCombatBotWorld({
-    blackHole,
-    caches,
-    debris,
-    elapsedSec: state.elapsedSec,
-    neutronStars: state.neutronStars,
-    planets,
-    rockets,
-    starMotion: state.starMotion,
-    suns: state.suns,
-  });
+  const botWorld = createCombatBotWorld(
+    {
+      blackHole,
+      caches,
+      debris,
+      elapsedSec: state.elapsedSec,
+      neutronStars: state.neutronStars,
+      planets,
+      rockets,
+      starMotion: state.starMotion,
+      suns: state.suns,
+    },
+    effectiveArenaRadius,
+  );
   const runBotControllerStep = ({
     controller,
     difficulty,
@@ -2395,6 +2430,7 @@ export const stepSandbox = (
     swallowedPlanets,
     controllerByPlayerId,
     nextTick,
+    effectiveArenaRadius,
   );
   applyPlanetPairCollisions(planets, deathPlanetIds);
   if (blackHole !== null && swallowedPlanets.length > 0) {
@@ -2561,7 +2597,7 @@ export const stepSandbox = (
       continue;
     }
 
-    if (isEntityTouchingArenaBoundary(rocket, ARENA_RADIUS)) {
+    if (isEntityTouchingArenaBoundary(rocket, effectiveArenaRadius)) {
       emitRocketImpact(rocket);
       continue;
     }

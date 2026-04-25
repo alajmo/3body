@@ -5,5 +5,8 @@ dist/
 .env
 .env.local
 .vite/
-.data/
 tsconfig.tsbuildinfo
+
+.data/3body.sqlite  
+.data/3body.sqlite-shm  
+.data/3body.sqlite-wal  
