@@ -6,8 +6,75 @@ import {
   getSharedCombatHeldBoostDirectionOverride,
   pruneSharedCombatBoostBursts,
   queueSharedCombatBoostBurst,
+  type SharedCombatBoostBurstState,
+  type SharedCombatBoostBurstVisual,
   syncSharedCombatBoostPresentation,
 } from "./sharedCombatBoostVisuals";
+
+const createTestBoostVisual = (): {
+  boostVisual: SharedCombatBoostBurstVisual;
+  drawRange: { count: number; start: number };
+  wakeVisible: { value: boolean };
+} => {
+  const drawRange = { count: 0, start: 0 };
+  const wakeVisible = { value: false };
+
+  return {
+    boostVisual: {
+      geometry: {
+        setDrawRange: (start: number, count: number) => {
+          drawRange.start = start;
+          drawRange.count = count;
+        },
+      },
+      opacityAttribute: {
+        array: new Float32Array(8),
+        count: 8,
+        needsUpdate: false,
+      },
+      points: {
+        visible: false,
+      },
+      positionAttribute: {
+        array: new Float32Array(24),
+        count: 8,
+        needsUpdate: false,
+      },
+      wakeVisuals: [
+        {
+          basePositions: new Float32Array([0, 0, 0, 0.5, 0, 0, 1, 0, 0]),
+          geometry: {},
+          material: {
+            opacity: 0,
+          },
+          mesh: {
+            position: {
+              set: () => {},
+            },
+            rotation: {
+              z: 0,
+            },
+            scale: {
+              set: () => {},
+            },
+            set visible(nextVisible: boolean) {
+              wakeVisible.value = nextVisible;
+            },
+            get visible() {
+              return wakeVisible.value;
+            },
+          },
+          positionAttribute: {
+            array: new Float32Array(9),
+            needsUpdate: false,
+          },
+        },
+      ],
+    } as unknown as SharedCombatBoostBurstVisual,
+    drawRange,
+    wakeVisible,
+  };
+};
 
 describe("collectSharedCombatVisibleBoostWakeBursts", () => {
   it("keeps a single wake per planet and preserves the furthest progress", () => {
@@ -328,6 +395,103 @@ describe("shared boost presentation helpers", () => {
       direction: { x: 1, y: 0 },
       planetId: 2,
     });
+  });
+
+  it("draws a continuous wake while boost is held without mutating gameplay bursts", () => {
+    const activeBursts: SharedCombatBoostBurstState[] = [];
+    const { boostVisual, drawRange, wakeVisible } = createTestBoostVisual();
+
+    const directionOverride = syncSharedCombatBoostPresentation({
+      activeBursts,
+      aimTarget: { x: 40, y: 10 },
+      boostVisual,
+      heldBoosting: true,
+      maxParticlesPerBurst: 4,
+      nowSec: 1.5,
+      playerBody: {
+        alive: true,
+        id: 7,
+        pos: { x: 10, y: 10 },
+        radius: 12,
+      },
+    });
+
+    expect(activeBursts).toEqual([]);
+    expect(directionOverride).toEqual({
+      direction: { x: 1, y: 0 },
+      planetId: 7,
+    });
+    expect(drawRange.count).toBeGreaterThan(0);
+    expect(boostVisual.points.visible).toBe(true);
+    expect(wakeVisible.value).toBe(true);
+  });
+
+  it("ramps held boost wake up, fades it down, and resumes mid-fade", () => {
+    const activeBursts: SharedCombatBoostBurstState[] = [];
+    const { boostVisual } = createTestBoostVisual();
+    const playerBody = {
+      alive: true,
+      id: 7,
+      pos: { x: 10, y: 10 },
+      radius: 12,
+    };
+    const syncHeldBoost = (heldBoosting: boolean, nowSec: number) => {
+      syncSharedCombatBoostPresentation({
+        activeBursts,
+        aimTarget: { x: 40, y: 10 },
+        boostVisual,
+        heldBoosting,
+        maxParticlesPerBurst: 4,
+        nowSec,
+        playerBody,
+      });
+
+      return boostVisual.wakeVisuals[0]!.material.opacity;
+    };
+
+    const initialOpacity = syncHeldBoost(true, 1);
+    const rampedOpacity = syncHeldBoost(true, 1.2);
+    const fadedOpacity = syncHeldBoost(false, 1.4);
+    const resumedOpacity = syncHeldBoost(true, 1.45);
+
+    expect(activeBursts).toEqual([]);
+    expect(rampedOpacity).toBeGreaterThan(initialOpacity);
+    expect(fadedOpacity).toBeLessThan(rampedOpacity);
+    expect(resumedOpacity).toBeGreaterThan(fadedOpacity);
+  });
+
+  it("keeps the held boost flame moving after it reaches full ramp", () => {
+    const activeBursts: SharedCombatBoostBurstState[] = [];
+    const { boostVisual } = createTestBoostVisual();
+    const playerBody = {
+      alive: true,
+      id: 7,
+      pos: { x: 10, y: 10 },
+      radius: 12,
+    };
+    const syncHeldBoost = (nowSec: number) =>
+      syncSharedCombatBoostPresentation({
+        activeBursts,
+        aimTarget: { x: 40, y: 10 },
+        boostVisual,
+        heldBoosting: true,
+        maxParticlesPerBurst: 4,
+        nowSec,
+        playerBody,
+      });
+
+    syncHeldBoost(1);
+    syncHeldBoost(1.5);
+    const firstPositions = Array.from(
+      boostVisual.wakeVisuals[0]!.positionAttribute.array as Float32Array,
+    );
+
+    syncHeldBoost(1.55);
+    const nextPositions = Array.from(
+      boostVisual.wakeVisuals[0]!.positionAttribute.array as Float32Array,
+    );
+
+    expect(nextPositions).not.toEqual(firstPositions);
   });
 
   it("uses current aim for the focused player's active boost wake even after boost is released", () => {

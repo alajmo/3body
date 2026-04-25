@@ -184,7 +184,6 @@ export class StatsStore {
     this.#insertMatch = this.#db.prepare(`
       INSERT INTO matches (
         id,
-        roomKind,
         seed,
         startedAtMs,
         endedAtMs,
@@ -193,7 +192,7 @@ export class StatsStore {
         reason,
         mvpPlayerId,
         mvpReason
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     this.#insertMatchPlayer = this.#db.prepare(`
       INSERT INTO match_players (
@@ -382,7 +381,6 @@ export class StatsStore {
 
         this.#insertMatch.run(
           summary.id,
-          summary.roomKind,
           summary.seed,
           summary.startedAtMs,
           summary.endedAtMs,

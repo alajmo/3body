@@ -1,5 +1,5 @@
 import type { RocketKind } from "@3body/shared";
-import { ARENA_RADIUS, FIXED_STEP_SEC } from "@3body/shared";
+import { ARCHETYPES, ARENA_RADIUS } from "@3body/shared";
 import {
   Matrix4,
   type Mesh,
@@ -126,7 +126,6 @@ const _CANNON_MUZZLE_LENGTH_PX = 4;
 const _CANNON_MUZZLE_RADIUS_PX = 5.6;
 const _CANNON_FLASH_RADIUS_PX = 16;
 const _CANNON_FLASH_DURATION_SEC = 0.14;
-const PLAYER_NAME_STORAGE_KEY = "3body.playerName";
 const WEAPON_KINDS = [
   "light",
   "heavy",
@@ -152,17 +151,6 @@ const getWeaponColors = (): Record<RocketKind, { accent: string }> => ({
 });
 const getRocketRenderProfiles = () =>
   getScaledRocketVisuals(getRuntimeVisuals().rockets);
-const readStoredLocalPlayerName = (): string | undefined => {
-  if (typeof window === "undefined") {
-    return undefined;
-  }
-
-  const storedName = window.localStorage
-    .getItem(PLAYER_NAME_STORAGE_KEY)
-    ?.trim();
-  return storedName ? storedName : undefined;
-};
-
 const disposeCacheVisual = (_visual: CacheVisual) => {};
 
 export function createGameViewport(
@@ -243,7 +231,6 @@ export function createGameViewport(
       botsEnabled: sandboxSettings.botsEnabled,
       participantCount: sandboxSessionConfig.participantCount,
       playerBehavior: sandboxSessionConfig.playerBehavior,
-      playerName: readStoredLocalPlayerName(),
     });
   const getViewportAspect = () =>
     Math.max(1, hostElement.clientWidth) /
@@ -595,16 +582,22 @@ export function createGameViewport(
                 const currentState = simulationState.currentState;
                 const playerPlanet = simulationFrame.playerPlanet;
                 const debug = getSandboxDebugSnapshot(currentState);
-                const boostChargeRemainingSec =
-                  currentState.player.nextBoostChargeAtTick === null
-                    ? 0
-                    : Math.max(
-                        0,
-                        currentState.player.nextBoostChargeAtTick -
-                          currentState.tick,
-                      ) * FIXED_STEP_SEC;
-                const boostRecoveryRemainingSec = boostChargeRemainingSec;
+                const boostCapacity = Math.max(
+                  1,
+                  boostSettings.charges +
+                    (playerPlanet === null
+                      ? 0
+                      : ARCHETYPES[playerPlanet.archetype].boostChargeBonus),
+                );
+                const boostLoadRatio = Math.max(
+                  0,
+                  Math.min(1, currentState.player.boostCharges / boostCapacity),
+                );
                 const boostRecoveryDurationSec = boostSettings.cooldownSec;
+                const boostRecoveryRemainingSec =
+                  boostLoadRatio >= 1
+                    ? 0
+                    : (1 - boostLoadRatio) * boostRecoveryDurationSec;
                 const shieldMode = currentState.player.shieldActive
                   ? "active"
                   : currentState.player.shieldLoad <
@@ -612,7 +605,12 @@ export function createGameViewport(
                     ? "cooldown"
                     : "ready";
                 const boostMode =
-                  boostRecoveryRemainingSec > 0 ? "cooldown" : "ready";
+                  inputRuntime.pendingAbilityRequests.boost &&
+                  boostLoadRatio > 0
+                    ? "active"
+                    : boostLoadRatio < 1
+                      ? "cooldown"
+                      : "ready";
 
                 pruneLocalSandboxKillFeedEntries({
                   nowSec,

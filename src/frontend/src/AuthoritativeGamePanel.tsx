@@ -12,7 +12,9 @@ import {
   type PickStateMsg,
   type PongMsg,
   type RematchStateMsg,
+  ROOM_CAPACITY,
   type SnapshotV2Msg,
+  type WaitlistStateMsg,
   type WelcomeMsg,
 } from "@3body/shared";
 import {
@@ -65,7 +67,6 @@ const readStoredViewportProfilingEnabled = (): boolean => {
 interface MatchPanelUiState {
   connectionError: string | null;
   connectionState: AuthoritativeMatchRuntimeState["connectionState"];
-  countdownEndsAtMs: number | null;
   lobbyState: AuthoritativeMatchRuntimeState["lobbyState"];
   matchEnd: AuthoritativeMatchRuntimeState["matchEnd"];
   phase: AuthoritativeMatchRuntimeState["phase"];
@@ -74,6 +75,7 @@ interface MatchPanelUiState {
   rematchState: AuthoritativeMatchRuntimeState["rematchState"];
   roomId: string | null;
   roomRoster: AuthoritativeMatchRuntimeState["roomRoster"];
+  waitlist: AuthoritativeMatchRuntimeState["waitlist"];
 }
 
 const buildSocketUrl = (windowTarget: Window): string => {
@@ -160,7 +162,6 @@ const snapshotUiState = (
 ): MatchPanelUiState => ({
   connectionError: runtime.connectionError,
   connectionState: runtime.connectionState,
-  countdownEndsAtMs: runtime.countdownEndsAtMs,
   lobbyState: runtime.lobbyState,
   matchEnd: runtime.matchEnd,
   phase: runtime.phase,
@@ -169,6 +170,7 @@ const snapshotUiState = (
   rematchState: runtime.rematchState,
   roomId: runtime.roomId,
   roomRoster: [...runtime.roomRoster],
+  waitlist: runtime.waitlist,
 });
 
 const areRoomRostersEqual = (
@@ -195,13 +197,25 @@ const areRoomRostersEqual = (
   return true;
 };
 
+const areWaitlistInfoEqual = (
+  current: MatchPanelUiState["waitlist"],
+  next: MatchPanelUiState["waitlist"],
+): boolean => {
+  if (current === next) {
+    return true;
+  }
+  if (current === null || next === null) {
+    return false;
+  }
+  return current.position === next.position && current.total === next.total;
+};
+
 const areMatchPanelUiStatesEqual = (
   current: MatchPanelUiState,
   next: MatchPanelUiState,
 ): boolean =>
   current.connectionError === next.connectionError &&
   current.connectionState === next.connectionState &&
-  current.countdownEndsAtMs === next.countdownEndsAtMs &&
   current.lobbyState === next.lobbyState &&
   current.matchEnd === next.matchEnd &&
   current.phase === next.phase &&
@@ -209,7 +223,8 @@ const areMatchPanelUiStatesEqual = (
   current.playerId === next.playerId &&
   current.rematchState === next.rematchState &&
   current.roomId === next.roomId &&
-  areRoomRostersEqual(current.roomRoster, next.roomRoster);
+  areRoomRostersEqual(current.roomRoster, next.roomRoster) &&
+  areWaitlistInfoEqual(current.waitlist, next.waitlist);
 
 const formatCountdown = (targetAtMs: number, nowMs: number): string => {
   const remainingSec = Math.max(0, Math.ceil((targetAtMs - nowMs) / 1000));
@@ -256,18 +271,6 @@ const describePhase = (uiState: MatchPanelUiState, nowMs: number) => {
         eyebrow: "Pick Phase",
         title: uiState.roomId ?? "Public Room",
       };
-    case "countdown":
-      return {
-        body:
-          uiState.countdownEndsAtMs === null
-            ? "Match staging."
-            : `Deployment in ${formatCountdown(
-                uiState.countdownEndsAtMs,
-                nowMs,
-              )}.`,
-        eyebrow: "Countdown",
-        title: uiState.roomId ?? "Public Room",
-      };
     case "combat":
       return {
         body: "Authoritative combat is live.",
@@ -284,13 +287,22 @@ const describePhase = (uiState: MatchPanelUiState, nowMs: number) => {
                 uiState.roomRoster,
               )}.`,
         eyebrow: "Match End",
-        title: uiState.roomId ?? "Public Room",
+        title: "Match Complete",
       };
     case "error":
       return {
         body: uiState.connectionError ?? "The authoritative runtime failed.",
         eyebrow: "Error",
         title: "Connection Error",
+      };
+    case "waitlist":
+      return {
+        body: "All rooms are full. You will join as soon as a slot opens.",
+        eyebrow: "Waitlist",
+        title:
+          uiState.waitlist === null
+            ? "Waiting for a slot"
+            : `Position ${uiState.waitlist.position} of ${uiState.waitlist.total}`,
       };
   }
 };
@@ -634,10 +646,22 @@ export function AuthoritativeGamePanel({
             runtimeRef.current.role = message.role;
             runtimeRef.current.roomId = message.roomId;
             runtimeRef.current.roomRoster = message.roster;
+            runtimeRef.current.waitlist = null;
             storage.setItem(PROFILE_TOKEN_STORAGE_KEY, message.profileToken);
             storage.setItem(RESUME_TOKEN_STORAGE_KEY, message.resumeToken);
             storage.setItem(ROOM_ID_STORAGE_KEY, message.roomId);
             runtimeRef.current.phase = "lobby";
+            syncUiState();
+            return;
+          }
+
+          case "waitlistState": {
+            const message = parsed as WaitlistStateMsg;
+            runtimeRef.current.waitlist = {
+              position: message.position,
+              total: message.total,
+            };
+            runtimeRef.current.phase = "waitlist";
             syncUiState();
             return;
           }
@@ -658,17 +682,11 @@ export function AuthoritativeGamePanel({
 
           case "pickState":
             runtimeRef.current.pickState = parsed as PickStateMsg;
+            runtimeRef.current.matchEnd = null;
+            runtimeRef.current.rematchState = null;
             runtimeRef.current.phase = "pick";
             syncUiState();
             maybeAutoPick();
-            return;
-
-          case "countdown":
-            runtimeRef.current.countdownEndsAtMs = (
-              parsed as { endsAtMs: number }
-            ).endsAtMs;
-            runtimeRef.current.phase = "countdown";
-            syncUiState();
             return;
 
           case "fullSnapshot": {
@@ -780,12 +798,12 @@ export function AuthoritativeGamePanel({
           case "matchEnd":
             runtimeRef.current.matchEnd = parsed as MatchEndMsg;
             runtimeRef.current.phase = "ended";
-            clearStoredRoomSession(storage);
             syncUiState();
             return;
 
           case "rematchState":
             runtimeRef.current.rematchState = parsed as RematchStateMsg;
+            syncUiState();
             return;
 
           case "pong":
@@ -860,26 +878,10 @@ export function AuthoritativeGamePanel({
     };
   }, [connectionSessionVersion, queueFreshMatch, sendMeasuredClientMessage]);
 
-  const requestRematch = () => {
-    if (
-      !dispatchRuntimeMessage({
-        type: "voteRematch",
-        yes: true,
-      })
-    ) {
-      queueFreshMatch();
-    }
-  };
-
   const phaseCopy = describePhase(uiState, nowMs);
-  const rematchVotePending =
-    uiState.phase === "ended" &&
-    uiState.rematchState !== null &&
-    uiState.playerId !== null &&
-    uiState.rematchState.yesPlayerIds.includes(uiState.playerId);
 
   return (
-    <div className={className}>
+    <div className={className} data-phase={uiState.phase}>
       <div ref={viewportElementRef} className="canvas-root" />
       <div
         className={`hud-root${displayMode === "vhs" ? " hud-root--inside-crt" : ""}`}
@@ -889,43 +891,118 @@ export function AuthoritativeGamePanel({
           displayMode={displayMode}
           hud={hudState}
           hudTuning={getRuntimeTuningDocument().visuals.hud}
-          showPerformanceTools
+          showPerformanceTools={false}
         />
       </div>
-      <div className="page-overlay page-overlay--page">
-        <div className="page-chrome">
-          <section className="page-copy" style={{ pointerEvents: "auto" }}>
-            <div className="edit-panel__eyebrow">{phaseCopy.eyebrow}</div>
-            <h1 className="edit-panel__title">{phaseCopy.title}</h1>
-            <div className="edit-panel__body">{phaseCopy.body}</div>
-            {uiState.connectionError ? (
-              <div className="edit-status edit-status--error">
-                {uiState.connectionError}
-              </div>
-            ) : null}
-            {uiState.phase === "ended" || uiState.phase === "error" ? (
-              <div className="edit-panel__actions">
-                {uiState.phase === "ended" ? (
-                  <button
-                    type="button"
-                    className="edit-action-button"
-                    onClick={requestRematch}
-                  >
-                    {rematchVotePending ? "Vote Sent" : "Play Again"}
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  className="edit-action-button"
-                  onClick={queueFreshMatch}
-                >
-                  New Match
-                </button>
-              </div>
-            ) : null}
-          </section>
-        </div>
-      </div>
+      {(() => {
+        const showModal =
+          uiState.phase !== "combat" || hudState.playerHp <= 0;
+        if (!showModal) {
+          return null;
+        }
+        return (
+          <div className="match-modal-overlay">
+            <section className="match-modal">
+              {uiState.phase === "lobby" ? (
+                <LobbyRoomBody
+                  lobbyState={uiState.lobbyState}
+                  nowMs={nowMs}
+                />
+              ) : uiState.phase === "combat" ? (
+                <>
+                  <div className="match-modal__eyebrow">Eliminated</div>
+                  <h1 className="match-modal__title">Your planet is gone</h1>
+                  <div className="match-modal__actions">
+                    <button
+                      type="button"
+                      className="edit-action-button"
+                      onClick={queueFreshMatch}
+                    >
+                      Rejoin Lobby
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="match-modal__eyebrow">
+                    {phaseCopy.eyebrow}
+                  </div>
+                  <h1 className="match-modal__title">{phaseCopy.title}</h1>
+                  <div className="match-modal__body">{phaseCopy.body}</div>
+                  {uiState.connectionError ? (
+                    <div className="edit-status edit-status--error">
+                      {uiState.connectionError}
+                    </div>
+                  ) : null}
+                  {uiState.phase === "ended" || uiState.phase === "error" ? (
+                    <div className="match-modal__actions">
+                      <button
+                        type="button"
+                        className="edit-action-button"
+                        onClick={queueFreshMatch}
+                      >
+                        New Match
+                      </button>
+                    </div>
+                  ) : null}
+                </>
+              )}
+            </section>
+          </div>
+        );
+      })()}
     </div>
+  );
+}
+
+function LobbyRoomBody({
+  lobbyState,
+  nowMs,
+}: {
+  lobbyState: LobbyStateMsg | null;
+  nowMs: number;
+}) {
+  const playerBySeat = new Map<number, LobbyStateMsg["players"][number]>();
+  for (const player of lobbyState?.players ?? []) {
+    playerBySeat.set(player.seat, player);
+  }
+
+  const remainingSec =
+    lobbyState === null
+      ? null
+      : Math.max(0, Math.ceil((lobbyState.autoStartAtMs - nowMs) / 1000));
+
+  return (
+    <>
+      <div className="match-modal__eyebrow">Lobby</div>
+      <h1 className="match-modal__title">
+        {remainingSec === null
+          ? "Preparing match..."
+          : `Game starts in ${remainingSec}s`}
+      </h1>
+      <ol className="lobby-room__slots">
+        {Array.from({ length: ROOM_CAPACITY }, (_, seat) => {
+          const player = playerBySeat.get(seat);
+          const isHuman = player !== undefined && !player.isBot;
+          const label = isHuman ? player.name : `Bot ${seat + 1}`;
+          return (
+            <li
+              key={seat}
+              className={`lobby-room__slot${
+                isHuman ? " lobby-room__slot--filled" : ""
+              }`}
+            >
+              <span className="lobby-room__slot-index">
+                {String(seat + 1).padStart(2, "0")}
+              </span>
+              <span className="lobby-room__slot-name">{label}</span>
+              <span className="lobby-room__slot-status">
+                {isHuman ? "joined" : "open"}
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+    </>
   );
 }

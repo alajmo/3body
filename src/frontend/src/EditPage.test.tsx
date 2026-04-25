@@ -2,6 +2,7 @@ import {
   CURRENT_GAME_TUNING,
   clampOrbitPatternDistanceScale,
   DEFAULT_GAME_TUNING,
+  sanitizeGameTuning,
 } from "@3body/shared";
 import {
   fireEvent,
@@ -656,7 +657,7 @@ describe("EditPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /Caches/i }));
 
     const badgeSizeInput = await screen.findByLabelText("Badge size");
-    fireEvent.change(badgeSizeInput, { target: { value: "300" } });
+    fireEvent.change(badgeSizeInput, { target: { value: "400" } });
     fireEvent.blur(badgeSizeInput);
 
     await waitFor(() => {
@@ -667,8 +668,69 @@ describe("EditPage", () => {
     const body = JSON.parse(
       String((saveCall?.[1] as RequestInit | undefined)?.body),
     ) as typeof CURRENT_GAME_TUNING;
-    expect(body.visuals.caches.badgeBaseSize).toBe(Math.round(300 / 0.95));
+    expect(body.visuals.caches.badgeBaseSize).toBe(Math.round(400 / 0.95));
     expect(body.visuals.caches.badgeScale).toBe(1);
+  });
+
+  it("saves the cache pickup radius independently from badge size", async () => {
+    mockTuningFetch();
+
+    render(<EditPage />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Caches/i }));
+
+    const pickupRadiusInput = await screen.findByLabelText("Pickup radius");
+    fireEvent.change(pickupRadiusInput, { target: { value: "150" } });
+    fireEvent.blur(pickupRadiusInput);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    const saveCall = fetchMock.mock.calls[1];
+    const body = JSON.parse(
+      String((saveCall?.[1] as RequestInit | undefined)?.body),
+    ) as typeof CURRENT_GAME_TUNING;
+    expect(body.gameplay.cache.pickupRadius).toBe(150);
+    expect(body.visuals.caches.badgeBaseSize).toBe(
+      CURRENT_GAME_TUNING.visuals.caches.badgeBaseSize,
+    );
+    expect(body.visuals.caches.badgeScale).toBe(
+      CURRENT_GAME_TUNING.visuals.caches.badgeScale,
+    );
+  });
+
+  it("saves the maximum rendered cache badge size without backend clamping", async () => {
+    mockTuningFetch();
+
+    render(<EditPage />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Caches/i }));
+
+    const badgeSizeInput = await screen.findByLabelText("Badge size");
+    fireEvent.change(badgeSizeInput, { target: { value: "500" } });
+    fireEvent.blur(badgeSizeInput);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    const saveCall = fetchMock.mock.calls[1];
+    const body = JSON.parse(
+      String((saveCall?.[1] as RequestInit | undefined)?.body),
+    ) as typeof CURRENT_GAME_TUNING;
+    expect(body.visuals.caches.badgeBaseSize).toBe(Math.round(500 / 0.95));
+
+    const sanitized = sanitizeGameTuning(body);
+    expect(Math.round(sanitized.visuals.caches.badgeBaseSize * 0.95)).toBe(500);
   });
 
   it("renders gravity pulse in the abilities editor group", async () => {
@@ -755,23 +817,30 @@ describe("EditPage", () => {
 
     fireEvent.click(getGameplayViewButton());
 
-    const microDamageInput = await screen.findByLabelText(
-      "Micro asteroid damage",
-    );
-    const microRandomizationInput = screen.getByLabelText(
-      "Micro inward drift randomization",
-    );
-    const microSpawnRateInput = screen.getByLabelText("Micro falls per second");
-    const smallDamageInput = screen.getByLabelText("Small asteroid damage");
-    const smallRandomizationInput = screen.getByLabelText(
-      "Small inward drift randomization",
-    );
-    const smallSpawnRateInput = screen.getByLabelText("Small falls per second");
-    const largeDamageInput = screen.getByLabelText("Large asteroid damage");
-    const largeRandomizationInput = screen.getByLabelText(
-      "Large inward drift randomization",
-    );
-    const largeSpawnRateInput = screen.getByLabelText("Large falls per second");
+    const asteroidSectionTitle = await screen.findByText("Asteroid Field");
+    const asteroidSection = asteroidSectionTitle.closest(
+      ".edit-inspector__section",
+    ) as HTMLElement;
+    const asteroidSectionScope = within(asteroidSection);
+    const [microDamageInput, smallDamageInput, largeDamageInput] =
+      asteroidSectionScope.getAllByLabelText("Damage") as [
+        HTMLElement,
+        HTMLElement,
+        HTMLElement,
+      ];
+    const [
+      microRandomizationInput,
+      smallRandomizationInput,
+      largeRandomizationInput,
+    ] = asteroidSectionScope.getAllByLabelText(
+      "Inward drift randomization",
+    ) as [HTMLElement, HTMLElement, HTMLElement];
+    const [microSpawnRateInput, smallSpawnRateInput, largeSpawnRateInput] =
+      asteroidSectionScope.getAllByLabelText("Falls per second") as [
+        HTMLElement,
+        HTMLElement,
+        HTMLElement,
+      ];
 
     expect(microDamageInput).toHaveValue(
       CURRENT_GAME_TUNING.gameplay.arena.asteroidField.micro.damage,

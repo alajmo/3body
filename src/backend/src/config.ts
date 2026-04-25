@@ -72,7 +72,6 @@ export interface AppConfig {
   wsMaxMsgBytes: number;
   maxSocketsPerIp: number;
   handshakesPerIpPerMin: number;
-  createsPerIpPer10m: number;
   joinsPerIpPerMin: number;
   chatBurst: number;
   chatWindowMs: number;
@@ -93,7 +92,7 @@ export const config: AppConfig = {
     0,
     0,
   ),
-  maxRooms: parseIntegerEnv("MAX_ROOMS", 64),
+  maxRooms: parseIntegerEnv("MAX_ROOMS", 7),
   roomIdleTimeoutMs: parseIntegerEnv("ROOM_IDLE_TIMEOUT_MS", 60_000),
   reclaimGraceMs: parseIntegerEnv("RECLAIM_GRACE_MS", 30_000),
   shutdownGraceMs: parseIntegerEnv("SHUTDOWN_GRACE_MS", 10_000),
@@ -101,7 +100,6 @@ export const config: AppConfig = {
   wsMaxMsgBytes: parseIntegerEnv("WS_MAX_MSG_BYTES", 64 * 1024),
   maxSocketsPerIp: parseIntegerEnv("MAX_SOCKETS_PER_IP", 8),
   handshakesPerIpPerMin: parseIntegerEnv("HANDSHAKES_PER_IP_PER_MIN", 30),
-  createsPerIpPer10m: parseIntegerEnv("CREATES_PER_IP_PER_10M", 12),
   joinsPerIpPerMin: parseIntegerEnv("JOINS_PER_IP_PER_MIN", 60),
   chatBurst: parseIntegerEnv("CHAT_BURST", 4),
   chatWindowMs: parseIntegerEnv("CHAT_WINDOW_MS", 5_000),

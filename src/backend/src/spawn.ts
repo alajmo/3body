@@ -5,8 +5,6 @@ import {
   BOOST_SPEC,
   CACHE_RADIUS,
   CACHE_SPEC,
-  CACHE_TANGENTIAL_SPEED_MAX,
-  CACHE_TANGENTIAL_SPEED_MIN,
   type Cache,
   clampOrbitPatternDistanceScale,
   createInitialAmmo,
@@ -18,18 +16,16 @@ import {
   getOrbitGameplaySun,
   getOrbitPatternTrack,
   getOrbitPlanetCircleRadius,
-  getOuterRingMax,
-  getOuterRingMin,
   getShieldLoadCapacity,
   mulberry32,
   NEUTRON_STAR_SPEC,
-  nextFloat,
   PLANET_HP,
   type PlanetPrivateState,
   type PlanetPublic,
   type PlayerId,
   resolveEditorFixedOrbitPatternId,
   rollCacheContents,
+  sampleCacheSpawnKinematics,
   type Sun,
   sampleOrbitPatternTrack,
   scale,
@@ -263,25 +259,15 @@ const createPlanet = (
 };
 
 const createCache = (entityIds: EntityIdSequence, rng: () => number): Cache => {
-  const angle = rng() * Math.PI * 2 + (rng() - 0.5) * 0.24;
-  const radius = nextFloat(rng, getOuterRingMin(), getOuterRingMax());
-  const tangent = fromAngle(angle + (Math.PI / 2) * (rng() < 0.5 ? -1 : 1));
-  const speed = nextFloat(
-    rng,
-    CACHE_TANGENTIAL_SPEED_MIN,
-    CACHE_TANGENTIAL_SPEED_MAX,
-  );
+  const spawn = sampleCacheSpawnKinematics({ arenaRadius: ARENA_RADIUS, rng });
 
   return {
     id: entityIds.nextEntityId(),
     kind: "cache",
     contents: rollCacheContents(rng),
     radius: CACHE_RADIUS,
-    pos: {
-      x: Math.cos(angle) * radius,
-      y: Math.sin(angle) * radius,
-    },
-    vel: scale(tangent, speed),
+    pos: spawn.pos,
+    vel: spawn.vel,
   };
 };
 

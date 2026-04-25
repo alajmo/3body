@@ -22,8 +22,7 @@ export type ProfileToken = string;
 export type ResumeToken = string;
 export type PlayerName = string;
 export type RoomId = string;
-export type RoomKind = "private" | "public";
-export type PlayerRole = "host" | "player" | "spectator";
+export type PlayerRole = "player" | "spectator";
 export type BotDifficulty = "easy" | "normal" | "hard";
 export type AbilitySlot = "q" | "w" | "g";
 export type ErrorCode =
@@ -32,14 +31,12 @@ export type ErrorCode =
   | "server_full"
   | "bad_resume_token"
   | "name_invalid"
-  | "not_host"
   | "phase_invalid"
   | "invalid_action"
   | "invalid_message"
   | "rate_limited";
 
 export type JoinRequest =
-  | { kind: "createRoom" }
   | { kind: "quickGame" }
   | { kind: "joinRoom"; roomId: RoomId };
 
@@ -250,11 +247,6 @@ export interface HelloMsg {
   snapshotVersion?: 1 | 2;
 }
 
-export interface SetBotDifficultyMsg {
-  type: "setBotDifficulty";
-  difficulty: BotDifficulty;
-}
-
 export interface PickArchetypeMsg {
   type: "pickArchetype";
   id: ArchetypeId;
@@ -264,13 +256,10 @@ export interface ReadyToggleMsg {
   type: "readyToggle";
 }
 
-export interface HostStartMsg {
-  type: "hostStart";
-}
-
 export interface InputMsg {
   type: "input";
   mouseDir: Vec2;
+  boostHeld?: boolean;
   clientTick: number;
 }
 
@@ -316,10 +305,8 @@ export interface VoteRematchMsg {
 
 export type ClientMsg =
   | HelloMsg
-  | SetBotDifficultyMsg
   | PickArchetypeMsg
   | ReadyToggleMsg
-  | HostStartMsg
   | InputMsg
   | AckSnapshotMsg
   | PingMsg
@@ -334,7 +321,6 @@ export interface WelcomeMsg {
   playerId: PlayerId;
   profileToken: ProfileToken;
   roomId: RoomId;
-  roomKind: RoomKind;
   resumeToken: ResumeToken;
   role: PlayerRole;
   roster: RoomRosterEntry[];
@@ -356,21 +342,14 @@ export interface PongMsg {
 export interface LobbyStateMsg {
   type: "lobbyState";
   players: LobbyPlayerSummary[];
-  hostPlayerId?: PlayerId;
   autoStartAtMs: number;
   botDifficulty: BotDifficulty;
-  roomKind: RoomKind;
 }
 
 export interface PickStateMsg {
   type: "pickState";
   picks: PickEntry[];
   deadlineAtMs: number;
-}
-
-export interface CountdownMsg {
-  type: "countdown";
-  endsAtMs: number;
 }
 
 export interface FullSnapshotMsg {
@@ -430,20 +409,26 @@ export interface MatchEndMsg {
   rematchDeadlineAtMs: number;
 }
 
+export interface WaitlistStateMsg {
+  type: "waitlistState";
+  position: number;
+  total: number;
+}
+
 export type ServerMsg =
   | WelcomeMsg
   | ErrorMsg
   | PongMsg
   | LobbyStateMsg
   | PickStateMsg
-  | CountdownMsg
   | FullSnapshotMsg
   | DeltaSnapshotMsg
   | SnapshotV2Msg
   | EventMsg
   | ChatMessageMsg
   | RematchStateMsg
-  | MatchEndMsg;
+  | MatchEndMsg
+  | WaitlistStateMsg;
 
 export const PLAYER_NAME_MIN_LENGTH = 1;
 export const PLAYER_NAME_MAX_LENGTH = 16;

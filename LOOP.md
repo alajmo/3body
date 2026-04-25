@@ -83,7 +83,7 @@ It is not the authority on gameplay outcomes.
 
 ## Local Sandbox Loop
 
-The `/sandbox` route is different. It runs a local simulation on the frontend.
+The `/offline` route is different. It runs a local simulation on the frontend.
 
 - `src/frontend/src/game/createGameViewport.ts`
   Owns the local sandbox viewport render loop.

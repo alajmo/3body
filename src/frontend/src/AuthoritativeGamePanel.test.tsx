@@ -108,9 +108,6 @@ const getSentMessage = (socket: FakeWebSocket, index: number) => {
   return decodeProtocolMessage(payload);
 };
 
-const getLastSentMessage = (socket: FakeWebSocket) =>
-  getSentMessage(socket, socket.sent.length - 1);
-
 describe("AuthoritativeGamePanel", () => {
   beforeEach(() => {
     FakeWebSocket.instances = [];
@@ -133,7 +130,7 @@ describe("AuthoritativeGamePanel", () => {
     vi.unstubAllGlobals();
   });
 
-  it("makes the post-match card interactive and sends rematch votes", async () => {
+  it("renders the post-match card inside the match modal", async () => {
     render(<AuthoritativeGamePanel />);
 
     const socket = FakeWebSocket.instances[0];
@@ -160,19 +157,13 @@ describe("AuthoritativeGamePanel", () => {
       winnerId: "player-1",
     });
 
-    const playAgainButton = await screen.findByRole("button", {
-      name: /play again/i,
+    const newMatchButton = await screen.findByRole("button", {
+      name: /new match/i,
     });
-    expect(playAgainButton.closest(".page-copy")).toHaveStyle({
-      pointerEvents: "auto",
-    });
-
-    fireEvent.click(playAgainButton);
-
-    expect(getLastSentMessage(socket!)).toEqual({
-      type: "voteRematch",
-      yes: true,
-    });
+    expect(newMatchButton.closest(".match-modal")).not.toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /play again/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("starts a fresh connection when new match is clicked", async () => {
@@ -209,6 +200,56 @@ describe("AuthoritativeGamePanel", () => {
     });
     expect(window.localStorage.getItem("3body.resumeToken")).toBeNull();
     expect(window.localStorage.getItem("3body.roomId")).toBeNull();
+  });
+
+  it("keeps the room session for reconnects after match end", async () => {
+    vi.useFakeTimers();
+
+    render(<AuthoritativeGamePanel />);
+
+    const firstSocket = FakeWebSocket.instances[0];
+    expect(firstSocket).toBeDefined();
+    firstSocket!.open();
+    firstSocket!.receive({
+      playerId: "player-1",
+      profileToken: "profile-token",
+      resumeToken: "resume-token",
+      role: "player",
+      roomId: "room-1",
+      roster: [],
+      type: "welcome",
+    });
+    firstSocket!.receive({
+      type: "matchEnd",
+      winnerId: "player-1",
+    });
+
+    expect(window.localStorage.getItem("3body.resumeToken")).toBe(
+      "resume-token",
+    );
+    expect(window.localStorage.getItem("3body.roomId")).toBe("room-1");
+
+    firstSocket!.close(1001, "network");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    const secondSocket = FakeWebSocket.instances[1]!;
+    secondSocket.open();
+
+    expect(getSentMessage(secondSocket, 0)).toEqual(
+      expect.objectContaining({
+        join: {
+          kind: "joinRoom",
+          roomId: "room-1",
+        },
+        resumeToken: "resume-token",
+        snapshotVersion: 2,
+        type: "hello",
+      }),
+    );
   });
 
   it("starts a fresh quick match when the stored room no longer exists", async () => {
@@ -357,7 +398,7 @@ describe("AuthoritativeGamePanel", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("Combat")).toBeInTheDocument();
+      expect(document.querySelector('[data-phase="combat"]')).not.toBeNull();
     });
     const renderCountAfterCombatTransition = combatHudSpy.mock.calls.length;
 

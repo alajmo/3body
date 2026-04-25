@@ -34,7 +34,7 @@
       "starTwinkleAmount": 2,
       "starTwinkleEnabled": true
     },
-    "displayMode": "default",
+    "displayMode": "vhs",
     "planets": {
       "archetypes": {
         "terra": {
@@ -409,7 +409,7 @@
       "wildcardColor": "#ffd37a"
     },
     "caches": {
-      "badgeBaseSize": 400,
+      "badgeBaseSize": 500,
       "badgeScale": 1
     },
     "orbits": {
@@ -515,17 +515,17 @@
         "large": {
           "damage": 5,
           "randomization": 0.2,
-          "spawnRatePerSec": 3
+          "spawnRatePerSec": 1
         },
         "micro": {
           "damage": 1,
           "randomization": 0.2,
-          "spawnRatePerSec": 2.8
+          "spawnRatePerSec": 2
         },
         "small": {
           "damage": 2,
           "randomization": 1,
-          "spawnRatePerSec": 0.2
+          "spawnRatePerSec": 1
         }
       },
       "instantDeath": true,
@@ -535,23 +535,23 @@
       "killRadius": 150,
       "mass": 50000000,
       "rampSec": 30,
-      "spawnSec": 60
+      "spawnSec": 30
     },
     "camera": {
       "gameplayCameraWorldHeight": 10000,
       "previewCameraWorldHeight": 7600
     },
     "neutronStars": {
-      "count": 1,
-      "minMassKg": 4000000,
+      "count": 2,
+      "minMassKg": 3000000,
       "maxMassKg": 4000000,
       "minSize": 400,
-      "maxSize": 400,
+      "maxSize": 500,
       "randomizePositionInsidePlayableCircle": false
     },
     "orbits": {
       "planetStartSpeedScale": 1,
-      "starPatternDistanceScale": 7.20345074544651,
+      "starPatternDistanceScale": 9,
       "starMotion": {
         "mode": "fixedPattern",
         "patternId": "clover-3",
@@ -720,17 +720,19 @@
       },
       "boost": {
         "charges": 1,
-        "cooldownSec": 0.2,
-        "magnitude": 280
+        "cooldownSec": 3,
+        "depleteSec": 3,
+        "magnitude": 2000
       },
       "gravityPulse": {
-        "force": 1800,
+        "force": 3000,
         "radius": 2000
       }
     },
     "cache": {
-      "count": 12,
-      "respawnSec": 15,
+      "count": 15,
+      "pickupRadius": 200,
+      "respawnSec": 10,
       "wildcardChance": 0.25
     },
     "timers": {

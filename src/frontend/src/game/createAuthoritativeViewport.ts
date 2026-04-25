@@ -192,7 +192,7 @@ export function createAuthoritativeViewport(
   let lastInputSentAtMs = 0;
   let lastShieldAimSentAtMs = 0;
   let lastClientTick = 0;
-  let lastBoostAbilitySentAtSec = Number.NEGATIVE_INFINITY;
+  let lastBoostHeldSent = false;
   const lastFireSentAtTickByKind: Record<RocketKind, number> = {
     heavy: Number.NEGATIVE_INFINITY,
     light: Number.NEGATIVE_INFINITY,
@@ -332,9 +332,9 @@ export function createAuthoritativeViewport(
       adapter: runtimeAdapter,
       sceneRemoveSafe,
     });
-    lastBoostAbilitySentAtSec = Number.NEGATIVE_INFINITY;
     seekerLockTargetId = null;
     seekerLockStartedAtSec = null;
+    lastBoostHeldSent = false;
     immediateCannonFlashState = null;
     gravityPulseFeedbackState = null;
     immediateShieldFeedbackState = null;
@@ -535,7 +535,7 @@ export function createAuthoritativeViewport(
               previousFrameTimeSec = null;
               lastInputSentAtMs = 0;
               lastShieldAimSentAtMs = 0;
-              lastBoostAbilitySentAtSec = Number.NEGATIVE_INFINITY;
+              lastBoostHeldSent = false;
               seekerLockTargetId = null;
               seekerLockStartedAtSec = null;
               if (active) {
@@ -779,7 +779,7 @@ export function createAuthoritativeViewport(
                 connectionState: runtime.connectionState,
                 inputSendIntervalMs: INPUT_SEND_INTERVAL_MS,
                 inputState: viewportInputController.state.inputState,
-                lastBoostAbilitySentAtSec,
+                lastBoostHeldSent,
                 lastInputSentAtMs,
                 lastShieldAimSentAtMs,
                 nowSec,
@@ -805,7 +805,9 @@ export function createAuthoritativeViewport(
 
               if (combatControl.sendInput && combatControl.aimDir !== null) {
                 lastInputSentAtMs = timeMs;
+                lastBoostHeldSent = combatControl.boostHeld;
                 options.dispatchMessage({
+                  boostHeld: combatControl.boostHeld || undefined,
                   clientTick: getAuthoritativeClientTick(snapshot, timeMs),
                   mouseDir: combatControl.aimDir,
                   type: "input",
@@ -885,10 +887,6 @@ export function createAuthoritativeViewport(
                     slot: abilitySlot,
                     type: "ability",
                   });
-
-                  if (abilitySlot === "w") {
-                    lastBoostAbilitySentAtSec = nowSec;
-                  }
                   ({
                     gravityPulseFeedbackState,
                     immediateShieldFeedbackState,

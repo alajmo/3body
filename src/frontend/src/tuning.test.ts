@@ -150,6 +150,39 @@ describe("sanitizeGameTuning", () => {
     expect(nextTuning.visuals.rockets.light.scale).toBe(3.2);
   });
 
+  it("preserves cache badge base size needed for a 500px rendered badge", () => {
+    const nextTuning = sanitizeGameTuning({
+      ...CURRENT_GAME_TUNING,
+      visuals: {
+        ...CURRENT_GAME_TUNING.visuals,
+        caches: {
+          ...CURRENT_GAME_TUNING.visuals.caches,
+          badgeBaseSize: Math.round(500 / 0.95),
+          badgeScale: 1,
+        },
+      },
+    });
+
+    expect(nextTuning.visuals.caches.badgeBaseSize).toBe(
+      Math.round(500 / 0.95),
+    );
+  });
+
+  it("preserves cache pickup radius in gameplay tuning", () => {
+    const nextTuning = sanitizeGameTuning({
+      ...CURRENT_GAME_TUNING,
+      gameplay: {
+        ...CURRENT_GAME_TUNING.gameplay,
+        cache: {
+          ...CURRENT_GAME_TUNING.gameplay.cache,
+          pickupRadius: 180,
+        },
+      },
+    });
+
+    expect(nextTuning.gameplay.cache.pickupRadius).toBe(180);
+  });
+
   it("preserves seeker lock seconds in gameplay tuning", () => {
     const nextTuning = sanitizeGameTuning({
       ...CURRENT_GAME_TUNING,

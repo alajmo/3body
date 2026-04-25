@@ -1,4 +1,5 @@
 import type { PlayerId, RoomRosterEntry } from "@3body/shared";
+import { getPlanetNameForSeat } from "./planetNames";
 
 const BOT_ID_RE = /^bot:(?:.+:)?(\d+)$/;
 
@@ -8,7 +9,7 @@ export const resolveAuthoritativePlayerLabel = (
 ): string => {
   const exactMatch = roomRoster.find((entry) => entry.playerId === playerId);
   if (exactMatch) {
-    return exactMatch.name;
+    return getPlanetNameForSeat(exactMatch.seat);
   }
 
   const botSuffixMatch = BOT_ID_RE.exec(playerId);
@@ -21,10 +22,10 @@ export const resolveAuthoritativePlayerLabel = (
     (entry) => entry.isBot && entry.playerId.endsWith(`:${seat}`),
   );
   if (rosterBotMatch) {
-    return rosterBotMatch.name;
+    return getPlanetNameForSeat(rosterBotMatch.seat);
   }
 
-  return Number.isFinite(seat) ? `Bot ${seat + 1}` : playerId;
+  return Number.isFinite(seat) ? getPlanetNameForSeat(seat) : playerId;
 };
 
 export const formatAuthoritativeWinnerLabel = (

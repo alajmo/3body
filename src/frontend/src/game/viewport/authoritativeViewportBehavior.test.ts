@@ -117,7 +117,7 @@ describe("authoritativeViewportBehavior", () => {
         aimWorld: { x: 96, y: 0 },
         selectedRocketKind: "seeker",
       },
-      lastBoostAbilitySentAtSec: Number.NEGATIVE_INFINITY,
+      lastBoostHeldSent: false,
       lastInputSentAtMs: 0,
       lastShieldAimSentAtMs: 0,
       nowSec: ROCKET_SPECS.seeker.lockSec + 0.2,
@@ -159,7 +159,8 @@ describe("authoritativeViewportBehavior", () => {
     expect(resolution.fireTargetId).toBe(targetPlanet.id);
     expect(resolution.sendInput).toBe(true);
     expect(resolution.sendShieldAim).toBe(false);
-    expect(resolution.queuedAbilitySlots).toEqual(["w", "g"]);
+    expect(resolution.boostHeld).toBe(true);
+    expect(resolution.queuedAbilitySlots).toEqual(["g"]);
   });
 
   it("switches to shield aim throttling when the shield is active", () => {
@@ -175,7 +176,7 @@ describe("authoritativeViewportBehavior", () => {
         aimWorld: { x: 30, y: 40 },
         selectedRocketKind: "light",
       },
-      lastBoostAbilitySentAtSec: Number.NEGATIVE_INFINITY,
+      lastBoostHeldSent: false,
       lastInputSentAtMs: 0,
       lastShieldAimSentAtMs: 0,
       nowSec: 1,
@@ -215,6 +216,116 @@ describe("authoritativeViewportBehavior", () => {
     expect(resolution.sendShieldAim).toBe(true);
   });
 
+  it("still sends held boost changes while the shield is active", () => {
+    const playerPlanet = createPlanet({
+      shieldActive: true,
+      shieldLoad: 2,
+    });
+
+    const resolution = resolveAuthoritativeCombatControlStep({
+      connectionState: "connected",
+      inputSendIntervalMs,
+      inputState: {
+        aimWorld: { x: 30, y: 40 },
+        selectedRocketKind: "light",
+      },
+      lastBoostHeldSent: false,
+      lastInputSentAtMs: 0,
+      lastShieldAimSentAtMs: 0,
+      nowSec: 1,
+      pendingAbilityRequests: {
+        boost: true,
+        gravityPulse: false,
+        shield: false,
+      },
+      phase: "combat",
+      planets: [playerPlanet],
+      playerId: playerPlanet.playerId,
+      playerPlanet,
+      previousSeekerLockStartedAtSec: null,
+      previousSeekerLockTargetId: null,
+      self: createSelf(),
+      shieldAimSendIntervalMs: inputSendIntervalMs,
+      timeMs: 1,
+    });
+
+    expect(resolution.shieldActive).toBe(true);
+    expect(resolution.boostHeld).toBe(true);
+    expect(resolution.sendInput).toBe(true);
+  });
+
+  it("keeps boost held at empty meter so the server waits for release before recharge", () => {
+    const playerPlanet = createPlanet();
+
+    const resolution = resolveAuthoritativeCombatControlStep({
+      connectionState: "connected",
+      inputSendIntervalMs,
+      inputState: {
+        aimWorld: { x: 30, y: 0 },
+        selectedRocketKind: "light",
+      },
+      lastBoostHeldSent: false,
+      lastInputSentAtMs: 1000,
+      lastShieldAimSentAtMs: 0,
+      nowSec: 1,
+      pendingAbilityRequests: {
+        boost: true,
+        gravityPulse: false,
+        shield: false,
+      },
+      phase: "combat",
+      planets: [playerPlanet],
+      playerId: playerPlanet.playerId,
+      playerPlanet,
+      previousSeekerLockStartedAtSec: null,
+      previousSeekerLockTargetId: null,
+      self: createSelf({
+        boostCharges: 0,
+      }),
+      shieldAimSendIntervalMs: inputSendIntervalMs,
+      timeMs: 1000,
+    });
+
+    expect(resolution.boostAvailable).toBe(false);
+    expect(resolution.boostHeld).toBe(true);
+    expect(resolution.sendInput).toBe(true);
+    expect(resolution.queuedAbilitySlots).toEqual([]);
+  });
+
+  it("sends input immediately when held boost is released", () => {
+    const playerPlanet = createPlanet();
+
+    const resolution = resolveAuthoritativeCombatControlStep({
+      connectionState: "connected",
+      inputSendIntervalMs,
+      inputState: {
+        aimWorld: { x: 30, y: 0 },
+        selectedRocketKind: "light",
+      },
+      lastBoostHeldSent: true,
+      lastInputSentAtMs: 1000,
+      lastShieldAimSentAtMs: 0,
+      nowSec: 1,
+      pendingAbilityRequests: {
+        boost: false,
+        gravityPulse: false,
+        shield: false,
+      },
+      phase: "combat",
+      planets: [playerPlanet],
+      playerId: playerPlanet.playerId,
+      playerPlanet,
+      previousSeekerLockStartedAtSec: null,
+      previousSeekerLockTargetId: null,
+      self: createSelf(),
+      shieldAimSendIntervalMs: inputSendIntervalMs,
+      timeMs: 1000,
+    });
+
+    expect(resolution.boostHeld).toBe(false);
+    expect(resolution.sendInput).toBe(true);
+  });
+
   it("disables authoritative dispatch when self state is unavailable", () => {
     const playerPlanet = createPlanet();
 
@@ -225,7 +336,7 @@ describe("authoritativeViewportBehavior", () => {
         aimWorld: { x: 10, y: 0 },
         selectedRocketKind: "light",
       },
-      lastBoostAbilitySentAtSec: Number.NEGATIVE_INFINITY,
+      lastBoostHeldSent: false,
       lastInputSentAtMs: 0,
       lastShieldAimSentAtMs: 0,
       nowSec: 1,

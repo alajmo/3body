@@ -11,8 +11,6 @@ import {
   CACHE_GRAVITY_SCALE,
   CACHE_RADIUS,
   CACHE_SPEC,
-  CACHE_TANGENTIAL_SPEED_MAX,
-  CACHE_TANGENTIAL_SPEED_MIN,
   type Cache,
   type CacheContents,
   clamp,
@@ -34,10 +32,9 @@ import {
   getBoundaryAsteroidExplosionPieces,
   getBoundaryAsteroidExplosionSpeedVariance,
   getBoundaryAsteroidImpactRadius,
-  getOuterRingMax,
-  getOuterRingMin,
   getUmbraDragDurationTicks,
   getUmbraDragStepMultiplier,
+  hasSweptCircleOverlap,
   hasCrossedBlackHoleHorizon,
   len,
   type NeutronStar,
@@ -63,8 +60,10 @@ import {
   type SnapshotV2Msg,
   type Sun,
   sampleBoundaryAsteroidSpawnCount,
+  sampleCacheSpawnKinematics,
   scale,
   shouldDespawnBoundaryAsteroid,
+  SIM_HZ,
   stepBody,
   stepBodyWithGravityScale,
   stepNeutronStars,
@@ -94,7 +93,7 @@ const BOUNDARY_ASTEROID_TIERS = ["micro", "small", "large"] as const;
 const LAG_COMP_MAX_REWIND_MS = 100;
 const ROCKET_OWNER_COLLISION_GRACE_MS = 75;
 const NEAR_MISS_DISTANCE = 48;
-const AUTHORITATIVE_BOT_ACTIONS_ENABLED = false;
+const AUTHORITATIVE_BOT_ACTIONS_ENABLED = true;
 
 interface RoomTickBroadcast {
   emitDeltaSnapshot: boolean;
@@ -116,8 +115,29 @@ const getAbilityTicks = (durationSec: number, tickHz: number): number =>
 const getBoostChargeCapacity = (archetypeId: ArchetypeId): number =>
   Math.max(1, BOOST_SPEC.charges + ARCHETYPES[archetypeId].boostChargeBonus);
 
-const getBoostRechargeTicks = (tickHz: number): number =>
-  getAbilityTicks(BOOST_SPEC.cooldownSec, tickHz);
+const getBoostDrainDurationSec = (): number =>
+  Math.max(1 / SIM_HZ, BOOST_SPEC.depleteSec);
+
+const getBoostDrainAmount = (
+  archetypeId: ArchetypeId,
+  tickHz: number,
+): number =>
+  getBoostChargeCapacity(archetypeId) / getBoostDrainDurationSec() / tickHz;
+
+const getBoostForceDurationSec = (
+  archetypeId: ArchetypeId,
+  boostLoadBurned: number,
+): number =>
+  boostLoadBurned /
+  (getBoostChargeCapacity(archetypeId) / getBoostDrainDurationSec());
+
+const getBoostRechargeAmount = (
+  archetypeId: ArchetypeId,
+  tickHz: number,
+): number =>
+  BOOST_SPEC.cooldownSec <= 0
+    ? Number.POSITIVE_INFINITY
+    : getBoostChargeCapacity(archetypeId) / (BOOST_SPEC.cooldownSec * tickHz);
 
 const getCacheRespawnTicks = (tickHz: number): number =>
   getAbilityTicks(CACHE_SPEC.respawnSec, tickHz);
@@ -323,28 +343,16 @@ const spawnBoundaryAsteroidDebris = (
   return debris;
 };
 
-const createOuterRingCache = (room: Room): Cache => {
-  const angle = room.rng() * Math.PI * 2 + (room.rng() - 0.5) * 0.24;
+const createCache = (room: Room): Cache => {
   const arenaRadius = room.world?.arenaRadius ?? undefined;
-  const ringMin = getOuterRingMin(arenaRadius);
-  const ringMax = getOuterRingMax(arenaRadius);
-  const radius = ringMin + (ringMax - ringMin) * room.rng();
-  const tangentialDir = fromAngle(
-    angle + (Math.PI / 2) * (room.rng() < 0.5 ? -1 : 1),
-  );
-  const driftSpeed =
-    CACHE_TANGENTIAL_SPEED_MIN +
-    (CACHE_TANGENTIAL_SPEED_MAX - CACHE_TANGENTIAL_SPEED_MIN) * room.rng();
+  const spawn = sampleCacheSpawnKinematics({ arenaRadius, rng: room.rng });
 
   return {
     id: room.entityIds.nextEntityId(),
     kind: "cache",
     contents: rollCacheContents(room.rng),
-    pos: {
-      x: Math.cos(angle) * radius,
-      y: Math.sin(angle) * radius,
-    },
-    vel: scale(tangentialDir, driftSpeed),
+    pos: spawn.pos,
+    vel: spawn.vel,
     radius: CACHE_RADIUS,
   };
 };
@@ -580,32 +588,24 @@ const markPlayerDeath = (
   room.privateStates.delete(playerId);
 };
 
-const refreshBoostCharges = (
+const refreshBoostLoad = (
   privateState: PlanetPrivateState,
   archetypeId: ArchetypeId,
-  tick: number,
   tickHz: number,
 ): void => {
-  const maxBoostCharges = getBoostChargeCapacity(archetypeId);
-  if (privateState.boostCharges >= maxBoostCharges) {
+  const maxBoostLoad = getBoostChargeCapacity(archetypeId);
+  if (privateState.boostCharges >= maxBoostLoad) {
+    privateState.boostCharges = maxBoostLoad;
     privateState.cooldowns.nextBoostChargeAtTick = undefined;
     return;
   }
 
-  while (
-    privateState.cooldowns.nextBoostChargeAtTick !== undefined &&
-    privateState.cooldowns.nextBoostChargeAtTick <= tick
-  ) {
-    privateState.boostCharges = Math.min(
-      maxBoostCharges,
-      privateState.boostCharges + 1,
-    );
-    privateState.cooldowns.nextBoostChargeAtTick =
-      privateState.boostCharges >= maxBoostCharges
-        ? undefined
-        : privateState.cooldowns.nextBoostChargeAtTick +
-          getBoostRechargeTicks(tickHz);
-  }
+  privateState.boostCharges = Math.min(
+    maxBoostLoad,
+    privateState.boostCharges + getBoostRechargeAmount(archetypeId, tickHz),
+  );
+  privateState.cooldowns.nextBoostChargeAtTick =
+    privateState.boostCharges >= maxBoostLoad ? undefined : 0;
 };
 
 const spawnRocket = (
@@ -791,7 +791,6 @@ const applyAbilityMessage = (
   playerId: PlayerId,
   slot: "q" | "w" | "g",
   aimDir: Vec2 | undefined,
-  tickHz: number,
 ): void => {
   if (!room.world) {
     return;
@@ -848,36 +847,12 @@ const applyAbilityMessage = (
     }
 
     case "w": {
-      const maxBoostCharges = getBoostChargeCapacity(planet.archetype);
       if (privateState.boostCharges <= 0) {
         return;
       }
 
-      room.world.planets[planetIndex] = {
-        ...planet,
-        vel: add(
-          planet.vel,
-          scale(
-            resolvedAimDir,
-            BOOST_SPEC.magnitude *
-              ARCHETYPES[planet.archetype].boostMagnitudeMultiplier,
-          ),
-        ),
-      };
-      privateState.boostCharges -= 1;
-      if (
-        privateState.boostCharges < maxBoostCharges &&
-        privateState.cooldowns.nextBoostChargeAtTick === undefined
-      ) {
-        privateState.cooldowns.nextBoostChargeAtTick =
-          room.tick + getBoostRechargeTicks(tickHz);
-      }
-      room.queueEvent({
-        kind: "boost",
-        tick: room.tick,
-        playerId,
-        planetId: planet.id,
-      });
+      intent.mouseDir = { ...resolvedAimDir };
+      intent.boostHeld = true;
       return;
     }
 
@@ -1006,6 +981,7 @@ const applyQueuedCombatMessages = (room: Room, config: AppConfig): void => {
         }
         intent.lastInputClientTick = message.clientTick;
         intent.mouseDir = normalizeDir(message.mouseDir, intent.mouseDir);
+        intent.boostHeld = message.boostHeld === true;
         break;
 
       case "shieldAim": {
@@ -1045,7 +1021,6 @@ const applyQueuedCombatMessages = (room: Room, config: AppConfig): void => {
           message.playerId,
           message.slot,
           message.aimDir,
-          config.tickHz,
         );
         break;
     }
@@ -1101,6 +1076,8 @@ const stepPlanets = (
   const neutronStars = room.world.neutronStars;
   const dragStepMultiplier = getUmbraDragStepMultiplier(config.tickHz);
   return room.world.planets.map((planet) => {
+    const privateState = room.privateStates.get(planet.playerId);
+    const intent = room.intentFor(planet.playerId);
     const dragActive =
       planet.debuffs.dragUntilTick !== undefined &&
       planet.debuffs.dragUntilTick > nextTick;
@@ -1109,10 +1086,58 @@ const stepPlanets = (
       planet.debuffs.dragUntilTick <= nextTick
         ? {}
         : planet.debuffs;
+    const boostActive =
+      privateState !== undefined &&
+      intent.boostHeld &&
+      privateState.boostCharges > 0;
+    const boostStarted = boostActive && !intent.boostActive;
+    const boostLoadBeforeStep = privateState?.boostCharges ?? 0;
+    const boostLoadBurned =
+      boostActive && privateState !== undefined
+        ? Math.min(
+            boostLoadBeforeStep,
+            getBoostDrainAmount(planet.archetype, config.tickHz),
+          )
+        : 0;
+    const boostLoadAfterStep =
+      privateState === undefined
+        ? 0
+        : Math.max(0, boostLoadBeforeStep - boostLoadBurned);
+    if (privateState !== undefined) {
+      privateState.boostCharges = boostLoadAfterStep;
+      privateState.cooldowns.nextBoostChargeAtTick =
+        boostLoadAfterStep >= getBoostChargeCapacity(planet.archetype)
+          ? undefined
+          : 0;
+    }
+    if (boostLoadBurned > 0 && boostStarted) {
+      room.queueEvent({
+        kind: "boost",
+        tick: nextTick,
+        playerId: planet.playerId,
+        planetId: planet.id,
+      });
+    }
+    intent.boostActive = boostActive && boostLoadAfterStep > 0;
     const stepped = stepBody(
       {
         ...planet,
         debuffs: normalizedDebuffs,
+        vel:
+          boostLoadBurned > 0
+            ? add(
+                planet.vel,
+                scale(
+                  intent.mouseDir,
+                  BOOST_SPEC.magnitude *
+                    getBoostForceDurationSec(
+                      planet.archetype,
+                      boostLoadBurned,
+                    ) *
+                    ARCHETYPES[planet.archetype].boostMagnitudeMultiplier,
+                ),
+              )
+            : planet.vel,
       },
       nextSuns,
       1 / config.tickHz,
@@ -1345,7 +1370,9 @@ const stepCaches = (
   const dtSec = 1 / config.tickHz;
   return room.world.caches.map((cache) =>
     stepBodyWithGravityScale(
-      cache,
+      cache.radius === CACHE_RADIUS
+        ? cache
+        : { ...cache, radius: CACHE_RADIUS },
       suns,
       dtSec,
       CACHE_GRAVITY_SCALE,
@@ -1785,6 +1812,8 @@ const applyCacheCollisions = (
   room: Room,
   planets: PlanetPublic[],
   caches: Cache[],
+  previousPlanetsById: ReadonlyMap<number, Pick<PlanetPublic, "pos">>,
+  previousCachesById: ReadonlyMap<number, Pick<Cache, "pos">>,
   suns: readonly Sun[],
   blackHole: BlackHole | undefined,
   nextTick: number,
@@ -1812,8 +1841,14 @@ const applyCacheCollisions = (
       continue;
     }
 
-    const pickupPlanetIndex = planets.findIndex(
-      (planet) => dist(cache.pos, planet.pos) <= cache.radius + planet.radius,
+    const pickupPlanetIndex = planets.findIndex((planet) =>
+      hasSweptCircleOverlap({
+        currentA: cache.pos,
+        currentB: planet.pos,
+        previousA: previousCachesById.get(cache.id)?.pos,
+        previousB: previousPlanetsById.get(planet.id)?.pos,
+        radius: cache.radius + planet.radius,
+      }),
     );
     if (pickupPlanetIndex >= 0) {
       const planet = planets[pickupPlanetIndex]!;
@@ -1842,7 +1877,7 @@ const applyCacheCollisions = (
     remainingCaches.length < CACHE_SPEC.count
   ) {
     room.cacheRespawnAtTicks.shift();
-    remainingCaches.push(createOuterRingCache(room));
+    remainingCaches.push(createCache(room));
   }
 
   return remainingCaches;
@@ -1868,12 +1903,10 @@ const applyCooldownsAndRegen = (
       continue;
     }
 
-    refreshBoostCharges(
-      privateState,
-      planet.archetype,
-      nextTick,
-      config.tickHz,
-    );
+    const intent = room.intentFor(planet.playerId);
+    if (!intent.boostHeld && !intent.boostActive) {
+      refreshBoostLoad(privateState, planet.archetype, config.tickHz);
+    }
 
     if (privateState.cooldowns.heavyReloadUntilTick <= nextTick) {
       privateState.cooldowns.heavyReloadUntilTick = 0;
@@ -2004,6 +2037,12 @@ const updateWorld = (room: Room, config: AppConfig): void => {
     dtSec,
     survivingSuns,
   );
+  const previousPlanetsById = new Map(
+    room.world.planets.map((planet) => [planet.id, planet]),
+  );
+  const previousCachesById = new Map(
+    room.world.caches.map((cache) => [cache.id, cache]),
+  );
 
   let nextPlanets = stepPlanets(
     room,
@@ -2068,6 +2107,8 @@ const updateWorld = (room: Room, config: AppConfig): void => {
     room,
     rocketCollisionState.planets,
     rocketCollisionState.caches,
+    previousPlanetsById,
+    previousCachesById,
     survivingSuns,
     blackHole,
     nextTick,
@@ -2086,8 +2127,6 @@ const updateWorld = (room: Room, config: AppConfig): void => {
     tickHz: config.tickHz,
   });
 
-  applyCooldownsAndRegen(room, nextTick, config);
-
   room.world = {
     ...room.world,
     blackHole,
@@ -2098,6 +2137,7 @@ const updateWorld = (room: Room, config: AppConfig): void => {
     caches: survivingCaches,
     debris: [...boundaryAsteroidState.debris, ...debris],
   };
+  applyCooldownsAndRegen(room, nextTick, config);
   room.tick = nextTick;
   room.recordPlanetPositions(lagCompHistoryEntries(config.tickHz));
   room.recordSnapshotState(config.snapshotHistoryTicks);

@@ -2,7 +2,6 @@ import {
   type AbilityMsg,
   ARCHETYPE_IDS,
   type ArchetypeId,
-  type BotDifficulty,
   type ChatMsg,
   decodeProtocolMessage,
   type ErrorCode,
@@ -86,7 +85,6 @@ const isJoinRequest = (value: unknown): value is JoinRequest => {
   }
 
   switch (value.kind) {
-    case "createRoom":
     case "quickGame":
       return true;
     case "joinRoom":
@@ -118,6 +116,7 @@ const isInputMsg = (value: unknown): value is InputMsg =>
   isRecord(value) &&
   value.type === "input" &&
   isVec2(value.mouseDir) &&
+  (value.boostHeld === undefined || typeof value.boostHeld === "boolean") &&
   isFiniteNumber(value.clientTick);
 
 const isFireRocketMsg = (value: unknown): value is FireRocketMsg =>
@@ -153,9 +152,6 @@ const isVoteRematchMsg = (value: unknown): value is VoteRematchMsg =>
 
 const isChatMsg = (value: unknown): value is ChatMsg =>
   isRecord(value) && value.type === "chat" && typeof value.text === "string";
-
-const isBotDifficulty = (value: unknown): value is BotDifficulty =>
-  value === "easy" || value === "normal" || value === "hard";
 
 const isArchetypeId = (value: unknown): value is ArchetypeId =>
   typeof value === "string" && ARCHETYPE_IDS.includes(value as ArchetypeId);
@@ -226,6 +222,10 @@ export class Connection {
     this.resumeToken = session.resumeToken;
     this.roomId = session.roomId;
     this.role = session.role;
+  }
+
+  markHelloHandled(): void {
+    this.#helloHandled = true;
   }
 
   clearRoomSession(): void {
@@ -567,31 +567,6 @@ export class Connection {
           return;
         }
         this.service.handleReadyToggle(this);
-        return;
-
-      case "hostStart":
-        if (
-          !this.enforceRateLimit("meta", "room_action", "Too many room actions")
-        ) {
-          return;
-        }
-        this.service.handleHostStart(this);
-        return;
-
-      case "setBotDifficulty":
-        if (!isBotDifficulty(parsed.difficulty)) {
-          this.rejectInvalidMessage(
-            "Invalid bot difficulty",
-            "invalid_bot_difficulty",
-          );
-          return;
-        }
-        if (
-          !this.enforceRateLimit("meta", "room_action", "Too many room actions")
-        ) {
-          return;
-        }
-        this.service.handleSetBotDifficulty(this, parsed.difficulty);
         return;
 
       case "pickArchetype":

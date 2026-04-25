@@ -8,7 +8,9 @@ browser URL
    v
 App.tsx
    |
-   +--> "/" -----------------------> NetworkGamePage
+   +--> "/" -----------------------> PlayMenuPage
+   |
+   +--> "/online" ------------------> NetworkGamePage
    |                                 |
    |                                 v
    |                           AuthoritativeGamePanel
@@ -16,15 +18,7 @@ App.tsx
    |                                 v
    |                       createAuthoritativeViewport()
    |
-   +--> "/network" -----------------> NetworkGamePage
-   |                                 |
-   |                                 v
-   |                           AuthoritativeGamePanel
-   |                                 |
-   |                                 v
-   |                       createAuthoritativeViewport()
-   |
-   +--> "/sandbox" -----------------> GamePage
+   +--> "/offline" -----------------> GamePage
    |                                 |
    |                                 v
    |                           GameViewportPanel
@@ -44,28 +38,11 @@ App.tsx
    |                                 |
    |                                 +--> createModelShowcaseViewport()
    |                                 +--> createEditorItemPreviewViewport()
-   |
-   +--> "/?page=soak" --------------> ViewportSoakPage
-                                     |
-                                     +--> primary: GameViewportPanel
-                                     |              |
-                                     |              v
-                                     |        createGameViewport()
-                                     |
-                                     +--> secondary: showcase panels
-                                     |                |
-                                     |                v
-                                     |        createModelShowcaseViewport()
-                                     |
-                                     +--> secondary: sun panel
-                                                      |
-                                                      v
-                                            createSunInteractionViewport()
 ```
 
-## Why `/sandbox` Still Matters
+## Why `/offline` Still Matters
 
-`/sandbox` is not the shipping primary shell anymore. `/` and `/network` now use the authoritative runtime. But `/sandbox` still matters because it is the route that exercises the local-simulation renderer baseline in `createGameViewport()`.
+`/offline` is the route that exercises the local-simulation renderer baseline in `createGameViewport()`. `/online` runs the authoritative network runtime instead.
 
 That path still owns the denser local combat VFX stack:
 
@@ -74,10 +51,10 @@ That path still owns the denser local combat VFX stack:
 - rocket instancing pools in `localViewportVisualResources.ts`
 - launch-burst, flame, trail, debris, boost-burst, and other local-only effects
 
-In practice, `/sandbox` is the route you use when you want to validate or stress:
+In practice, `/offline` is the route you use when you want to validate or stress:
 
 - the older local rocket/effects rendering path
 - sandbox HUD/profiler behavior
 - local combat visual load without the authoritative network runtime
 
-One important detail: `/sandbox` starts with bots disabled by default. Simply opening the route verifies bring-up, but it does not fully exercise the rocket-heavy path until bots are enabled or active combat is created manually.
+One important detail: `/offline` starts with bots disabled by default. Simply opening the route verifies bring-up, but it does not fully exercise the rocket-heavy path until bots are enabled or active combat is created manually.

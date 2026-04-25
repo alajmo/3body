@@ -1030,18 +1030,35 @@ export const createBlackHoleLensMaterial = (): MeshBasicNodeMaterial => {
     depthWrite: false,
   });
   const localPos = positionLocal.xy;
-  const radial = max(length(localPos), 0.001);
-  const warpMask = smoothstep(0.24, 0.56, radial).mul(
+  const radial = length(localPos);
+  const lensMask = smoothstep(0.2, 0.52, radial).mul(
     float(1).sub(smoothstep(0.86, 1, radial)),
   );
-  const warpStrength = warpMask.mul(0.05).div(radial.mul(radial).add(0.045));
-  const sampledScene = viewportSharedTexture(
-    screenUV
-      .add(normalize(localPos).mul(warpStrength))
-      .clamp(vec2(0.001, 0.001), vec2(0.999, 0.999)),
+  const rimMask = smoothstep(0.52, 0.78, radial).mul(
+    float(1).sub(smoothstep(0.86, 1, radial)),
+  );
+  const turbulence = mx_fractal_noise_float(
+    localPos
+      .mul(3.4)
+      .toVar()
+      .add(vec2(time.mul(-0.08), time.mul(0.06))),
+    3,
+    2,
+    0.54,
+    1,
+  )
+    .mul(0.5)
+    .add(0.5);
+  const lensTint = mix(
+    color("#090d14"),
+    color("#d88742"),
+    rimMask.mul(turbulence).mul(0.36),
   );
 
-  material.fragmentNode = vec4(sampledScene.rgb, warpMask.mul(0.55));
+  material.fragmentNode = vec4(
+    lensTint,
+    lensMask.mul(0.14).add(rimMask.mul(turbulence.mul(0.18).add(0.08))),
+  );
 
   return material;
 };

@@ -5,7 +5,6 @@ import {
   type AbilityMsg,
   type ArchetypeId,
   type BotDifficulty,
-  type CountdownMsg,
   type EntityId,
   type FireRocketMsg,
   type FullSnapshotMsg,
@@ -20,10 +19,8 @@ import {
   type PlanetPrivateState,
   type PlayerId,
   type PlayerName,
-  type PlayerRole,
   type RematchStateMsg,
   type ResumeToken,
-  type RoomKind,
   type RoomRosterEntry,
   type ShieldAimMsg,
   type SnapshotEvent,
@@ -46,12 +43,12 @@ const snapshotWorld = (world: World): World => ({
   debris: world.debris.slice(),
 });
 
-type RoomPhase = "lobby" | "pick" | "countdown" | "combat" | "ended";
+type RoomPhase = "lobby" | "pick" | "combat" | "ended";
 
 export type RoomAdvanceEvent =
   | "lobbyState"
   | "pickState"
-  | "countdownStarted"
+  | "combatStarted"
   | "rematchState";
 
 const DEFAULT_INPUT_DIR: Vec2 = { x: 1, y: 0 };
@@ -59,6 +56,8 @@ const DEFAULT_INPUT_DIR: Vec2 = { x: 1, y: 0 };
 interface CombatIntentState {
   mouseDir: Vec2;
   shieldAimDir: Vec2;
+  boostHeld: boolean;
+  boostActive: boolean;
   lastInputClientTick: number;
 }
 
@@ -107,7 +106,6 @@ export interface FinishedMatchPlayerSummary {
 export interface FinishedMatchSummary {
   id: string;
   roomId: string;
-  roomKind: RoomKind;
   seed: number;
   startedAtMs: number;
   endedAtMs: number;
@@ -124,6 +122,7 @@ export type QueuedCombatMessage =
       type: "input";
       playerId: PlayerId;
       mouseDir: InputMsg["mouseDir"];
+      boostHeld?: InputMsg["boostHeld"];
       clientTick: InputMsg["clientTick"];
     }
   | {
@@ -188,11 +187,9 @@ export class Room {
 
   phase: RoomPhase = "lobby";
   tick = 0;
-  botDifficulty: BotDifficulty = "normal";
-  hostPlayerId?: PlayerId;
+  botDifficulty: BotDifficulty = "easy";
   idleSinceMs?: number;
   pickDeadlineAtMs?: number;
-  countdownEndsAtMs?: number;
   combatStartedAtMs?: number;
   currentMatchId?: string;
   matchEnd?: MatchEndMsg;
@@ -210,7 +207,6 @@ export class Room {
 
   constructor(
     readonly id: string,
-    readonly kind: RoomKind,
     readonly createdAtMs = Date.now(),
   ) {
     this.autoStartAtMs = createdAtMs + MATCH_TIMERS.lobbySec * 1000;
@@ -264,9 +260,6 @@ export class Room {
     };
 
     this.participants.set(participant.playerId, participant);
-    if (this.kind === "private" && this.hostPlayerId === undefined) {
-      this.hostPlayerId = participant.playerId;
-    }
     this.idleSinceMs = undefined;
     return participant;
   }
@@ -323,7 +316,6 @@ export class Room {
       if (
         participant.isBot ||
         participant.connected ||
-        this.phase === "countdown" ||
         this.phase === "combat" ||
         this.phase === "ended" ||
         participant.reclaimDeadlineAtMs === undefined ||
@@ -339,7 +331,6 @@ export class Room {
     }
 
     if (changed) {
-      this.ensureHostAssigned();
       this.refreshIdleState(nowMs);
     }
 
@@ -363,26 +354,13 @@ export class Room {
   }
 
   shouldExpire(nowMs: number, idleTimeoutMs: number): boolean {
-    if (
-      this.phase === "countdown" ||
-      this.phase === "combat" ||
-      (this.phase === "ended" &&
-        this.rematchDeadlineAtMs !== undefined &&
-        nowMs <= this.rematchDeadlineAtMs)
-    ) {
+    if (this.hasConnectedHumans() || this.hasActiveReclaim(nowMs)) {
       this.idleSinceMs = undefined;
       return false;
     }
 
-    this.refreshIdleState(nowMs);
-    return (
-      this.idleSinceMs !== undefined &&
-      nowMs - this.idleSinceMs >= idleTimeoutMs
-    );
-  }
-
-  roleForPlayer(playerId: PlayerId): PlayerRole {
-    return this.hostPlayerId === playerId ? "host" : "player";
+    this.idleSinceMs ??= nowMs;
+    return nowMs - this.idleSinceMs >= idleTimeoutMs;
   }
 
   roster(): RoomRosterEntry[] {
@@ -411,10 +389,8 @@ export class Room {
     return {
       type: "lobbyState",
       players,
-      hostPlayerId: this.kind === "private" ? this.hostPlayerId : undefined,
       autoStartAtMs: this.autoStartAtMs,
       botDifficulty: this.botDifficulty,
-      roomKind: this.kind,
     };
   }
 
@@ -431,17 +407,6 @@ export class Room {
       picks,
       deadlineAtMs:
         this.pickDeadlineAtMs ?? Date.now() + MATCH_TIMERS.pickSec * 1000,
-    };
-  }
-
-  countdownMessage(): CountdownMsg | null {
-    if (this.phase !== "countdown" || this.countdownEndsAtMs === undefined) {
-      return null;
-    }
-
-    return {
-      type: "countdown",
-      endsAtMs: this.countdownEndsAtMs,
     };
   }
 
@@ -610,6 +575,8 @@ export class Room {
     intent = {
       mouseDir: { ...DEFAULT_INPUT_DIR },
       shieldAimDir: { ...DEFAULT_INPUT_DIR },
+      boostHeld: false,
+      boostActive: false,
       lastInputClientTick: -1,
     };
     this.combatIntents.set(playerId, intent);
@@ -691,10 +658,6 @@ export class Room {
     return true;
   }
 
-  setBotDifficulty(difficulty: BotDifficulty): void {
-    this.botDifficulty = difficulty;
-  }
-
   finalizeMatch(nowMs: number, tickHz: number): boolean {
     if (this.matchEnd !== undefined) {
       return false;
@@ -741,7 +704,6 @@ export class Room {
     this.pendingFinishedMatchSummary = {
       id: this.currentMatchId ?? newOpaqueToken(),
       roomId: this.id,
-      roomKind: this.kind,
       seed: this.seed,
       startedAtMs,
       endedAtMs: nowMs,
@@ -807,10 +769,6 @@ export class Room {
     return ["rematchState"];
   }
 
-  hostStart(nowMs: number): RoomAdvanceEvent[] {
-    return this.transitionToPick(nowMs);
-  }
-
   pickArchetype(playerId: PlayerId, archetypeId: ArchetypeId): boolean {
     const participant = this.participants.get(playerId);
     if (!participant || participant.isBot) {
@@ -826,7 +784,7 @@ export class Room {
     if (
       this.phase === "lobby" &&
       this.hasHumanParticipants() &&
-      ((this.kind === "public" && this.isFull()) || nowMs >= this.autoStartAtMs)
+      (this.isFull() || nowMs >= this.autoStartAtMs)
     ) {
       return this.transitionToPick(nowMs);
     }
@@ -837,16 +795,7 @@ export class Room {
         nowMs >= this.pickDeadlineAtMs) ||
         this.allParticipantsPicked())
     ) {
-      return this.transitionToCountdown(nowMs);
-    }
-
-    if (
-      this.phase === "countdown" &&
-      this.countdownEndsAtMs !== undefined &&
-      nowMs >= this.countdownEndsAtMs
-    ) {
-      this.phase = "combat";
-      this.combatStartedAtMs ??= this.countdownEndsAtMs;
+      return this.transitionToCombat(nowMs);
     }
 
     return [];
@@ -861,11 +810,10 @@ export class Room {
     this.assignBotPicks();
     this.phase = "pick";
     this.pickDeadlineAtMs = nowMs + MATCH_TIMERS.pickSec * 1000;
-    this.countdownEndsAtMs = undefined;
     return ["lobbyState", "pickState"];
   }
 
-  private transitionToCountdown(nowMs: number): RoomAdvanceEvent[] {
+  private transitionToCombat(nowMs: number): RoomAdvanceEvent[] {
     if (this.phase !== "pick") {
       return [];
     }
@@ -900,6 +848,8 @@ export class Room {
       this.combatIntents.set(participant.playerId, {
         mouseDir: { ...DEFAULT_INPUT_DIR },
         shieldAimDir: { ...DEFAULT_INPUT_DIR },
+        boostHeld: false,
+        boostActive: false,
         lastInputClientTick: -1,
       });
       this.combatPlayerRuntime.set(participant.playerId, {
@@ -914,10 +864,9 @@ export class Room {
     }
     this.tick = 0;
     this.recordPlanetPositions();
-    this.phase = "countdown";
-    this.countdownEndsAtMs = nowMs + MATCH_TIMERS.countdownSec * 1000;
-    this.combatStartedAtMs = this.countdownEndsAtMs;
-    return ["pickState", "countdownStarted"];
+    this.phase = "combat";
+    this.combatStartedAtMs = nowMs;
+    return ["pickState", "combatStarted"];
   }
 
   private restartForRematch(nowMs: number): void {
@@ -941,7 +890,6 @@ export class Room {
     this.tick = 0;
     this.phase = "pick";
     this.pickDeadlineAtMs = nowMs + MATCH_TIMERS.pickSec * 1000;
-    this.countdownEndsAtMs = undefined;
 
     for (const participant of this.sortedParticipants()) {
       participant.ready = false;
@@ -960,10 +908,6 @@ export class Room {
       }
 
       const playerId = `bot:${this.id}:${seat}` as PlayerId;
-      const difficulty =
-        this.kind === "private"
-          ? this.botDifficulty
-          : ("normal" as BotDifficulty);
 
       this.participants.set(playerId, {
         playerId,
@@ -974,7 +918,7 @@ export class Room {
         ready: true,
         resumeToken: `bot:${playerId}` as ResumeToken,
         profileTokenHash: `bot:${playerId}`,
-        difficulty,
+        difficulty: this.botDifficulty,
         lockedIn: true,
       });
     }
@@ -1060,25 +1004,6 @@ export class Room {
       (participant) => !participant.isBot,
     ).length;
     return Math.max(1, Math.floor(humanCount / 2) + 1);
-  }
-
-  private ensureHostAssigned(): void {
-    if (this.kind !== "private") {
-      this.hostPlayerId = undefined;
-      return;
-    }
-
-    if (
-      this.hostPlayerId !== undefined &&
-      this.participants.has(this.hostPlayerId)
-    ) {
-      return;
-    }
-
-    const nextHost = this.sortedParticipants().find(
-      (participant) => !participant.isBot,
-    );
-    this.hostPlayerId = nextHost?.playerId;
   }
 
   private refreshIdleState(nowMs: number): void {

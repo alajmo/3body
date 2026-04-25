@@ -1,5 +1,6 @@
 import {
   type AbilitySpec,
+  ARCHETYPES,
   ARENA_RADIUS,
   type BlackHoleSpec,
   type BoostSpec,
@@ -85,17 +86,6 @@ interface BuildLocalSandboxHudStateParams {
   shieldSettings: AbilitySpec;
 }
 
-const getRemainingRatio = (remainingSec: number, totalSec: number): number => {
-  if (!(totalSec > 0)) {
-    return remainingSec > 0 ? 1 : 0;
-  }
-
-  return Math.min(Math.max(remainingSec / totalSec, 0), 1);
-};
-
-const formatSeconds = (valueSec: number): string =>
-  valueSec >= 10 ? `${Math.round(valueSec)}s` : `${valueSec.toFixed(1)}s`;
-
 const getShieldDisplayCapacity = ({
   currentState,
   shieldMaxLoad,
@@ -131,6 +121,30 @@ const getShieldLoadRatio = ({
   return shieldDisplayCapacity > 0
     ? Math.min(Math.max(shieldLoad / shieldDisplayCapacity, 0), 1)
     : 0;
+};
+
+const getBoostLoadRatio = (
+  params: Pick<
+    BuildLocalSandboxHudStateParams,
+    "boostSettings" | "currentState"
+  >,
+): number => {
+  const playerPlanet =
+    params.currentState.planets.find(
+      (planet) => planet.id === params.currentState.player.planetId,
+    ) ?? null;
+  const boostCapacity = Math.max(
+    1,
+    params.boostSettings.charges +
+      (playerPlanet === null
+        ? 0
+        : ARCHETYPES[playerPlanet.archetype].boostChargeBonus),
+  );
+
+  return Math.min(
+    Math.max(params.currentState.player.boostCharges / boostCapacity, 0),
+    1,
+  );
 };
 
 const formatProfilerTiming = (
@@ -335,11 +349,13 @@ const buildPrimaryShortcuts = (
           label: "Shield",
         },
         {
-          active: params.boostMode === "cooldown",
+          active: params.boostMode === "active",
           detail:
-            params.boostMode === "ready"
-              ? "ready"
-              : formatSeconds(params.boostRecoveryRemainingSec),
+            params.boostMode === "active"
+              ? `${Math.round(getBoostLoadRatio(params) * 100)}%`
+              : params.boostMode === "ready"
+                ? "ready"
+                : `${Math.round(getBoostLoadRatio(params) * 100)}%`,
           id: "boost",
           keyLabel: "W",
           label: "Boost",
@@ -387,19 +403,14 @@ const buildAbilities = (
           keyLabel: "W",
           label: "Boost",
           mode: params.boostMode,
-          progress:
-            params.boostMode === "cooldown"
-              ? 1 -
-                getRemainingRatio(
-                  params.boostRecoveryRemainingSec,
-                  params.boostRecoveryDurationSec,
-                )
-              : 1,
+          progress: getBoostLoadRatio(params),
           statusText:
-            params.boostMode === "cooldown"
-              ? `lock ${formatSeconds(params.boostRecoveryRemainingSec)}`
-              : "ready",
-          valueText: "INF",
+            params.boostMode === "active"
+              ? `burn ${Math.round(getBoostLoadRatio(params) * 100)}%`
+              : params.boostMode === "cooldown"
+                ? `charging ${Math.round(getBoostLoadRatio(params) * 100)}%`
+                : "ready",
+          valueText: `${Math.round(getBoostLoadRatio(params) * 100)}%`,
         },
         ...(params.debug.gravityPulseHeld
           ? [
@@ -486,7 +497,6 @@ export const buildLocalSandboxHudState = (
     minimap: createHudMinimapState({
       arenaRadius: ARENA_RADIUS,
       blackHole: params.currentState.blackHole,
-      caches: params.currentState.caches,
       highlightedEntity: highlightedMinimapEntity,
       planets: params.currentState.planets.filter((planet) => planet.alive),
       suns: getActiveCombatSuns(params.currentState.suns),

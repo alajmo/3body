@@ -31,9 +31,10 @@ const ABILITY_SETTING_LIMITS = {
 } satisfies Record<keyof AbilitySpec, { min: number; max: number }>;
 
 const BOOST_SETTING_LIMITS = {
-  charges: { max: 1, min: 1 },
+  charges: { max: 5, min: 1 },
   cooldownSec: { max: 60, min: 0.25 },
-  magnitude: { max: 1_200, min: 0 },
+  depleteSec: { max: 30, min: 0.05 },
+  magnitude: { max: 4_000, min: 0 },
 } satisfies Record<keyof BoostSpec, { min: number; max: number }>;
 
 interface LoadedViewportSettings {
@@ -288,5 +289,6 @@ export const applyAbilitySettingsToSpecs = (
   SHIELD_SPEC.durationSec = shieldSettings.durationSec;
   BOOST_SPEC.charges = boostSettings.charges;
   BOOST_SPEC.cooldownSec = boostSettings.cooldownSec;
+  BOOST_SPEC.depleteSec = boostSettings.depleteSec;
   BOOST_SPEC.magnitude = boostSettings.magnitude;
 };

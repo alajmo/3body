@@ -1571,9 +1571,9 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
         boostPenaltyMultipleCharges: 0.08,
         boostPenaltySingleCharge: 0.22,
         cacheRunFireConfidence: 0.74,
-        pressureLightOverrideConfidence: 0.44,
-        pressureLightOverrideDamage: 6,
-        pressureLightOverrideWaste: 0.24,
+        pressureLightOverrideConfidence: 0.22,
+        pressureLightOverrideDamage: 3,
+        pressureLightOverrideWaste: 0.32,
         repositionFireConfidence: 0.7,
       },
       movement: {
@@ -1593,17 +1593,17 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
       shots: {
         confidenceThresholds: {
           easy: {
-            light: 0.34,
+            light: 0.14,
             heavy: 0.42,
             seeker: 0.4,
           },
           normal: {
-            light: 0.48,
+            light: 0.22,
             heavy: 0.58,
             seeker: 0.52,
           },
           hard: {
-            light: 0.58,
+            light: 0.32,
             heavy: 0.67,
             seeker: 0.6,
           },
@@ -1775,6 +1775,7 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
       boost: {
         charges: 1,
         cooldownSec: 5,
+        depleteSec: 2,
         magnitude: 280,
       },
       gravityPulse: {
@@ -1784,6 +1785,7 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
     },
     cache: {
       count: 3,
+      pickupRadius: 24,
       respawnSec: 15,
       wildcardChance: 0.1,
     },
@@ -1796,7 +1798,7 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
       randomizePositionInsidePlayableCircle: true,
     },
     timers: {
-      lobbySec: 3,
+      lobbySec: 10,
       pickSec: 30,
       countdownSec: 3,
       rematchVoteSec: 20,
@@ -1891,6 +1893,12 @@ const sanitizeBoostSpec = (value: unknown, fallback: BoostSpec): BoostSpec => {
       0.05,
       120,
     ),
+    depleteSec: sanitizeNumber(
+      source.depleteSec,
+      fallback.depleteSec,
+      0.05,
+      30,
+    ),
     magnitude: sanitizeNumber(source.magnitude, fallback.magnitude, 0, 4_000),
   };
 };
@@ -1918,6 +1926,12 @@ const sanitizeCacheSpec = (value: unknown, fallback: CacheSpec): CacheSpec => {
 
   return {
     count: sanitizeInteger(source.count, fallback.count, 0, 20),
+    pickupRadius: sanitizeNumber(
+      source.pickupRadius,
+      fallback.pickupRadius,
+      1,
+      500,
+    ),
     respawnSec: sanitizeNumber(source.respawnSec, fallback.respawnSec, 0, 300),
     wildcardChance: sanitizeNumber(
       source.wildcardChance,
@@ -2883,7 +2897,7 @@ export const sanitizeGameTuning = (value: unknown): GameTuningDocument => {
           visuals.caches?.badgeBaseSize,
           fallback.visuals.caches.badgeBaseSize,
           16,
-          400,
+          526,
         ),
         badgeScale: sanitizeNumber(
           visuals.caches?.badgeScale,

@@ -27,12 +27,12 @@ import type {
 export type AuthoritativeMatchPhase =
   | "combat"
   | "connecting"
-  | "countdown"
   | "ended"
   | "error"
   | "lobby"
   | "pick"
-  | "reconnecting";
+  | "reconnecting"
+  | "waitlist";
 
 export type AuthoritativeConnectionState =
   | "connected"
@@ -55,10 +55,14 @@ export interface AuthoritativeSnapshot {
 
 const AUTHORITATIVE_SNAPSHOT_BUFFER_LIMIT = 20;
 
+export interface AuthoritativeWaitlistInfo {
+  position: number;
+  total: number;
+}
+
 export interface AuthoritativeMatchRuntimeState {
   connectionError: string | null;
   connectionState: AuthoritativeConnectionState;
-  countdownEndsAtMs: number | null;
   lobbyState: LobbyStateMsg | null;
   matchEnd: MatchEndMsg | null;
   nextEventId: number;
@@ -74,6 +78,7 @@ export interface AuthoritativeMatchRuntimeState {
   rttMs: number | null;
   snapshot: AuthoritativeSnapshot | null;
   snapshotBuffer: AuthoritativeSnapshot[];
+  waitlist: AuthoritativeWaitlistInfo | null;
 }
 
 export const resetAuthoritativeSnapshotBuffer = (
@@ -412,7 +417,6 @@ export const createInitialAuthoritativeMatchRuntimeState =
   (): AuthoritativeMatchRuntimeState => ({
     connectionError: null,
     connectionState: "connecting",
-    countdownEndsAtMs: null,
     lobbyState: null,
     matchEnd: null,
     nextEventId: 1,
@@ -428,4 +432,5 @@ export const createInitialAuthoritativeMatchRuntimeState =
     rttMs: null,
     snapshot: null,
     snapshotBuffer: [],
+    waitlist: null,
   });

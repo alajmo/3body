@@ -35,6 +35,7 @@ const ABILITY_SETTING_KEYS = [
 const BOOST_SETTING_KEYS = [
   "charges",
   "cooldownSec",
+  "depleteSec",
   "magnitude",
 ] as const satisfies readonly (keyof BoostSpec)[];
 
@@ -53,6 +54,10 @@ const createViewportRefreshSignature = (
     blackHole: documentValue.visuals.blackHole,
     camera: documentValue.gameplay.camera,
     cameraWorldHeightOverride,
+    caches: {
+      gameplay: documentValue.gameplay.cache,
+      visuals: documentValue.visuals.caches,
+    },
     displayMode: documentValue.visuals.displayMode,
     sandboxSessionConfig,
     planets: {

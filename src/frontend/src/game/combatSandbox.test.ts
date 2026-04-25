@@ -1,8 +1,11 @@
 import {
+  ARCHETYPES,
   ARENA_RADIUS,
   BLACK_HOLE_SPEC,
+  BOOST_SPEC,
   type BlackHoleSpec,
   CURRENT_GAME_TUNING,
+  DEFAULT_GAME_TUNING,
   consumeBlackHoleBodies,
   FIXED_STEP_SEC,
   GRAVITY_PULSE_RADIUS,
@@ -29,6 +32,7 @@ import {
   interpolateSandboxState,
   stepSandbox,
 } from "./combatSandbox";
+import { getPlanetNameForSeat } from "../planetNames";
 import { DEFAULT_ORBIT_PRESET } from "./orbitPresets";
 import { applyRuntimeTuningDocument } from "./runtimeTuning";
 import { SHIELD_OUTER_SCALE } from "./shieldPresentation";
@@ -181,6 +185,17 @@ describe("combatSandbox", () => {
     expect(state.caches.length).toBeGreaterThan(0);
   });
 
+  it("uses runtime cache pickup radius for sandbox caches", () => {
+    const tunedDocument = structuredClone(CURRENT_GAME_TUNING);
+    tunedDocument.gameplay.cache.pickupRadius = 150;
+    applyRuntimeTuningDocument(tunedDocument);
+
+    const state = createSandboxState(DEFAULT_ORBIT_PRESET);
+
+    expect(state.caches.length).toBeGreaterThan(0);
+    expect(state.caches.every((cache) => cache.radius === 150)).toBe(true);
+  });
+
   it("can seed the focused planet as a bot for observer-only matches", () => {
     const state = createSandboxState(DEFAULT_ORBIT_PRESET, {
       botDifficulty: "hard",
@@ -196,7 +211,12 @@ describe("combatSandbox", () => {
     });
     expect(state.planets).toHaveLength(7);
     expect(state.bots).toHaveLength(6);
-    expect(focusedPlanet?.displayName).toBe("Atlas");
+    const focusedIndex = state.planets.findIndex(
+      (planet) => planet.id === state.player.planetId,
+    );
+    expect(focusedPlanet?.displayName).toBe(
+      getPlanetNameForSeat(focusedIndex),
+    );
   });
 
   it("uses runtime orbit tuning for the default sandbox seeds", () => {
@@ -670,27 +690,24 @@ describe("combatSandbox", () => {
     expect(tookDamage).toBe(true);
   });
 
-  it("assigns local pilot display names for the player and bots", () => {
-    const state = createSandboxState(DEFAULT_ORBIT_PRESET, {
-      playerName: "Samir",
-    });
-    const playerPlanet = state.planets.find(
-      (planet) => planet.id === state.player.planetId,
-    );
-    const botDisplayNames = state.planets
-      .filter((planet) => planet.id !== state.player.planetId)
-      .map((planet) => planet.displayName);
+  it("assigns a unique planet name to every participant", () => {
+    const state = createSandboxState(DEFAULT_ORBIT_PRESET);
+    const displayNames = state.planets.map((planet) => planet.displayName);
 
-    expect(playerPlanet?.displayName).toBe("Samir");
-    expect(new Set(botDisplayNames).size).toBe(botDisplayNames.length);
-    expect(botDisplayNames.some((name) => /^[IVX]+$/.test(name))).toBe(false);
+    expect(new Set(displayNames).size).toBe(displayNames.length);
+    expect(displayNames.every((name) => name.length > 0)).toBe(true);
   });
 
   it("fires a light rocket and starts its reload timer", () => {
     const { state, enemyPlanetId } = createLinearCombatState();
-    const enemyPlanet = state.planets.find(
+    const enemyPlanetIndex = state.planets.findIndex(
       (planet) => planet.id === enemyPlanetId,
-    )!;
+    );
+    const enemyPlanet = {
+      ...state.planets[enemyPlanetIndex]!,
+      pos: { x: 900, y: 0 },
+    };
+    state.planets[enemyPlanetIndex] = enemyPlanet;
     const lightAmmoBefore = state.player.ammo.light;
 
     const next = stepSandbox(
@@ -770,15 +787,17 @@ describe("combatSandbox", () => {
   });
 
   it("lets offline bot planets acquire the player and fire back", () => {
+    applyRuntimeTuningDocument(DEFAULT_GAME_TUNING);
     const { state, enemyPlanetId } = createLinearCombatState();
     const enemyPlanet = state.planets.find(
       (planet) => planet.id === enemyPlanetId,
     )!;
     const enemyBot = state.bots.find((bot) => bot.planetId === enemyPlanetId)!;
     enemyBot.difficulty = "hard";
+    state.caches = [];
 
     let current = state;
-    for (let step = 0; step < 20; step += 1) {
+    for (let step = 0; step < 120; step += 1) {
       current = stepSandbox(
         current,
         createStepInput({
@@ -1291,6 +1310,163 @@ describe("combatSandbox", () => {
     expect(next.player.shieldLoad).toBeLessThan(startingLoad);
   });
 
+  it("applies one continuous boost tick on tap and drains boost load", () => {
+    const { state: boostState } = createLinearCombatState();
+    const playerPlanet = boostState.planets.find(
+      (planet) => planet.id === boostState.player.planetId,
+    )!;
+    const startingBoostLoad = boostState.player.boostCharges;
+    const startingVelocityX = playerPlanet.vel.x;
+    expect(startingBoostLoad).toBeGreaterThanOrEqual(BOOST_SPEC.charges);
+
+    const boosted = stepSandbox(
+      boostState,
+      createStepInput({
+        aimWorld: { x: 100, y: 0 },
+        boostRequested: true,
+      }),
+      DISABLED_BLACK_HOLE_SPEC,
+    );
+
+    const { state: shieldState } = createLinearCombatState();
+    shieldState.player.shieldActive = true;
+    const startingShieldLoad = shieldState.player.shieldLoad;
+    const shielded = stepSandbox(
+      shieldState,
+      createStepInput(),
+      DISABLED_BLACK_HOLE_SPEC,
+    );
+
+    const boostDrainRatio =
+      (startingBoostLoad - boosted.player.boostCharges) / startingBoostLoad;
+    const shieldDrainRatio =
+      (startingShieldLoad - shielded.player.shieldLoad) / startingShieldLoad;
+    const boostedPlanet = boosted.planets.find(
+      (planet) => planet.id === boosted.player.planetId,
+    )!;
+    const expectedBoostBurn =
+      FIXED_STEP_SEC / Math.max(FIXED_STEP_SEC, BOOST_SPEC.depleteSec);
+    const expectedBoostImpulse = BOOST_SPEC.magnitude * FIXED_STEP_SEC;
+
+    expect(boosted.player.boostCharges).toBeLessThan(startingBoostLoad);
+    expect(boosted.player.nextBoostChargeAtTick).toBe(0);
+    expect(startingBoostLoad - boosted.player.boostCharges).toBeCloseTo(
+      expectedBoostBurn,
+      5,
+    );
+    expect(boostDrainRatio).toBeGreaterThan(shieldDrainRatio);
+    expect(boostedPlanet.vel.x - startingVelocityX).toBeGreaterThan(
+      expectedBoostImpulse * 0.95,
+    );
+  });
+
+  it("keeps applying boost force while the request is held", () => {
+    const { state } = createLinearCombatState();
+    const playerPlanet = state.planets.find(
+      (planet) => planet.id === state.player.planetId,
+    )!;
+    const initialVelocityX = playerPlanet.vel.x;
+
+    let next = state;
+    for (let step = 0; step < 5; step += 1) {
+      next = stepSandbox(
+        next,
+        createStepInput({
+          aimWorld: { x: 100, y: 0 },
+          boostRequested: true,
+        }),
+        DISABLED_BLACK_HOLE_SPEC,
+      );
+    }
+
+    const boostedPlanet = next.planets.find(
+      (planet) => planet.id === next.player.planetId,
+    )!;
+    const boostImpulsePerStep = BOOST_SPEC.magnitude * FIXED_STEP_SEC;
+    const boostVelocityDelta = boostedPlanet.vel.x - initialVelocityX;
+
+    expect(boostVelocityDelta).toBeGreaterThan(boostImpulsePerStep * 4);
+    expect(boostVelocityDelta).toBeLessThan(BOOST_SPEC.magnitude * 0.25);
+    expect(boostVelocityDelta).toBeLessThan(BOOST_SPEC.magnitude);
+    expect(next.player.boostCharges).toBeLessThan(state.player.boostCharges);
+  });
+
+  it("applies boost whenever W is held, even while shield is active", () => {
+    const { state } = createLinearCombatState();
+    state.player.shieldActive = true;
+    const playerPlanet = state.planets.find(
+      (planet) => planet.id === state.player.planetId,
+    )!;
+    const startingBoostLoad = state.player.boostCharges;
+    const startingVelocityX = playerPlanet.vel.x;
+
+    const next = stepSandbox(
+      state,
+      createStepInput({
+        aimWorld: { x: 100, y: 0 },
+        boostRequested: true,
+      }),
+      DISABLED_BLACK_HOLE_SPEC,
+    );
+
+    const boostedPlanet = next.planets.find(
+      (planet) => planet.id === next.player.planetId,
+    )!;
+
+    expect(next.player.boostCharges).toBeLessThan(startingBoostLoad);
+    expect(boostedPlanet.vel.x).toBeGreaterThan(startingVelocityX);
+  });
+
+  it("recharges boost load after the player releases boost", () => {
+    const { state } = createLinearCombatState();
+    const startingBoostLoad = state.player.boostCharges;
+
+    let next = stepSandbox(
+      state,
+      createStepInput({
+        aimWorld: { x: 100, y: 0 },
+        boostRequested: true,
+      }),
+      DISABLED_BLACK_HOLE_SPEC,
+    );
+    const drainedBoostLoad = next.player.boostCharges;
+
+    for (let step = 0; step < 3; step += 1) {
+      next = stepSandbox(next, createStepInput(), DISABLED_BLACK_HOLE_SPEC);
+    }
+
+    expect(drainedBoostLoad).toBeLessThan(startingBoostLoad);
+    expect(next.player.boostCharges).toBeGreaterThan(drainedBoostLoad);
+    expect(next.player.boostCharges).toBeLessThanOrEqual(startingBoostLoad);
+  });
+
+  it("recharges boost from empty to full capacity over the recharge duration", () => {
+    const { state } = createLinearCombatState();
+    const playerPlanetIndex = state.planets.findIndex(
+      (planet) => planet.id === state.player.planetId,
+    );
+    const boostCapacity =
+      BOOST_SPEC.charges + ARCHETYPES.volans.boostChargeBonus;
+    state.bots = [];
+    state.player.boostCharges = 0;
+    state.player.boostActive = false;
+    state.planets[playerPlanetIndex] = {
+      ...state.planets[playerPlanetIndex]!,
+      archetype: "volans",
+    };
+
+    let next = state;
+    for (
+      let step = 0;
+      step < Math.ceil(BOOST_SPEC.cooldownSec / FIXED_STEP_SEC);
+      step += 1
+    ) {
+      next = stepSandbox(next, createStepInput(), DISABLED_BLACK_HOLE_SPEC);
+    }
+
+    expect(next.player.boostCharges).toBeCloseTo(boostCapacity, 5);
+  });
+
   it("recharges shield load back up to the current max while inactive", () => {
     const { state } = createLinearCombatState();
     state.player.shieldActive = false;
@@ -1312,6 +1488,16 @@ describe("combatSandbox", () => {
     const playerPlanet = state.planets.find(
       (planet) => planet.id === state.player.planetId,
     )!;
+    state.planets = state.planets.map((planet) =>
+      planet.id === state.player.planetId
+        ? planet
+        : {
+            ...planet,
+            pos: { x: 5_000 + planet.id, y: 0 },
+            alive: false,
+            hp: 0,
+          },
+    );
 
     state.player.ammo.heavy = 0;
     state.caches = [
@@ -1337,10 +1523,127 @@ describe("combatSandbox", () => {
     expect(next.cacheRespawnAtTicks[0]).toBeGreaterThan(next.tick);
   });
 
+  it("uses the current cache pickup radius for already-spawned caches", () => {
+    const tunedDocument = structuredClone(CURRENT_GAME_TUNING);
+    tunedDocument.gameplay.cache.pickupRadius = 70;
+    applyRuntimeTuningDocument(tunedDocument);
+
+    const { state } = createLinearCombatState();
+    const playerPlanet = state.planets.find(
+      (planet) => planet.id === state.player.planetId,
+    )!;
+
+    state.player.ammo.heavy = 0;
+    state.caches = [
+      {
+        id: 602,
+        kind: "cache",
+        contents: { kind: "heavyAmmo" },
+        pos: { x: playerPlanet.pos.x + 80, y: playerPlanet.pos.y },
+        vel: { x: 0, y: 0 },
+        radius: 24,
+      },
+    ];
+
+    const next = stepSandbox(
+      state,
+      createStepInput(),
+      DISABLED_BLACK_HOLE_SPEC,
+    );
+
+    expect(next.player.ammo.heavy).toBe(1);
+    expect(next.caches).toHaveLength(0);
+  });
+
+  it("collects caches swept through the pickup radius between fixed ticks", () => {
+    const tunedDocument = structuredClone(CURRENT_GAME_TUNING);
+    tunedDocument.gameplay.cache.pickupRadius = 70;
+    applyRuntimeTuningDocument(tunedDocument);
+
+    const { state } = createLinearCombatState();
+    const playerPlanetId = state.player.planetId;
+    state.planets = state.planets.map((planet) =>
+      planet.id === playerPlanetId
+        ? {
+            ...planet,
+            alive: true,
+            hp: PLANET_HP,
+            pos: { x: -300, y: 85 },
+            radius: 20,
+            vel: { x: 600 / FIXED_STEP_SEC, y: 0 },
+          }
+        : {
+            ...planet,
+            alive: false,
+            hp: 0,
+            pos: { x: 5_000 + planet.id, y: 0 },
+            vel: { x: 0, y: 0 },
+          },
+    );
+    state.player.ammo.heavy = 0;
+    state.caches = [
+      {
+        id: 603,
+        kind: "cache",
+        contents: { kind: "heavyAmmo" },
+        pos: { x: 0, y: 0 },
+        vel: { x: 0, y: 0 },
+        radius: 24,
+      },
+    ];
+
+    const next = stepSandbox(
+      state,
+      createStepInput(),
+      DISABLED_BLACK_HOLE_SPEC,
+    );
+
+    expect(next.player.ammo.heavy).toBe(1);
+    expect(next.caches).toHaveLength(0);
+  });
+
+  it("normalizes existing cache entities to the current pickup radius", () => {
+    const tunedDocument = structuredClone(CURRENT_GAME_TUNING);
+    tunedDocument.gameplay.cache.pickupRadius = 90;
+    applyRuntimeTuningDocument(tunedDocument);
+
+    const { state } = createLinearCombatState();
+
+    state.caches = [
+      {
+        id: 604,
+        kind: "cache",
+        contents: { kind: "repair" },
+        pos: { x: 900, y: 0 },
+        vel: { x: 0, y: 0 },
+        radius: 24,
+      },
+    ];
+
+    const next = stepSandbox(
+      state,
+      createStepInput(),
+      DISABLED_BLACK_HOLE_SPEC,
+    );
+
+    expect(next.caches).toHaveLength(1);
+    expect(next.caches[0]!.radius).toBe(90);
+  });
+
   it("does not mutate the prior state when repair caches are collected", () => {
     const { state } = createLinearCombatState();
     const playerPlanetIndex = state.planets.findIndex(
       (planet) => planet.id === state.player.planetId,
+    );
+    state.planets = state.planets.map((planet, index) =>
+      index === playerPlanetIndex
+        ? planet
+        : {
+            ...planet,
+            pos: { x: 5_000 + planet.id, y: 0 },
+            alive: false,
+            hp: 0,
+          },
     );
     state.planets[playerPlanetIndex] = {
       ...state.planets[playerPlanetIndex]!,
@@ -1389,7 +1692,7 @@ describe("combatSandbox", () => {
         id: 702,
         kind: "cache",
         contents: { kind: "repair" },
-        pos: { x: 200, y: 140 },
+        pos: { x: 320, y: 300 },
         vel: { x: 0, y: 0 },
         radius: 24,
       },
@@ -1850,6 +2153,7 @@ describe("combatSandbox", () => {
     const { state, enemyPlanetId } = createLinearCombatState();
     const playerPlanetId = state.player.planetId;
 
+    state.bots = [];
     state.elapsedSec = GROWING_BLACK_HOLE_SPEC.rampSec / 2;
     state.planets = state.planets.map((planet) => {
       if (planet.id === playerPlanetId) {

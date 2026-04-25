@@ -7,13 +7,13 @@ const {
   gamePageSpy,
   networkGamePageSpy,
   notFoundPageSpy,
-  viewportSoakPageSpy,
+  playMenuPageSpy,
 } = vi.hoisted(() => ({
   editPageSpy: vi.fn(),
   gamePageSpy: vi.fn(),
   networkGamePageSpy: vi.fn(),
   notFoundPageSpy: vi.fn(),
-  viewportSoakPageSpy: vi.fn(),
+  playMenuPageSpy: vi.fn(),
 }));
 
 vi.mock("./EditPage", () => ({
@@ -37,10 +37,10 @@ vi.mock("./NetworkGamePage", () => ({
   },
 }));
 
-vi.mock("./ViewportSoakPage", () => ({
-  ViewportSoakPage: () => {
-    viewportSoakPageSpy();
-    return <div data-testid="viewport-soak-page">soak</div>;
+vi.mock("./PlayMenuPage", () => ({
+  PlayMenuPage: () => {
+    playMenuPageSpy();
+    return <div data-testid="play-menu-page">menu</div>;
   },
 }));
 
@@ -57,12 +57,13 @@ describe("App", () => {
     window.history.pushState({}, "", "/");
   });
 
-  it("renders the authoritative page on the root route", () => {
+  it("renders the play menu on the root route", () => {
     render(<App />);
 
-    expect(screen.getByTestId("network-game-page")).toBeInTheDocument();
-    expect(editPageSpy).not.toHaveBeenCalled();
+    expect(screen.getByTestId("play-menu-page")).toBeInTheDocument();
+    expect(networkGamePageSpy).not.toHaveBeenCalled();
     expect(gamePageSpy).not.toHaveBeenCalled();
+    expect(editPageSpy).not.toHaveBeenCalled();
   });
 
   it("renders the edit page on /edit", () => {
@@ -74,8 +75,8 @@ describe("App", () => {
     expect(gamePageSpy).not.toHaveBeenCalled();
   });
 
-  it("renders the network page on /network", () => {
-    window.history.pushState({}, "", "/network");
+  it("renders the network page on /online", () => {
+    window.history.pushState({}, "", "/online");
 
     render(<App />);
 
@@ -84,34 +85,12 @@ describe("App", () => {
     expect(editPageSpy).not.toHaveBeenCalled();
   });
 
-  it("renders the sandbox page on /sandbox", () => {
-    window.history.pushState({}, "", "/sandbox");
+  it("renders the offline page on /offline", () => {
+    window.history.pushState({}, "", "/offline");
 
     render(<App />);
 
     expect(screen.getByTestId("game-page")).toBeInTheDocument();
-    expect(editPageSpy).not.toHaveBeenCalled();
-    expect(networkGamePageSpy).not.toHaveBeenCalled();
-  });
-
-  it("renders the viewport soak page on /soak", () => {
-    window.history.pushState({}, "", "/soak");
-
-    render(<App />);
-
-    expect(screen.getByTestId("viewport-soak-page")).toBeInTheDocument();
-    expect(gamePageSpy).not.toHaveBeenCalled();
-    expect(editPageSpy).not.toHaveBeenCalled();
-    expect(networkGamePageSpy).not.toHaveBeenCalled();
-  });
-
-  it("renders the viewport soak page from the root query override", () => {
-    window.history.pushState({}, "", "/?page=soak");
-
-    render(<App />);
-
-    expect(screen.getByTestId("viewport-soak-page")).toBeInTheDocument();
-    expect(gamePageSpy).not.toHaveBeenCalled();
     expect(editPageSpy).not.toHaveBeenCalled();
     expect(networkGamePageSpy).not.toHaveBeenCalled();
   });

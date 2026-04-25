@@ -32,7 +32,6 @@ const migrations: readonly Migration[] = [
 
       CREATE TABLE matches (
         id TEXT PRIMARY KEY,
-        roomKind TEXT NOT NULL,
         seed INTEGER NOT NULL,
         startedAtMs INTEGER NOT NULL,
         endedAtMs INTEGER NOT NULL,

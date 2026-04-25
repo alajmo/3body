@@ -21,12 +21,12 @@ const ROOM_ROSTER: RoomRosterEntry[] = [
 ];
 
 describe("authoritativeMatchLabels", () => {
-  it("resolves authoritative player labels from the room roster", () => {
+  it("resolves authoritative player labels to the assigned planet name", () => {
     expect(resolveAuthoritativePlayerLabel("bot:room-1:1", ROOM_ROSTER)).toBe(
-      "Bot 1",
+      "Nadir",
     );
     expect(resolveAuthoritativePlayerLabel("player:1", ROOM_ROSTER)).toBe(
-      "Pilot",
+      "Atlas",
     );
   });
 
@@ -37,18 +37,18 @@ describe("authoritativeMatchLabels", () => {
   });
 
   it("resolves abbreviated bot ids against the roster seat suffix", () => {
-    expect(resolveAuthoritativePlayerLabel("bot:1", ROOM_ROSTER)).toBe("Bot 1");
+    expect(resolveAuthoritativePlayerLabel("bot:1", ROOM_ROSTER)).toBe("Nadir");
   });
 
-  it("falls back to a readable bot label when no roster entry exists", () => {
-    expect(resolveAuthoritativePlayerLabel("bot:4", [])).toBe("Bot 5");
+  it("falls back to a planet name when no roster entry exists", () => {
+    expect(resolveAuthoritativePlayerLabel("bot:4", [])).toBe("Lyra");
   });
 
   it("formats the winner label for named winners and mutual kills", () => {
     expect(formatAuthoritativeWinnerLabel("bot:room-1:1", ROOM_ROSTER)).toBe(
-      "Bot 1",
+      "Nadir",
     );
-    expect(formatAuthoritativeWinnerLabel("bot:1", ROOM_ROSTER)).toBe("Bot 1");
+    expect(formatAuthoritativeWinnerLabel("bot:1", ROOM_ROSTER)).toBe("Nadir");
     expect(formatAuthoritativeWinnerLabel(undefined, ROOM_ROSTER)).toBe(
       "Mutual kill",
     );

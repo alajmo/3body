@@ -1,9 +1,8 @@
 export const APP_ROUTES = [
   "/",
   "/edit",
-  "/network",
-  "/sandbox",
-  "/soak",
+  "/offline",
+  "/online",
 ] as const;
 
 export type AppRoute = (typeof APP_ROUTES)[number];

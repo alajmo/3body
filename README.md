@@ -50,22 +50,12 @@ npm run dev -w @3body/frontend   # http://localhost:1337
 npm run dev -w @3body/backend    # bun --watch
 ```
 
-The primary authoritative game shell now lives on:
+The play menu lives at the root, with online and offline routes:
 
 ```text
-http://localhost:1337/
-```
-
-The local sandbox and tooling route live separately on:
-
-```text
-http://localhost:1337/sandbox
-```
-
-The authoritative route also remains available on the legacy compatibility path:
-
-```text
-http://localhost:1337/network
+http://localhost:1337/          # play menu (Online / Offline)
+http://localhost:1337/online    # authoritative network game
+http://localhost:1337/offline   # local simulation (formerly /sandbox)
 ```
 
 ## Typecheck

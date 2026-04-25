@@ -79,6 +79,10 @@ export function InspectorSection({
   );
 }
 
+export function InspectorSubheading({ label }: { label: string }) {
+  return <div className="edit-inspector__subheading">{label}</div>;
+}
+
 export function NumberField(props: {
   label: string;
   max?: number;

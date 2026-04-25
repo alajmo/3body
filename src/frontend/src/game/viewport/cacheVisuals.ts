@@ -335,13 +335,6 @@ const createCacheIconTexture = (
   return atlas;
 };
 
-const getCacheBadgeFontSize = (size: number, label: string): number =>
-  label.length >= 7
-    ? size * 0.145
-    : label.length >= 6
-      ? size * 0.16
-      : size * 0.18;
-
 const drawCacheBadgeTile = (
   context: CanvasRenderingContext2D,
   key: CacheIconKey,
@@ -349,7 +342,7 @@ const drawCacheBadgeTile = (
   y: number,
   size: number,
 ) => {
-  const { accent, label, shape } = CACHE_ICON_PRESENTATION[key];
+  const { accent, shape } = CACHE_ICON_PRESENTATION[key];
   const centerX = x + size / 2;
   const centerY = y + size / 2;
 
@@ -419,24 +412,7 @@ const drawCacheBadgeTile = (
   context.restore();
 
   context.save();
-  context.translate(0, -size * 0.14);
-  drawCacheIconGlyph(context, key, size * 0.44, accent);
-  context.restore();
-
-  context.fillStyle = "rgba(3, 7, 12, 0.84)";
-  fillRoundedRect(
-    context,
-    -size * 0.28,
-    size * 0.14,
-    size * 0.56,
-    size * 0.16,
-    size * 0.05,
-  );
-  context.fillStyle = "#f7fbff";
-  context.font = `700 ${getCacheBadgeFontSize(size, label)}px "IBM Plex Sans", sans-serif`;
-  context.textAlign = "center";
-  context.textBaseline = "middle";
-  context.fillText(label, 0, size * 0.22);
+  drawCacheIconGlyph(context, key, size * 0.58, accent);
   context.restore();
 };
 

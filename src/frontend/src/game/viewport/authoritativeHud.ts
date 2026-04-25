@@ -48,6 +48,16 @@ const getShieldDisplayCapacity = (planet: PlanetPublic): number => {
   return Math.max(extendedShieldCapacity, planet.shieldMaxLoad, 0);
 };
 
+const getBoostDisplayCapacity = (
+  planet: PlanetPublic | null,
+  boostSettings: typeof BOOST_SPEC,
+): number =>
+  Math.max(
+    1,
+    boostSettings.charges +
+      (planet === null ? 0 : ARCHETYPES[planet.archetype].boostChargeBonus),
+  );
+
 interface BuildAuthoritativeHudStateParams {
   connection: GameViewportConnectionState;
   controlsEnabled: boolean;
@@ -521,30 +531,36 @@ export const buildAuthoritativeHudState = ({
       }),
     );
 
+    const boostCapacity = getBoostDisplayCapacity(playerPlanet, boostSettings);
+    const boostLoadRatio = Math.min(
+      Math.max(self.boostCharges / boostCapacity, 0),
+      1,
+    );
     const boostRecoveryRemainingSec =
-      self.cooldowns.nextBoostChargeAtTick === undefined
+      boostLoadRatio >= 1
         ? 0
-        : Math.max(0, self.cooldowns.nextBoostChargeAtTick - currentTick) *
-          FIXED_STEP_SEC;
+        : (1 - boostLoadRatio) * boostSettings.cooldownSec;
+    const boostMode =
+      boostLoadRatio > 0 && boostLoadRatio < 1
+        ? "cooldown"
+        : boostLoadRatio > 0
+          ? "ready"
+          : boostRecoveryRemainingSec > 0
+            ? "cooldown"
+            : "ready";
     abilities.push(
       buildAbility({
         accent: tuning.visuals.abilities.boostColor,
         id: "boost",
         keyLabel: "W",
         label: "Boost",
-        mode:
-          self.boostCharges > 0
-            ? "ready"
-            : boostRecoveryRemainingSec > 0
-              ? "cooldown"
-              : "ready",
-        remainingSec: boostRecoveryRemainingSec,
+        mode: boostMode,
+        fill: boostLoadRatio,
         statusText:
-          self.boostCharges > 0
-            ? `${self.boostCharges} charge${self.boostCharges === 1 ? "" : "s"}`
-            : boostRecoveryRemainingSec > 0
-              ? "Charging"
-              : "Ready",
+          boostMode === "cooldown"
+            ? `Charging ${Math.round(boostLoadRatio * 100)}%`
+            : "Ready",
+        valueText: `${Math.round(boostLoadRatio * 100)}%`,
         durationSec: boostSettings.cooldownSec,
       }),
     );
@@ -653,7 +669,6 @@ export const buildAuthoritativeHudState = ({
         : createHudMinimapState({
             arenaRadius: world.arenaRadius,
             blackHole: world.blackHole,
-            caches: world.caches,
             highlightedEntity: highlightedMinimapEntity,
             planets: world.planets,
             suns: world.suns,

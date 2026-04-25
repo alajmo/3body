@@ -21,6 +21,7 @@ import { EditorPreviewStage } from "./EditorPreviewStage";
 import {
   ColorField,
   InspectorSection,
+  InspectorSubheading,
   NumberField,
   SelectField,
   ToggleField,
@@ -186,6 +187,11 @@ const getDisplayedCacheBadgeSize = (
     ),
   );
 
+const CACHE_BADGE_DISPLAY_SIZE_MAX = 500;
+const CACHE_BADGE_BASE_SIZE_MAX = Math.round(
+  CACHE_BADGE_DISPLAY_SIZE_MAX / CACHE_ARENA_BADGE_SIZE_FACTOR,
+);
+
 const setDisplayedCacheBadgeSize = (
   draft: GameTuningDocument,
   value: number,
@@ -193,7 +199,7 @@ const setDisplayedCacheBadgeSize = (
   draft.visuals.caches.badgeBaseSize = Math.max(
     16,
     Math.min(
-      400,
+      CACHE_BADGE_BASE_SIZE_MAX,
       Math.round(Math.round(value) / CACHE_ARENA_BADGE_SIZE_FACTOR),
     ),
   );
@@ -4275,8 +4281,9 @@ export function EditPage() {
                 })
               }
             >
+              <InspectorSubheading label="Micro" />
               <NumberField
-                label="Micro asteroid damage"
+                label="Damage"
                 min={0}
                 step={ARENA_ASTEROID_DAMAGE_STEP}
                 value={documentValue.gameplay.arena.asteroidField.micro.damage}
@@ -4292,7 +4299,7 @@ export function EditPage() {
                 }
               />
               <NumberField
-                label="Micro inward drift randomization"
+                label="Inward drift randomization"
                 min={0}
                 max={1}
                 step={ARENA_ASTEROID_RANDOMIZATION_STEP}
@@ -4313,7 +4320,7 @@ export function EditPage() {
                 }
               />
               <NumberField
-                label="Micro falls per second"
+                label="Falls per second"
                 min={0}
                 step={ARENA_ASTEROID_SPAWN_RATE_STEP}
                 value={
@@ -4333,8 +4340,9 @@ export function EditPage() {
                   })
                 }
               />
+              <InspectorSubheading label="Small" />
               <NumberField
-                label="Small asteroid damage"
+                label="Damage"
                 min={0}
                 step={ARENA_ASTEROID_DAMAGE_STEP}
                 value={documentValue.gameplay.arena.asteroidField.small.damage}
@@ -4350,7 +4358,7 @@ export function EditPage() {
                 }
               />
               <NumberField
-                label="Small inward drift randomization"
+                label="Inward drift randomization"
                 min={0}
                 max={1}
                 step={ARENA_ASTEROID_RANDOMIZATION_STEP}
@@ -4371,7 +4379,7 @@ export function EditPage() {
                 }
               />
               <NumberField
-                label="Small falls per second"
+                label="Falls per second"
                 min={0}
                 step={ARENA_ASTEROID_SPAWN_RATE_STEP}
                 value={
@@ -4391,8 +4399,9 @@ export function EditPage() {
                   })
                 }
               />
+              <InspectorSubheading label="Large" />
               <NumberField
-                label="Large asteroid damage"
+                label="Damage"
                 min={0}
                 step={ARENA_ASTEROID_DAMAGE_STEP}
                 value={documentValue.gameplay.arena.asteroidField.large.damage}
@@ -4408,7 +4417,7 @@ export function EditPage() {
                 }
               />
               <NumberField
-                label="Large inward drift randomization"
+                label="Inward drift randomization"
                 min={0}
                 max={1}
                 step={ARENA_ASTEROID_RANDOMIZATION_STEP}
@@ -4429,7 +4438,7 @@ export function EditPage() {
                 }
               />
               <NumberField
-                label="Large falls per second"
+                label="Falls per second"
                 min={0}
                 step={ARENA_ASTEROID_SPAWN_RATE_STEP}
                 value={
@@ -5153,7 +5162,7 @@ export function EditPage() {
           <>
             <InspectorSection
               title="Gameplay"
-              note="Charge and impulse"
+              note="Load, drain, and force"
               resetDisabled={sectionResetDisabled}
               onReset={() =>
                 resetInspectorSection((draft, defaults) => {
@@ -5163,7 +5172,7 @@ export function EditPage() {
               }
             >
               <NumberField
-                label="Charges"
+                label="Load"
                 min={1}
                 max={5}
                 step={1}
@@ -5180,7 +5189,7 @@ export function EditPage() {
                 }
               />
               <NumberField
-                label="Cooldown"
+                label="Recharge"
                 min={0.05}
                 max={120}
                 step={0.05}
@@ -5197,7 +5206,24 @@ export function EditPage() {
                 }
               />
               <NumberField
-                label="Magnitude"
+                label="Deplete"
+                min={0.05}
+                max={30}
+                step={0.05}
+                value={documentValue.gameplay.abilities.boost.depleteSec}
+                onPreviewChange={(value) =>
+                  applyPreviewChange((draft) => {
+                    draft.gameplay.abilities.boost.depleteSec = value;
+                  })
+                }
+                onCommit={(value) =>
+                  commitChange((draft) => {
+                    draft.gameplay.abilities.boost.depleteSec = value;
+                  })
+                }
+              />
+              <NumberField
+                label="Force"
                 min={0}
                 max={4000}
                 step={10}
@@ -5332,6 +5358,23 @@ export function EditPage() {
                 }
               />
               <NumberField
+                label="Pickup radius"
+                min={1}
+                max={500}
+                step={1}
+                value={documentValue.gameplay.cache.pickupRadius}
+                onPreviewChange={(value) =>
+                  applyPreviewChange((draft) => {
+                    draft.gameplay.cache.pickupRadius = value;
+                  })
+                }
+                onCommit={(value) =>
+                  commitChange((draft) => {
+                    draft.gameplay.cache.pickupRadius = value;
+                  })
+                }
+              />
+              <NumberField
                 label="Respawn"
                 min={0}
                 max={300}
@@ -5393,7 +5436,7 @@ export function EditPage() {
             </InspectorSection>
             <InspectorSection
               title="Visuals"
-              note="Badge size as rendered in /sandbox"
+              note="Badge size as rendered in /offline"
               resetDisabled={sectionResetDisabled}
               onReset={() =>
                 resetInspectorSection((draft, defaults) => {
@@ -5408,7 +5451,7 @@ export function EditPage() {
               <NumberField
                 label="Badge size"
                 min={Math.round(getCacheArenaBadgeSize(16, 1))}
-                max={Math.round(getCacheArenaBadgeSize(400, 1))}
+                max={CACHE_BADGE_DISPLAY_SIZE_MAX}
                 step={1}
                 value={getDisplayedCacheBadgeSize(documentValue)}
                 onPreviewChange={(value) =>

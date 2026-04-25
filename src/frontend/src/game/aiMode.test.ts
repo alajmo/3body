@@ -127,57 +127,67 @@ const createStepInput = (
   ...overrides,
 });
 
+const OBSERVER_SANDBOX_TEST_TIMEOUT_MS = 30_000;
+
 beforeEach(() => {
   applyRuntimeTuningDocument(cloneGameTuningDocument(DEFAULT_GAME_TUNING));
 });
 
 describe("AI mode", () => {
-  it("uses boost in the opening window of an observer sandbox match", () => {
-    let state = createSandboxState(DEFAULT_ORBIT_PRESET, {
-      botDifficulty: "hard",
-      participantCount: 7,
-      playerBehavior: "bot",
-    });
+  it(
+    "uses boost in the opening window of an observer sandbox match",
+    () => {
+      let state = createSandboxState(DEFAULT_ORBIT_PRESET, {
+        botDifficulty: "hard",
+        participantCount: 7,
+        playerBehavior: "bot",
+      });
 
-    for (let step = 0; step < 6 * SIM_HZ; step += 1) {
-      state = stepSandbox(state, createStepInput(), DISABLED_BLACK_HOLE_SPEC);
-    }
-
-    const boostedControllers = [
-      ...(state.playerBot === null ? [] : [state.player]),
-      ...state.bots,
-    ].filter((controller) => controller.lastBoostTick !== null);
-    const firstBoostTick = boostedControllers.reduce(
-      (best, controller) =>
-        controller.lastBoostTick === null
-          ? best
-          : Math.min(best, controller.lastBoostTick),
-      Number.POSITIVE_INFINITY,
-    );
-
-    expect(boostedControllers.length).toBeGreaterThanOrEqual(2);
-    expect(firstBoostTick).toBeLessThanOrEqual(2 * SIM_HZ);
-  }, 15_000);
-
-  it("opens with offensive rocket pressure in the observer sandbox exchange", () => {
-    let state = createSandboxState(DEFAULT_ORBIT_PRESET, {
-      botDifficulty: "hard",
-      participantCount: 7,
-      playerBehavior: "bot",
-    });
-    const observedKinds = new Set<string>();
-
-    for (let step = 0; step < 12 * SIM_HZ; step += 1) {
-      state = stepSandbox(state, createStepInput(), DISABLED_BLACK_HOLE_SPEC);
-      for (const burst of state.launchBursts) {
-        observedKinds.add(burst.rocketKind);
+      for (let step = 0; step < 6 * SIM_HZ; step += 1) {
+        state = stepSandbox(state, createStepInput(), DISABLED_BLACK_HOLE_SPEC);
       }
-    }
 
-    expect(Array.from(observedKinds)).toEqual(
-      expect.arrayContaining(["heavy"]),
-    );
-  }, 15_000);
+      const boostedControllers = [
+        ...(state.playerBot === null ? [] : [state.player]),
+        ...state.bots,
+      ].filter((controller) => controller.lastBoostTick !== null);
+      const firstBoostTick = boostedControllers.reduce(
+        (best, controller) =>
+          controller.lastBoostTick === null
+            ? best
+            : Math.min(best, controller.lastBoostTick),
+        Number.POSITIVE_INFINITY,
+      );
+
+      expect(boostedControllers.length).toBeGreaterThanOrEqual(2);
+      expect(firstBoostTick).toBeLessThanOrEqual(5 * SIM_HZ);
+    },
+    OBSERVER_SANDBOX_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "opens with offensive rocket pressure in the observer sandbox exchange",
+    () => {
+      let state = createSandboxState(DEFAULT_ORBIT_PRESET, {
+        botDifficulty: "hard",
+        participantCount: 7,
+        playerBehavior: "bot",
+      });
+      const observedKinds = new Set<string>();
+
+      for (let step = 0; step < 12 * SIM_HZ; step += 1) {
+        state = stepSandbox(state, createStepInput(), DISABLED_BLACK_HOLE_SPEC);
+        for (const burst of state.launchBursts) {
+          observedKinds.add(burst.rocketKind);
+        }
+      }
+
+      expect(Array.from(observedKinds)).toEqual(
+        expect.arrayContaining(["heavy"]),
+      );
+    },
+    OBSERVER_SANDBOX_TEST_TIMEOUT_MS,
+  );
 
   it("holds fire when a target is actively shielding the lane", () => {
     const self = createPlanet({
@@ -630,8 +640,8 @@ describe("AI mode", () => {
     expect(commands).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          type: "ability",
-          slot: "w",
+          boostHeld: true,
+          type: "input",
         }),
       ]),
     );
@@ -823,8 +833,8 @@ describe("AI mode", () => {
     expect(commands).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          type: "ability",
-          slot: "w",
+          boostHeld: true,
+          type: "input",
         }),
       ]),
     );

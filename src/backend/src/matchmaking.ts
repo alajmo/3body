@@ -1,7 +1,6 @@
 import {
   type AbilityMsg,
   type ArchetypeId,
-  type BotDifficulty,
   type ChatMsg,
   type FireRocketMsg,
   type HelloMsg,
@@ -9,6 +8,8 @@ import {
   type JoinRequest,
   normalizePlayerName,
   type PlayerId,
+  type PlayerName,
+  type ProfileToken,
   type ServerMsg,
   type ShieldAimMsg,
   type VoteRematchMsg,
@@ -78,7 +79,7 @@ type RoomAdmissionSuccess = {
   ok: true;
   room: Room;
   reclaimed: boolean;
-  role: "host" | "player" | "spectator";
+  role: "player" | "spectator";
   participant?: ReturnType<Room["addPlayer"]>;
   resumeToken: string;
 };
@@ -95,6 +96,14 @@ type RoomAdmissionFailure = {
   closeCode?: number;
 };
 
+interface WaitlistEntry {
+  connection: Connection;
+  profileToken: ProfileToken;
+  playerId: PlayerId;
+  playerName: PlayerName;
+  profileTokenHash: string;
+}
+
 export class MatchmakingService {
   readonly config: AppConfig;
   readonly #connections = new Map<string, Connection>();
@@ -103,6 +112,7 @@ export class MatchmakingService {
   readonly #socketCountsByIp = new Map<string, number>();
   readonly #limiter = new SlidingWindowLimiter();
   readonly #outboundTelemetry = new OutboundProtocolTelemetry();
+  readonly #waitlist: WaitlistEntry[] = [];
 
   #admissionsOpen = true;
 
@@ -211,6 +221,21 @@ export class MatchmakingService {
     });
 
     if (!result.ok) {
+      if (
+        result.code === "server_full" &&
+        message.join.kind === "quickGame" &&
+        normalizeOptionalToken(message.resumeToken) === undefined
+      ) {
+        this.enqueueWaitlistEntry({
+          connection,
+          profileToken,
+          playerId: playerIdentity.playerId,
+          playerName,
+          profileTokenHash: playerIdentity.profileTokenHash,
+        });
+        return;
+      }
+
       connection.sendError(result.code, result.message);
       if (result.closeCode !== undefined) {
         connection.close(result.closeCode, result.code);
@@ -218,6 +243,32 @@ export class MatchmakingService {
       return;
     }
 
+    this.completeAdmission({
+      connection,
+      profileToken,
+      playerId: playerIdentity.playerId,
+      playerName,
+      profileTokenHash: playerIdentity.profileTokenHash,
+      result,
+    });
+  }
+
+  private completeAdmission(input: {
+    connection: Connection;
+    profileToken: ProfileToken;
+    playerId: PlayerId;
+    playerName: PlayerName;
+    profileTokenHash: string;
+    result: RoomAdmissionSuccess;
+  }): void {
+    const {
+      connection,
+      profileToken,
+      playerId,
+      playerName,
+      profileTokenHash,
+      result,
+    } = input;
     const { room } = result;
     const transitionEvents = room.advance(Date.now());
 
@@ -226,10 +277,10 @@ export class MatchmakingService {
     }
 
     connection.setSession({
-      playerId: playerIdentity.playerId,
+      playerId,
       playerName,
       profileToken,
-      profileTokenHash: playerIdentity.profileTokenHash,
+      profileTokenHash,
       resumeToken: result.resumeToken,
       roomId: room.id,
       role: result.role,
@@ -237,10 +288,9 @@ export class MatchmakingService {
 
     connection.send({
       type: "welcome",
-      playerId: playerIdentity.playerId,
+      playerId,
       profileToken,
       roomId: room.id,
-      roomKind: room.kind,
       resumeToken: result.resumeToken,
       role: result.role,
       roster: room.roster(),
@@ -257,12 +307,77 @@ export class MatchmakingService {
     log.info("player_admitted", {
       clientIp: connection.clientIp,
       roomId: room.id,
-      roomKind: room.kind,
       phase: room.phase,
-      playerId: playerIdentity.playerId,
+      playerId,
       reclaimed: result.reclaimed,
       role: result.role,
     });
+  }
+
+  private enqueueWaitlistEntry(entry: WaitlistEntry): void {
+    entry.connection.markHelloHandled();
+    this.#waitlist.push(entry);
+    log.info("waitlist_enqueued", {
+      clientIp: entry.connection.clientIp,
+      connId: entry.connection.id,
+      playerId: entry.playerId,
+      total: this.#waitlist.length,
+    });
+    this.broadcastWaitlistState();
+  }
+
+  private removeFromWaitlist(connection: Connection): boolean {
+    const index = this.#waitlist.findIndex(
+      (entry) => entry.connection.id === connection.id,
+    );
+    if (index === -1) {
+      return false;
+    }
+
+    this.#waitlist.splice(index, 1);
+    return true;
+  }
+
+  private broadcastWaitlistState(): void {
+    const total = this.#waitlist.length;
+    for (let index = 0; index < total; index += 1) {
+      this.#waitlist[index]!.connection.send({
+        type: "waitlistState",
+        position: index + 1,
+        total,
+      });
+    }
+  }
+
+  private drainWaitlist(): void {
+    let admitted = 0;
+    while (this.#waitlist.length > 0) {
+      const entry = this.#waitlist[0]!;
+      const result = this.tryAdmitToPublicRoom({
+        connection: entry.connection,
+        playerId: entry.playerId,
+        playerName: entry.playerName,
+        profileTokenHash: entry.profileTokenHash,
+      });
+      if (!result.ok) {
+        break;
+      }
+
+      this.#waitlist.shift();
+      admitted += 1;
+      this.completeAdmission({
+        connection: entry.connection,
+        profileToken: entry.profileToken,
+        playerId: entry.playerId,
+        playerName: entry.playerName,
+        profileTokenHash: entry.profileTokenHash,
+        result,
+      });
+    }
+
+    if (admitted > 0) {
+      this.broadcastWaitlistState();
+    }
   }
 
   handleReadyToggle(connection: Connection): void {
@@ -287,56 +402,6 @@ export class MatchmakingService {
 
     room.toggleReady(participant.playerId);
     this.broadcastLobbyState(room);
-  }
-
-  handleSetBotDifficulty(
-    connection: Connection,
-    difficulty: BotDifficulty,
-  ): void {
-    const resolved = this.resolveRoomParticipant(connection);
-    if (!resolved) {
-      return;
-    }
-
-    const { room, participant } = resolved;
-    if (room.phase !== "lobby") {
-      connection.sendError(
-        "phase_invalid",
-        "setBotDifficulty is only valid in lobby",
-      );
-      return;
-    }
-
-    if (room.kind !== "private" || room.hostPlayerId !== participant.playerId) {
-      connection.sendError(
-        "not_host",
-        "Only the host may change bot difficulty",
-      );
-      return;
-    }
-
-    room.setBotDifficulty(difficulty);
-    this.broadcastLobbyState(room);
-  }
-
-  handleHostStart(connection: Connection): void {
-    const resolved = this.resolveRoomParticipant(connection);
-    if (!resolved) {
-      return;
-    }
-
-    const { room, participant } = resolved;
-    if (room.phase !== "lobby") {
-      connection.sendError("phase_invalid", "hostStart is only valid in lobby");
-      return;
-    }
-
-    if (room.kind !== "private" || room.hostPlayerId !== participant.playerId) {
-      connection.sendError("not_host", "Only the host may start the room");
-      return;
-    }
-
-    this.processRoomEvents(room, room.hostStart(Date.now()));
   }
 
   handlePickArchetype(connection: Connection, archetypeId: ArchetypeId): void {
@@ -379,7 +444,7 @@ export class MatchmakingService {
   private dispatchCombatAction(
     connection: Connection,
     actionName: string,
-    spectatorDenial: string,
+    spectatorDenial: string | null,
     buildMessage: (playerId: PlayerId) => QueuedCombatMessage,
   ): void {
     const resolved = this.resolveRoomParticipant(connection);
@@ -389,7 +454,7 @@ export class MatchmakingService {
 
     const { room, participant } = resolved;
     if (room.phase !== "combat") {
-      if (room.phase === "countdown" || room.phase === "ended") {
+      if (room.phase === "ended") {
         return;
       }
       connection.sendError(
@@ -400,7 +465,9 @@ export class MatchmakingService {
     }
 
     if (!room.privateStates.has(participant.playerId)) {
-      connection.sendError("invalid_action", spectatorDenial);
+      if (spectatorDenial !== null) {
+        connection.sendError("invalid_action", spectatorDenial);
+      }
       return;
     }
 
@@ -411,10 +478,11 @@ export class MatchmakingService {
     this.dispatchCombatAction(
       connection,
       "input",
-      "Spectators cannot control planets",
+      null,
       (playerId) => ({
         type: "input",
         playerId,
+        boostHeld: message.boostHeld,
         mouseDir: message.mouseDir,
         clientTick: message.clientTick,
       }),
@@ -520,6 +588,11 @@ export class MatchmakingService {
 
     this.decrementSocketCount(connection.clientIp);
 
+    if (this.removeFromWaitlist(connection)) {
+      this.broadcastWaitlistState();
+      return;
+    }
+
     if (!connection.roomId || !connection.playerId) {
       return;
     }
@@ -542,6 +615,8 @@ export class MatchmakingService {
     if (changed && room.phase === "lobby") {
       this.broadcastLobbyState(room);
     }
+
+    this.drainWaitlist();
   }
 
   beginShutdown(): void {
@@ -554,7 +629,7 @@ export class MatchmakingService {
 
   activeMatchRoomIds(): string[] {
     return [...this.#rooms.values()]
-      .filter((room) => room.phase === "countdown" || room.phase === "combat")
+      .filter((room) => room.phase === "combat")
       .map((room) => room.id);
   }
 
@@ -584,9 +659,11 @@ export class MatchmakingService {
         this.closeRoomConnections(room, 1001, "room_expired");
         this.stopRoomTicker(room.id);
         this.#rooms.delete(room.id);
-        log.info("room_expired", { roomId: room.id, roomKind: room.kind });
+        log.info("room_expired", { roomId: room.id });
       }
     }
+
+    this.drainWaitlist();
   }
 
   private admitToRoom(input: {
@@ -598,14 +675,6 @@ export class MatchmakingService {
     requestedResumeToken?: string;
   }): RoomAdmissionSuccess | RoomAdmissionFailure {
     switch (input.join.kind) {
-      case "createRoom":
-        return this.handleCreateRoom({
-          connection: input.connection,
-          playerId: input.playerId,
-          playerName: input.playerName,
-          profileTokenHash: input.profileTokenHash,
-          requestedResumeToken: input.requestedResumeToken,
-        });
       case "quickGame":
         return this.handleQuickGame({
           connection: input.connection,
@@ -624,69 +693,6 @@ export class MatchmakingService {
           requestedResumeToken: input.requestedResumeToken,
         });
     }
-  }
-
-  private handleCreateRoom(input: {
-    connection: Connection;
-    playerId: string;
-    playerName: Exclude<ReturnType<typeof normalizePlayerName>, null>;
-    profileTokenHash: string;
-    requestedResumeToken?: string;
-  }): RoomAdmissionSuccess | RoomAdmissionFailure {
-    if (input.requestedResumeToken !== undefined) {
-      return {
-        ok: false,
-        code: "bad_resume_token",
-        message: "Resume token requires an existing room",
-      };
-    }
-
-    if (
-      !this.#limiter.consume(
-        `create:${input.connection.clientIp}`,
-        this.config.createsPerIpPer10m,
-        10 * 60_000,
-      )
-    ) {
-      log.warn("rate_limited", {
-        clientIp: input.connection.clientIp,
-        connId: input.connection.id,
-        scope: "create_room",
-      });
-      return {
-        ok: false,
-        code: "rate_limited",
-        message: "Too many room creates from this IP",
-      };
-    }
-
-    if (this.#rooms.size >= this.config.maxRooms) {
-      return {
-        ok: false,
-        code: "server_full",
-        message: "Server is already hosting the maximum number of rooms",
-      };
-    }
-
-    const room = new Room(this.createUniqueRoomId(), "private");
-    this.#rooms.set(room.id, room);
-
-    const participant = room.addPlayer({
-      playerId: input.playerId,
-      name: input.playerName,
-      connId: input.connection.id,
-      profileTokenHash: input.profileTokenHash,
-      resumeToken: newOpaqueToken(),
-    });
-
-    return {
-      ok: true,
-      room,
-      participant,
-      reclaimed: false,
-      role: room.roleForPlayer(participant.playerId),
-      resumeToken: participant.resumeToken,
-    };
   }
 
   private handleQuickGame(input: {
@@ -723,11 +729,22 @@ export class MatchmakingService {
       };
     }
 
+    return this.tryAdmitToPublicRoom({
+      connection: input.connection,
+      playerId: input.playerId,
+      playerName: input.playerName,
+      profileTokenHash: input.profileTokenHash,
+    });
+  }
+
+  private tryAdmitToPublicRoom(input: {
+    connection: Connection;
+    playerId: string;
+    playerName: Exclude<ReturnType<typeof normalizePlayerName>, null>;
+    profileTokenHash: string;
+  }): RoomAdmissionSuccess | RoomAdmissionFailure {
     let room = [...this.#rooms.values()].find(
-      (candidate) =>
-        candidate.kind === "public" &&
-        candidate.phase === "lobby" &&
-        !candidate.isFull(),
+      (candidate) => candidate.phase === "lobby" && !candidate.isFull(),
     );
 
     if (!room) {
@@ -739,7 +756,7 @@ export class MatchmakingService {
         };
       }
 
-      room = new Room(this.createUniqueRoomId(), "public");
+      room = new Room(this.createUniqueRoomId());
       this.#rooms.set(room.id, room);
     }
 
@@ -756,7 +773,7 @@ export class MatchmakingService {
       room,
       participant,
       reclaimed: false,
-      role: room.roleForPlayer(participant.playerId),
+      role: "player",
       resumeToken: participant.resumeToken,
     };
   }
@@ -835,7 +852,7 @@ export class MatchmakingService {
         room,
         participant,
         reclaimed: true,
-        role: room.roleForPlayer(participant.playerId),
+        role: "player",
         resumeToken: participant.resumeToken,
       };
     }
@@ -871,7 +888,7 @@ export class MatchmakingService {
       room,
       participant,
       reclaimed: false,
-      role: room.roleForPlayer(participant.playerId),
+      role: "player",
       resumeToken: participant.resumeToken,
     };
   }
@@ -916,21 +933,6 @@ export class MatchmakingService {
       case "pick":
         connection.send(room.pickState());
         break;
-      case "countdown": {
-        room.recordSnapshotState(this.config.snapshotHistoryTicks);
-        const snapshot = room.fullSnapshotFor(
-          connection.role === "spectator" ? undefined : connection.playerId,
-        );
-        if (snapshot) {
-          connection.send(snapshot);
-          connection.rememberSentSelfState(snapshot.self);
-        }
-        const countdown = room.countdownMessage();
-        if (countdown) {
-          connection.send(countdown);
-        }
-        break;
-      }
       case "combat":
       case "ended": {
         this.syncRoomTicker(room);
@@ -966,9 +968,8 @@ export class MatchmakingService {
         case "pickState":
           this.broadcastPickState(room);
           break;
-        case "countdownStarted":
+        case "combatStarted":
           this.broadcastFullSnapshots(room);
-          this.broadcastCountdown(room);
           break;
         case "rematchState":
           this.broadcastRematchState(room);
@@ -1063,16 +1064,6 @@ export class MatchmakingService {
     }
   }
 
-  private broadcastCountdown(room: Room): void {
-    const message = room.countdownMessage();
-    if (!message) {
-      return;
-    }
-
-    for (const connId of room.activeConnectionIds()) {
-      this.#connections.get(connId)?.send(message);
-    }
-  }
 
   private broadcastRematchState(room: Room): void {
     const message = room.rematchStateMessage();

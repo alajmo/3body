@@ -31,6 +31,7 @@ export interface AbilitySpec {
 export interface BoostSpec {
   charges: number;
   cooldownSec: number;
+  depleteSec: number;
   magnitude: number;
 }
 
@@ -41,6 +42,7 @@ export interface GravityPulseSpec {
 
 export interface CacheSpec {
   count: number;
+  pickupRadius: number;
   respawnSec: number;
   wildcardChance: number;
 }
@@ -213,7 +215,7 @@ export const MATCH_TIMERS: MatchTimerSpec = {
   ...initialGameplay.timers,
 };
 
-export const CACHE_RADIUS = 24;
+export let CACHE_RADIUS = CACHE_SPEC.pickupRadius;
 export const CACHE_GRAVITY_SCALE = 0.34;
 export const CACHE_DROP_SPEED_SCALE = 0.52;
 export const CACHE_TANGENTIAL_SPEED_MIN = 32;
@@ -263,6 +265,7 @@ export const applyGameplayTuning = (gameplay: GameplayTuning) => {
   Object.assign(BOOST_SPEC, gameplay.abilities.boost);
   Object.assign(GRAVITY_PULSE_SPEC, gameplay.abilities.gravityPulse);
   Object.assign(CACHE_SPEC, gameplay.cache);
+  CACHE_RADIUS = CACHE_SPEC.pickupRadius;
   Object.assign(BLACK_HOLE_SPEC, gameplay.blackHole);
   Object.assign(NEUTRON_STAR_SPEC, gameplay.neutronStars);
   Object.assign(MATCH_TIMERS, gameplay.timers);

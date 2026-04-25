@@ -71,6 +71,7 @@ export type CombatBotCommand =
   | {
       type: "input";
       mouseDir: Vec2;
+      boostHeld?: boolean;
       clientTick: number;
     }
   | {
@@ -399,13 +400,22 @@ export const decideCombatBot = (
   const commands: CombatBotCommand[] = [];
   const aimDir = normalizeDir(directive.aimDir, memory.cachedAimDir);
 
-  if (shouldUpdateAim(memory, aimDir, context)) {
+  const boostHeld =
+    directive.abilityPolicy.boost &&
+    directive.abilityPolicy.boostDir !== undefined &&
+    context.privateState.boostCharges > 0;
+  const commandAimDir = boostHeld
+    ? normalizeDir(directive.abilityPolicy.boostDir ?? aimDir, aimDir)
+    : aimDir;
+
+  if (shouldUpdateAim(memory, aimDir, context) || boostHeld) {
     commands.push({
       type: "input",
-      mouseDir: aimDir,
+      boostHeld: boostHeld || undefined,
+      mouseDir: commandAimDir,
       clientTick: context.tick,
     });
-    memory.cachedAimDir = aimDir;
+    memory.cachedAimDir = commandAimDir;
     memory.lastAimTick = context.tick;
   }
 
@@ -437,21 +447,7 @@ export const decideCombatBot = (
     memory.lastShieldTick = context.tick;
   }
 
-  if (
-    directive.abilityPolicy.boost &&
-    directive.abilityPolicy.boostDir !== undefined &&
-    context.privateState.boostCharges > 0 &&
-    actionReady(
-      memory.lastBoostTick,
-      Math.max(1, Math.round(context.tickHz / 2)),
-      context.tick,
-    )
-  ) {
-    emitAbilityCommand(
-      commands,
-      "w",
-      normalizeDir(directive.abilityPolicy.boostDir, aimDir),
-    );
+  if (boostHeld) {
     memory.lastBoostTick = context.tick;
     blackboard.history.lastBoostTick = context.tick;
   }

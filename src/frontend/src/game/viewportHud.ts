@@ -250,14 +250,12 @@ const createMinimapEntity = (
 export const createHudMinimapState = ({
   arenaRadius,
   blackHole,
-  caches,
   highlightedEntity,
   planets,
   suns,
 }: {
   arenaRadius: number;
   blackHole?: BlackHole | null;
-  caches: readonly Cache[];
   highlightedEntity?: {
     id: number;
     kind: GameViewportMinimapEntityKind;
@@ -289,12 +287,6 @@ export const createHudMinimapState = ({
   for (const planet of planets) {
     entities.push(
       createMinimapEntity(planet, "planet", isHighlighted(planet.id, "planet")),
-    );
-  }
-
-  for (const cache of caches) {
-    entities.push(
-      createMinimapEntity(cache, "cache", isHighlighted(cache.id, "cache")),
     );
   }
 

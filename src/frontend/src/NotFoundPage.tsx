@@ -11,8 +11,8 @@ export function NotFoundPage() {
             <h1 className="page-copy__title">Page not found</h1>
             <p className="page-copy__body">
               <code>{pathname}</code> is not a valid route. Use <code>/</code>,{" "}
-              <code>/sandbox</code>, <code>/edit</code>, or{" "}
-              <code>/network</code>, or <code>/soak</code>.
+              <code>/online</code>, <code>/offline</code>, or{" "}
+              <code>/edit</code>.
             </p>
           </section>
         </div>

@@ -108,6 +108,46 @@ export const gravityAccel = (
   return accel;
 };
 
+export const hasSweptCircleOverlap = ({
+  currentA,
+  currentB,
+  previousA,
+  previousB,
+  radius,
+}: {
+  currentA: Vec2;
+  currentB: Vec2;
+  previousA?: Vec2 | undefined;
+  previousB?: Vec2 | undefined;
+  radius: number;
+}): boolean => {
+  const safeRadius = Math.max(0, radius);
+  const radiusSq = safeRadius * safeRadius;
+  const endX = currentA.x - currentB.x;
+  const endY = currentA.y - currentB.y;
+
+  if (previousA === undefined || previousB === undefined) {
+    return endX * endX + endY * endY <= radiusSq;
+  }
+
+  const startX = previousA.x - previousB.x;
+  const startY = previousA.y - previousB.y;
+  const segmentX = endX - startX;
+  const segmentY = endY - startY;
+  const segmentLenSq = segmentX * segmentX + segmentY * segmentY;
+  const closestT =
+    segmentLenSq === 0
+      ? 0
+      : Math.max(
+          0,
+          Math.min(1, -(startX * segmentX + startY * segmentY) / segmentLenSq),
+        );
+  const closestX = startX + segmentX * closestT;
+  const closestY = startY + segmentY * closestT;
+
+  return closestX * closestX + closestY * closestY <= radiusSq;
+};
+
 export const stepSuns = (
   suns: readonly Sun[],
   dt: number,

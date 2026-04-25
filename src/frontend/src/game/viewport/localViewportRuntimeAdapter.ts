@@ -520,7 +520,10 @@ export const buildLocalViewportRuntimeSceneFrame = ({
       renderQuality.impactBurstBudget,
     ),
     nowSec,
-    playerBoostHeld: inputRuntime.pendingAbilityRequests.boost,
+    playerBoostHeld:
+      controlsEnabled &&
+      inputRuntime.pendingAbilityRequests.boost &&
+      (simulationState.currentState.player?.boostCharges ?? 0) > 0,
     playerPlanet: simulationFrame.playerPlanet,
     renderPlanetsById: simulationState.renderPlanetsById,
     renderQuality,

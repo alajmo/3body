@@ -25,8 +25,13 @@ import {
 const BOOST_WAKE_BEND_MIN = 0.22;
 const BOOST_WAKE_BEND_MAX = 1.18;
 const BOOST_WAKE_GEOMETRY_SEGMENTS = 12;
+const BOOST_WAKE_FLOW_RATE = 11.5;
+const BOOST_WAKE_RIPPLE_SCALE = 0.055;
 
 const SHARED_COMBAT_BOOST_BURST_DURATION_SEC = 0.48;
+const HELD_BOOST_WAKE_RAMP_UP_SEC = 0.32;
+const HELD_BOOST_WAKE_FADE_SEC = 0.36;
+const HELD_BOOST_WAKE_MIN_FRAME_SEC = 1 / 60;
 
 export interface SharedCombatBoostBody {
   alive?: boolean;
@@ -41,6 +46,8 @@ export interface SharedCombatBoostBurstState {
   radius: number;
   startedAtSec: number;
   tick: number;
+  visualAlpha?: number;
+  visualProgress?: number;
 }
 
 interface SharedCombatBoostDirectionOverride {
@@ -63,10 +70,21 @@ export interface SharedCombatBoostWakeVisual {
 
 export interface SharedCombatBoostBurstVisual {
   geometry: BufferGeometry;
+  heldBoostState?: SharedCombatHeldBoostVisualState;
   opacityAttribute: Float32BufferAttribute;
   points: Points;
   positionAttribute: Float32BufferAttribute;
   wakeVisuals: readonly SharedCombatBoostWakeVisual[];
+}
+
+export interface SharedCombatHeldBoostVisualState {
+  direction: Vec2;
+  lastSyncedAtSec: number | null;
+  level: number;
+  origin: Vec2;
+  planetId: number | null;
+  radius: number;
+  tick: number;
 }
 
 interface SharedCombatVisibleBoostWakeBurst {
@@ -88,6 +106,31 @@ export interface SharedCombatBoostWakeMaterialResult {
   material: MeshBasicMaterial;
   texture: { dispose: () => void } | null;
 }
+
+const createSharedCombatHeldBoostVisualState =
+  (): SharedCombatHeldBoostVisualState => ({
+    direction: { x: 1, y: 0 },
+    lastSyncedAtSec: null,
+    level: 0,
+    origin: { x: 0, y: 0 },
+    planetId: null,
+    radius: 0,
+    tick: 0,
+  });
+
+const getSharedCombatBoostBurstAlpha = (
+  burst: SharedCombatBoostBurstState,
+  ageSec: number,
+): number =>
+  burst.visualAlpha ??
+  clamp(1 - ageSec / SHARED_COMBAT_BOOST_BURST_DURATION_SEC, 0, 1);
+
+const getSharedCombatBoostBurstProgress = (
+  burst: SharedCombatBoostBurstState,
+  ageSec: number,
+): number =>
+  burst.visualProgress ??
+  clamp(ageSec / SHARED_COMBAT_BOOST_BURST_DURATION_SEC, 0, 1);
 
 const getSharedCombatBoostBurstAnchor = ({
   burst,
@@ -246,11 +289,13 @@ export const getSharedCombatBoostWakeCurveOffset = ({
 const updateSharedCombatBoostWakeGeometry = ({
   currentDirection,
   directionSamples,
+  nowSec,
   wakeProgress,
   wakeVisual,
 }: {
   currentDirection: Vec2;
   directionSamples: readonly Vec2[];
+  nowSec: number;
   wakeProgress: number;
   wakeVisual: SharedCombatBoostWakeVisual;
 }) => {
@@ -265,8 +310,15 @@ const updateSharedCombatBoostWakeGeometry = ({
       tailProgress: baseX,
       wakeProgress,
     });
+    const flowPhase = baseX * 18 - nowSec * BOOST_WAKE_FLOW_RATE;
+    const finePhase = baseX * 34 - nowSec * BOOST_WAKE_FLOW_RATE * 1.7;
+    const flameRipple =
+      (Math.sin(flowPhase) * 0.72 + Math.sin(finePhase) * 0.28) *
+      BOOST_WAKE_RIPPLE_SCALE *
+      Math.sin(Math.PI * clamp(baseX, 0, 1)) *
+      lerp(0.35, 1, clamp(wakeProgress, 0, 1));
     positionArray[index] = baseX;
-    positionArray[index + 1] = baseY + curveOffset;
+    positionArray[index + 1] = baseY + curveOffset + flameRipple;
     positionArray[index + 2] = wakeVisual.basePositions[index + 2]!;
   }
 
@@ -295,16 +347,8 @@ export const collectSharedCombatVisibleBoostWakeBursts = ({
       continue;
     }
 
-    const burstAlpha = clamp(
-      1 - ageSec / SHARED_COMBAT_BOOST_BURST_DURATION_SEC,
-      0,
-      1,
-    );
-    const burstProgress = clamp(
-      ageSec / SHARED_COMBAT_BOOST_BURST_DURATION_SEC,
-      0,
-      1,
-    );
+    const burstAlpha = getSharedCombatBoostBurstAlpha(burst, ageSec);
+    const burstProgress = getSharedCombatBoostBurstProgress(burst, ageSec);
     const directionWeight = burstAlpha;
     const direction = getEffectiveSharedCombatBoostDirection(
       burst,
@@ -528,6 +572,87 @@ export const getSharedCombatHeldBoostDirectionOverride = ({
   };
 };
 
+const getSharedCombatHeldBoostVisualState = (
+  boostVisual: SharedCombatBoostBurstVisual,
+): SharedCombatHeldBoostVisualState => {
+  boostVisual.heldBoostState ??= createSharedCombatHeldBoostVisualState();
+  return boostVisual.heldBoostState;
+};
+
+const syncSharedCombatHeldBoostVisualState = ({
+  boostVisual,
+  directionOverride,
+  heldBoosting,
+  nowSec,
+  playerBody,
+}: {
+  boostVisual: SharedCombatBoostBurstVisual;
+  directionOverride: SharedCombatBoostDirectionOverride | null;
+  heldBoosting: boolean;
+  nowSec: number;
+  playerBody: SharedCombatBoostPresentationBody | null;
+}): SharedCombatBoostBurstState | null => {
+  const state = getSharedCombatHeldBoostVisualState(boostVisual);
+  const elapsedSec =
+    state.lastSyncedAtSec === null
+      ? HELD_BOOST_WAKE_MIN_FRAME_SEC
+      : Math.max(0, nowSec - state.lastSyncedAtSec);
+  state.lastSyncedAtSec = nowSec;
+
+  const shouldRampUp =
+    heldBoosting &&
+    directionOverride !== null &&
+    playerBody !== null &&
+    playerBody.alive !== false;
+
+  if (shouldRampUp) {
+    if (state.planetId !== playerBody.id || state.level <= 0) {
+      state.tick = Math.trunc(nowSec * 60);
+    }
+    state.level = clamp(
+      state.level + elapsedSec / HELD_BOOST_WAKE_RAMP_UP_SEC,
+      0,
+      1,
+    );
+    state.direction = directionOverride.direction;
+    state.origin = playerBody.pos;
+    state.planetId = playerBody.id;
+    state.radius = playerBody.radius;
+  } else {
+    state.level = clamp(
+      state.level - elapsedSec / HELD_BOOST_WAKE_FADE_SEC,
+      0,
+      1,
+    );
+    if (
+      state.planetId !== null &&
+      playerBody !== null &&
+      playerBody.id === state.planetId &&
+      playerBody.alive !== false
+    ) {
+      state.origin = playerBody.pos;
+      state.radius = playerBody.radius;
+    }
+  }
+
+  if (state.level <= 0 || state.planetId === null) {
+    state.level = 0;
+    state.planetId = null;
+    return null;
+  }
+
+  return {
+    direction: state.direction,
+    origin: state.origin,
+    planetId: state.planetId,
+    radius: state.radius,
+    startedAtSec: nowSec - SHARED_COMBAT_BOOST_BURST_DURATION_SEC * state.level,
+    tick: state.tick,
+    visualAlpha: state.level,
+    visualProgress: state.level,
+  };
+};
+
 const hasVisibleSharedCombatPlayerBoostBurst = ({
   activeBursts,
   nowSec,
@@ -586,11 +711,23 @@ export const syncSharedCombatBoostPresentation = ({
         playerBody,
       }),
   });
+  const presentationBursts = [...activeBursts];
 
   if (boostVisual !== null) {
+    const heldBoostBurst = syncSharedCombatHeldBoostVisualState({
+      boostVisual,
+      directionOverride,
+      heldBoosting,
+      nowSec,
+      playerBody,
+    });
+    if (heldBoostBurst !== null) {
+      presentationBursts.push(heldBoostBurst);
+    }
+
     syncSharedCombatBoostBurstVisual({
       boostVisual,
-      bursts: activeBursts,
+      bursts: presentationBursts,
       directionOverride,
       getBodyById,
       maxParticlesPerBurst,
@@ -638,16 +775,8 @@ const syncSharedCombatBoostBurstVisual = ({
       continue;
     }
 
-    const burstAlpha = clamp(
-      1 - ageSec / SHARED_COMBAT_BOOST_BURST_DURATION_SEC,
-      0,
-      1,
-    );
-    const burstProgress = clamp(
-      ageSec / SHARED_COMBAT_BOOST_BURST_DURATION_SEC,
-      0,
-      1,
-    );
+    const burstAlpha = getSharedCombatBoostBurstAlpha(burst, ageSec);
+    const burstProgress = getSharedCombatBoostBurstProgress(burst, ageSec);
     const { origin, radius } = getSharedCombatBoostBurstAnchor({
       burst,
       getBodyById,
@@ -683,10 +812,17 @@ const syncSharedCombatBoostBurstVisual = ({
       const progress = index / Math.max(1, particleLimit - 1);
       const spreadAngle =
         ((index % 7) - 3) * 0.11 +
-        Math.sin(burst.tick * 0.29 + index * 1.13) * 0.08;
+        Math.sin(burst.tick * 0.29 + index * 1.13) * 0.08 +
+        Math.sin(nowSec * 17 + index * 1.71 + burst.tick * 0.13) * 0.045;
       const particleDir = rot(exhaustDir, spreadAngle);
+      const particleFlow =
+        Math.sin(nowSec * 21 + index * 2.17 + burst.tick * 0.19) *
+        radius *
+        0.16;
       const travel =
-        radius * (0.68 + progress * 1.1) + ageSec * (210 + (index % 5) * 44);
+        radius * (0.68 + progress * 1.1) +
+        ageSec * (210 + (index % 5) * 44) +
+        particleFlow;
       const forwardDrift = ageSec * 30 * (1 - progress * 0.6);
       const bendOffset = scaleVec2(
         exhaustTangent,
@@ -756,6 +892,7 @@ const syncSharedCombatBoostBurstVisual = ({
     updateSharedCombatBoostWakeGeometry({
       currentDirection: wakeBurst.direction,
       directionSamples,
+      nowSec,
       wakeProgress: wakeBurst.progress,
       wakeVisual,
     });
@@ -768,6 +905,8 @@ const syncSharedCombatBoostBurstVisual = ({
     wakeVisual.mesh.scale.set(wakeLength, wakeWidth, 1);
     wakeVisual.mesh.rotation.z = Math.atan2(exhaustDir.y, exhaustDir.x);
     wakeVisual.material.opacity =
-      wakeBurst.alpha * lerp(1, 0.44, wakeBurst.progress);
+      wakeBurst.alpha *
+      lerp(1, 0.44, wakeBurst.progress) *
+      (0.9 + Math.sin(nowSec * 18 + wakeBurst.burst.tick * 0.37) * 0.1);
   }
 };

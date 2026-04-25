@@ -33,8 +33,6 @@ import {
   CACHE_GRAVITY_SCALE,
   CACHE_RADIUS,
   CACHE_SPEC,
-  CACHE_TANGENTIAL_SPEED_MAX,
-  CACHE_TANGENTIAL_SPEED_MIN,
   clamp,
   cloneCombatBotMemory,
   consumeBlackHoleBodies,
@@ -59,16 +57,14 @@ import {
   getBoundaryAsteroidExplosionSpeedVariance,
   getBoundaryAsteroidImpactRadius,
   getOrbitPatternDistanceScaleAtElapsedSec,
-  getOuterRingMax,
-  getOuterRingMin,
   getPreferredLocalPlayerOrbitIndex,
   getSeekerLockTicks,
   getShieldLoadCapacity,
   getUmbraDragDurationTicks,
   getUmbraDragStepMultiplier,
+  hasSweptCircleOverlap,
   hasCrossedBlackHoleHorizon,
   len,
-  lerp,
   lerpVec2,
   mulberry32,
   NEUTRON_STAR_SPEC,
@@ -81,6 +77,7 @@ import {
   SHIELD_SPEC,
   SIM_HZ,
   sampleBoundaryAsteroidSpawnCount,
+  sampleCacheSpawnKinematics,
   scale,
   shouldDespawnBoundaryAsteroid,
   stepBody,
@@ -97,6 +94,7 @@ import {
   type OrbitRiskProfile,
 } from "./orbitPresets";
 import { findMinPlanetSunGap, findMinSunSunGap } from "./orbitSandbox";
+import { getPlanetNameForSeat } from "../planetNames";
 import { getPlanetBodyScaleForArchetype } from "./planetVisualTuning";
 import {
   type RuntimeOrbitStarMotion,
@@ -140,16 +138,6 @@ const BOUNDARY_ASTEROID_TIERS = [
 ] as const satisfies readonly AsteroidTier[];
 const DEFAULT_AIM_DIR = { x: 1, y: 0 } satisfies Vec2;
 const LOCAL_BOT_DIFFICULTY: BotDifficulty = "normal";
-const DEFAULT_LOCAL_PLAYER_DISPLAY_NAME = "Pilot";
-const LOCAL_BOT_DISPLAY_NAMES = [
-  "Atlas",
-  "Nadir",
-  "Helios",
-  "Orbit",
-  "Lyra",
-  "Vega",
-  "Rook",
-] as const;
 const SWALLOWED_SUN_DRIFT_ALPHA = 0.035;
 const SWALLOWED_SUN_VELOCITY_DAMPING = 0.08;
 const UMBRA_DRAG_DURATION_TICKS = getUmbraDragDurationTicks(SIM_HZ);
@@ -161,8 +149,25 @@ const CACHE_RESPAWN_TICKS = Math.max(
 const getAbilityTicks = (durationSec: number): number =>
   Math.max(1, Math.round(durationSec * SIM_HZ));
 
-const getBoostRechargeTicks = (): number =>
-  getAbilityTicks(BOOST_SPEC.cooldownSec);
+const getBoostDrainDurationSec = (): number =>
+  Math.max(FIXED_STEP_SEC, BOOST_SPEC.depleteSec);
+
+const getBoostDrainAmount = (archetype: ArchetypeId): number =>
+  getBoostChargeCapacity(archetype) *
+  (FIXED_STEP_SEC / getBoostDrainDurationSec());
+
+const getBoostForceDurationSec = (
+  archetype: ArchetypeId,
+  boostLoadBurned: number,
+): number =>
+  boostLoadBurned /
+  (getBoostChargeCapacity(archetype) / getBoostDrainDurationSec());
+
+const getBoostRechargeAmount = (archetype: ArchetypeId): number =>
+  BOOST_SPEC.cooldownSec <= 0
+    ? Number.POSITIVE_INFINITY
+    : getBoostChargeCapacity(archetype) *
+      (FIXED_STEP_SEC / BOOST_SPEC.cooldownSec);
 
 const getShieldArcDotThreshold = (): number =>
   Math.cos((SHIELD_SPEC.arcDeg * Math.PI) / 360);
@@ -258,6 +263,7 @@ export interface CombatSandboxControllerState {
   shieldLoad: number;
   shieldMaxLoad: number;
   boostCharges: number;
+  boostActive: boolean;
   nextBoostChargeAtTick: number | null;
   lastBoostTick: number | null;
   lastBoostAimDir: Vec2;
@@ -305,7 +311,6 @@ interface CreateSandboxStateOptions {
   botDifficulty?: BotDifficulty;
   participantCount?: number;
   playerBehavior?: "bot" | "human";
-  playerName?: string;
 }
 
 export interface CombatSandboxStepInput {
@@ -364,8 +369,11 @@ const getArchetypeVisuals = (archetype: ArchetypeId) =>
 
 const getArchetypeStats = (archetype: ArchetypeId) => ARCHETYPES[archetype];
 
-const getBoostChargeCapacity = (_archetype: ArchetypeId): number =>
-  BOOST_SPEC.charges;
+const getBoostChargeCapacity = (archetype: ArchetypeId): number =>
+  Math.max(
+    1,
+    BOOST_SPEC.charges + getArchetypeStats(archetype).boostChargeBonus,
+  );
 
 const clonePlanetSeed = (
   planetSeed: OrbitPlanetSeed,
@@ -484,6 +492,7 @@ const createControllerState = (
   shieldLoad: getShieldLoadCapacity(planet.archetype),
   shieldMaxLoad: getShieldLoadCapacity(planet.archetype),
   boostCharges: getBoostChargeCapacity(planet.archetype),
+  boostActive: false,
   nextBoostChargeAtTick: null,
   lastBoostTick: null,
   lastBoostAimDir: { x: DEFAULT_AIM_DIR.x, y: DEFAULT_AIM_DIR.y },
@@ -717,32 +726,24 @@ export const getActiveCombatSuns = (
   suns: readonly CombatSandboxSun[],
 ): CombatSandboxSun[] => suns.filter((sun) => !isSunSwallowed(sun));
 
-const createOuterRingCache = (
+const createCache = (
   rng: () => number,
   id: number,
   preferredAngleRad?: number,
   contents?: CacheContents,
 ): CombatSandboxCache => {
-  const angle = preferredAngleRad ?? rng() * Math.PI * 2 + (rng() - 0.5) * 0.24;
-  const radius = lerp(getOuterRingMin(), getOuterRingMax(), rng());
-  const tangentialDir = fromAngle(
-    angle + (Math.PI / 2) * (rng() < 0.5 ? -1 : 1),
-  );
-  const driftSpeed = lerp(
-    CACHE_TANGENTIAL_SPEED_MIN,
-    CACHE_TANGENTIAL_SPEED_MAX,
-    rng(),
-  );
+  const spawn = sampleCacheSpawnKinematics({
+    arenaRadius: ARENA_RADIUS,
+    preferredAngleRad,
+    rng,
+  });
 
   return {
     id,
     kind: "cache",
     contents: contents === undefined ? rollCacheContents(rng) : contents,
-    pos: {
-      x: Math.cos(angle) * radius,
-      y: Math.sin(angle) * radius,
-    },
-    vel: scale(tangentialDir, driftSpeed),
+    pos: spawn.pos,
+    vel: spawn.vel,
     radius: CACHE_RADIUS,
   };
 };
@@ -757,7 +758,7 @@ const createInitialCaches = (
   for (let index = 0; index < CACHE_SPEC.count; index += 1) {
     const angle =
       (index / CACHE_SPEC.count) * Math.PI * 2 + (rng() - 0.5) * 0.42;
-    caches.push(createOuterRingCache(rng, nextId, angle));
+    caches.push(createCache(rng, nextId, angle));
     nextId += 1;
   }
 
@@ -988,29 +989,23 @@ const aimDirFromWorldTarget = (
   return len(aimDir) === 0 ? fallback : aimDir;
 };
 
-const refreshBoostCharges = (
+const refreshBoostLoad = (
   controller: CombatSandboxControllerState,
-  tick: number,
-  maxBoostCharges: number,
+  archetype: ArchetypeId,
 ) => {
-  if (controller.boostCharges >= maxBoostCharges) {
+  const maxBoostLoad = getBoostChargeCapacity(archetype);
+  if (controller.boostCharges >= maxBoostLoad) {
+    controller.boostCharges = maxBoostLoad;
     controller.nextBoostChargeAtTick = null;
     return;
   }
 
-  while (
-    controller.nextBoostChargeAtTick !== null &&
-    controller.nextBoostChargeAtTick <= tick
-  ) {
-    controller.boostCharges = Math.min(
-      maxBoostCharges,
-      controller.boostCharges + 1,
-    );
-    controller.nextBoostChargeAtTick =
-      controller.boostCharges >= maxBoostCharges
-        ? null
-        : controller.nextBoostChargeAtTick + getBoostRechargeTicks();
-  }
+  controller.boostCharges = Math.min(
+    maxBoostLoad,
+    controller.boostCharges + getBoostRechargeAmount(archetype),
+  );
+  controller.nextBoostChargeAtTick =
+    controller.boostCharges >= maxBoostLoad ? null : 0;
 };
 
 const refreshShieldLoad = (controller: CombatSandboxControllerState) => {
@@ -1845,6 +1840,7 @@ const applyBotCommand = (
   switch (command.type) {
     case "input":
       setAimWorldFromDirection(controller, controlledBody, command.mouseDir);
+      frame.boostRequested = command.boostHeld === true;
       break;
 
     case "shieldAim": {
@@ -1935,26 +1931,14 @@ export const createSandboxState = (
   );
   const playerPlanetId = planetSeeds[playerPlanetIndex]!.id;
   const botDifficulty = options.botDifficulty ?? LOCAL_BOT_DIFFICULTY;
-  const normalizedPlayerName = options.playerName?.trim();
-  let nextBotDisplayNameIndex = 0;
-  const nextBotDisplayName = () =>
-    LOCAL_BOT_DISPLAY_NAMES[
-      nextBotDisplayNameIndex++ % LOCAL_BOT_DISPLAY_NAMES.length
-    ]!;
-  const playerDisplayName =
-    playerBehavior === "bot"
-      ? nextBotDisplayName()
-      : normalizedPlayerName && normalizedPlayerName.length > 0
-        ? normalizedPlayerName
-        : DEFAULT_LOCAL_PLAYER_DISPLAY_NAME;
-  const planets = planetSeeds.map((planetSeed, index) => {
-    const displayName =
-      planetSeed.id === playerPlanetId
-        ? playerDisplayName
-        : nextBotDisplayName();
-
-    return clonePlanetSeed(planetSeed, index, playerPlanetId, displayName);
-  });
+  const planets = planetSeeds.map((planetSeed, index) =>
+    clonePlanetSeed(
+      planetSeed,
+      index,
+      playerPlanetId,
+      getPlanetNameForSeat(index),
+    ),
+  );
   const player = createControllerState(planets[playerPlanetIndex]!);
   const playerBot =
     playerBehavior === "bot"
@@ -2073,18 +2057,25 @@ export const stepSandbox = (
 
   let planets = state.planets.slice();
   let rockets = state.rockets.slice();
-  let caches = state.caches.slice();
+  const previousPlanetsById = new Map(
+    planets.map((planet) => [planet.id, planet]),
+  );
+  let caches = state.caches.map((cache) =>
+    cache.radius === CACHE_RADIUS ? cache : { ...cache, radius: CACHE_RADIUS },
+  );
+  const previousCachesById = new Map(caches.map((cache) => [cache.id, cache]));
   let debris = state.debris.slice();
   const cacheRespawnAtTicks = [...state.cacheRespawnAtTicks];
   let nextEntityId = state.nextEntityId;
 
   for (const controller of controllers) {
     const archetypeId = getPlayerArchetypeId(planets, controller.planetId);
-    refreshBoostCharges(
-      controller,
-      state.tick,
-      getBoostChargeCapacity(archetypeId),
-    );
+    if (
+      !controller.boostActive &&
+      !frameByPlayerId.get(controller.playerId)?.boostRequested
+    ) {
+      refreshBoostLoad(controller, archetypeId);
+    }
     refreshShieldLoad(controller);
   }
 
@@ -2153,15 +2144,16 @@ export const stepSandbox = (
   const impactBursts = stepImpactBursts(state.impactBursts, nextTick);
   const launchBursts = stepLaunchBursts(state.launchBursts, nextTick);
 
-  const boostAimByPlayerId = new Map<string, Vec2>();
+  const boostStepByPlayerId = new Map<
+    string,
+    { aimDir: Vec2; loadBurned: number }
+  >();
   for (const controller of controllers) {
     const frame = frameByPlayerId.get(controller.playerId)!;
     const planetBeforeStep = findPlayerPlanet(planets, controller.planetId);
     const archetypeId =
       planetBeforeStep?.archetype ??
       getPlayerArchetypeId(planets, controller.planetId);
-    const _archetype = getArchetypeStats(archetypeId);
-    const maxBoostCharges = getBoostChargeCapacity(archetypeId);
     const currentAimDir = aimDirFromWorldTarget(
       planetBeforeStep,
       controller.aimWorld,
@@ -2209,21 +2201,32 @@ export const stepSandbox = (
 
     const boostRequested =
       frame.boostRequested &&
-      planetBeforeStep?.alive &&
+      planetBeforeStep?.alive === true &&
       controller.boostCharges > 0 &&
       len(currentAimDir) > 0;
+    const boostStarted = boostRequested && !controller.boostActive;
+    const boostLoadBurned = boostRequested
+      ? Math.min(controller.boostCharges, getBoostDrainAmount(archetypeId))
+      : 0;
     if (boostRequested) {
-      controller.boostCharges -= 1;
-      controller.lastBoostTick = nextTick;
       controller.lastBoostAimDir = currentAimDir;
-      boostAimByPlayerId.set(controller.playerId, currentAimDir);
-      if (
-        controller.boostCharges < maxBoostCharges &&
-        controller.nextBoostChargeAtTick === null
-      ) {
-        controller.nextBoostChargeAtTick = state.tick + getBoostRechargeTicks();
+      boostStepByPlayerId.set(controller.playerId, {
+        aimDir: currentAimDir,
+        loadBurned: boostLoadBurned,
+      });
+      controller.boostCharges = Math.max(
+        0,
+        controller.boostCharges - boostLoadBurned,
+      );
+      controller.nextBoostChargeAtTick =
+        controller.boostCharges >= getBoostChargeCapacity(archetypeId)
+          ? null
+          : 0;
+      if (boostStarted) {
+        controller.lastBoostTick = nextTick;
       }
     }
+    controller.boostActive = boostRequested && controller.boostCharges > 0;
   }
 
   const spawnedLaunchBursts: CombatSandboxRocketLaunchBurst[] = [];
@@ -2308,9 +2311,9 @@ export const stepSandbox = (
 
     const controller = controllerByPlayerId.get(planet.playerId);
     const debuffs = normalizePlanetDebuffs(planet.debuffs, state.tick);
-    const boostAimDir = boostAimByPlayerId.get(planet.playerId) ?? null;
+    const boostStep = boostStepByPlayerId.get(planet.playerId) ?? null;
     const boostedPlanet =
-      boostAimDir !== null && controller !== undefined
+      boostStep !== null && controller !== undefined
         ? {
             ...planet,
             debuffs,
@@ -2324,8 +2327,12 @@ export const stepSandbox = (
             vel: add(
               planet.vel,
               scale(
-                boostAimDir,
+                boostStep.aimDir,
                 BOOST_SPEC.magnitude *
+                  getBoostForceDurationSec(
+                    planet.archetype,
+                    boostStep.loadBurned,
+                  ) *
                   getArchetypeStats(planet.archetype).boostMagnitudeMultiplier,
               ),
             ),
@@ -2704,7 +2711,13 @@ export const stepSandbox = (
       for (const planet of planets) {
         if (
           planet.alive &&
-          dist(cache.pos, planet.pos) <= cache.radius + planet.radius
+          hasSweptCircleOverlap({
+            currentA: cache.pos,
+            currentB: planet.pos,
+            previousA: previousCachesById.get(cache.id)?.pos,
+            previousB: previousPlanetsById.get(planet.id)?.pos,
+            radius: cache.radius + planet.radius,
+          })
         ) {
           pickedUpByPlanet = true;
           const controller = controllerByPlayerId.get(planet.playerId);
@@ -2741,7 +2754,7 @@ export const stepSandbox = (
     caches.length < CACHE_SPEC.count
   ) {
     cacheRespawnAtTicks.shift();
-    caches.push(createOuterRingCache(state.rng, nextEntityId));
+    caches.push(createCache(state.rng, nextEntityId));
     nextEntityId += 1;
   }
 

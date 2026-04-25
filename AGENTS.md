@@ -34,8 +34,8 @@ Do not copy older guidance that assumes `three@0.169.x`; it is stale.
 
 - Keep shared gameplay behavior in `src/shared` when both frontend and backend
   need it. Do not fork math or protocol behavior silently across packages.
-- Treat `/sandbox` as the local renderer stress/profiling route and `/` as the
-  primary authoritative match shell.
+- Treat `/offline` as the local renderer stress/profiling route and `/online`
+  as the authoritative match shell. `/` is the play menu.
 - Prefer extending the extracted helper modules before adding more logic back
   into the giant entry files.
 - Keep changes consistent with the current refactor direction: lower allocation

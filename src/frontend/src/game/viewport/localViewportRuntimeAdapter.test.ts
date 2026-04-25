@@ -234,7 +234,7 @@ describe("localViewportRuntimeAdapter", () => {
     expect(frame.maxRocketTrailSamples).toBe(9);
     expect(frame.maxVisibleImpactBursts).toBe(25);
     expect(frame.nowSec).toBe(12.5);
-    expect(frame.playerBoostHeld).toBe(true);
+    expect(frame.playerBoostHeld).toBe(false);
     expect(frame.playerPlanet).toBe(playerPlanet);
     expect(frame.renderPlanetsById).toBe(renderPlanetsById);
     expect(frame.renderQuality.impactBurstBudget).toBe(1.25);

@@ -141,13 +141,15 @@ describe("CombatHud", () => {
       />,
     );
 
-    expect(screen.getByText("2:05")).toBeInTheDocument();
-    expect(document.querySelector(".match-timer__status")).toBeNull();
-    expect(screen.getByText("connected")).toBeInTheDocument();
+    expect(screen.queryByText("2:05")).not.toBeInTheDocument();
+    expect(document.querySelector(".match-timer")).toBeNull();
+    expect(screen.queryByText("connected")).not.toBeInTheDocument();
     expect(screen.getByText("13 ms")).toBeInTheDocument();
     expect(screen.getByText("59 FPS")).toBeInTheDocument();
-    expect(screen.getByText("16.9 ms")).toBeInTheDocument();
-    expect(screen.getByText("Remote sim · Extrapolating")).toBeInTheDocument();
+    expect(screen.queryByText("16.9 ms")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Remote sim · Extrapolating"),
+    ).not.toBeInTheDocument();
     expect(screen.getByText("Health")).toBeInTheDocument();
     expect(screen.queryByText("Kill Feed")).not.toBeInTheDocument();
     expect(screen.queryByText("Compass")).not.toBeInTheDocument();
@@ -300,7 +302,7 @@ describe("CombatHud", () => {
     expect(controller.setProfilingEnabled).toHaveBeenCalledWith(true);
   });
 
-  it("hides a duplicate local connection detail label", () => {
+  it("does not render the connection state label or detail text", () => {
     render(
       <CombatHud
         controller={createControllerMock()}
@@ -309,8 +311,9 @@ describe("CombatHud", () => {
       />,
     );
 
-    expect(screen.getByText("local")).toBeInTheDocument();
+    expect(screen.queryByText("local")).not.toBeInTheDocument();
     expect(document.querySelector(".connection-indicator__label")).toBeNull();
+    expect(document.querySelector(".connection-indicator__state")).toBeNull();
   });
 
   it("does not show black hole spawn copy before the warning state", () => {

@@ -3,17 +3,11 @@ import { EditPage } from "./EditPage";
 import { GamePage } from "./GamePage";
 import { NetworkGamePage } from "./NetworkGamePage";
 import { NotFoundPage } from "./NotFoundPage";
+import { PlayMenuPage } from "./PlayMenuPage";
 import { resolveAppRoute, type ResolvedAppRoute } from "./routes";
-import { ViewportSoakPage } from "./ViewportSoakPage";
 
-const getCurrentRoute = (): ResolvedAppRoute => {
-  const url = new URL(window.location.href);
-  if (url.pathname === "/" && url.searchParams.get("page") === "soak") {
-    return "/soak";
-  }
-
-  return resolveAppRoute(url.pathname);
-};
+const getCurrentRoute = (): ResolvedAppRoute =>
+  resolveAppRoute(new URL(window.location.href).pathname);
 
 export function App() {
   const [route, setRoute] = useState<ResolvedAppRoute>(getCurrentRoute);
@@ -33,15 +27,13 @@ export function App() {
 
   switch (route) {
     case "/":
-      return <NetworkGamePage />;
+      return <PlayMenuPage />;
     case "/edit":
       return <EditPage />;
-    case "/network":
+    case "/online":
       return <NetworkGamePage />;
-    case "/sandbox":
+    case "/offline":
       return <GamePage />;
-    case "/soak":
-      return <ViewportSoakPage />;
     case "not-found":
       return <NotFoundPage />;
     default:

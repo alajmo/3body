@@ -8,14 +8,12 @@ import type {
 } from "@3body/shared";
 import {
   ARCHETYPES,
-  BOOST_SPEC,
   clamp,
   len,
   lerp,
   normalize as normalizeVec2,
   ROCKET_SPECS,
   SIM_HZ,
-  SNAPSHOT_HZ,
   sub,
 } from "@3body/shared";
 import type {
@@ -42,6 +40,7 @@ interface AuthoritativeSeekerLockResolution {
 interface AuthoritativeCombatControlStepResolution {
   aimDir: Vec2 | null;
   boostAvailable: boolean;
+  boostHeld: boolean;
   dispatchEnabled: boolean;
   fireTargetId: number | undefined;
   queuedAbilitySlots: readonly AbilitySlot[];
@@ -101,9 +100,6 @@ const getAuthoritativeAimDirection = ({
     ? normalizeVec2(aimDelta)
     : DEFAULT_AUTHORITATIVE_AIM_DIR;
 };
-
-const getAuthoritativeBoostRepeatIntervalSec = (): number =>
-  Math.max(1 / SNAPSHOT_HZ, BOOST_SPEC.cooldownSec * 0.9);
 
 const findAimLockTargetPlanet = ({
   aimWorld,
@@ -212,17 +208,20 @@ const resolveAuthoritativeSeekerLock = ({
 };
 
 const shouldDispatchAuthoritativeInput = ({
+  boostHeldChanged,
   inputSendIntervalMs,
   lastInputSentAtMs,
   shieldActive,
   timeMs,
 }: {
+  boostHeldChanged: boolean;
   inputSendIntervalMs: number;
   lastInputSentAtMs: number;
   shieldActive: boolean;
   timeMs: number;
 }): boolean =>
-  !shieldActive && timeMs - lastInputSentAtMs >= inputSendIntervalMs;
+  boostHeldChanged ||
+  (!shieldActive && timeMs - lastInputSentAtMs >= inputSendIntervalMs);
 
 const shouldDispatchAuthoritativeShieldAim = ({
   lastShieldAimSentAtMs,
@@ -238,23 +237,13 @@ const shouldDispatchAuthoritativeShieldAim = ({
   shieldActive && timeMs - lastShieldAimSentAtMs >= shieldAimSendIntervalMs;
 
 const getAuthoritativeQueuedAbilitySlots = ({
-  boostAvailable,
-  lastBoostAbilitySentAtSec,
-  nowSec,
   pendingAbilityRequests,
 }: {
-  boostAvailable: boolean;
-  lastBoostAbilitySentAtSec: number;
-  nowSec: number;
   pendingAbilityRequests: AuthoritativePendingAbilityRequests;
 }): readonly AbilitySlot[] =>
   getAuthoritativeAbilitySlots({
     ...pendingAbilityRequests,
-    boost:
-      pendingAbilityRequests.boost &&
-      boostAvailable &&
-      nowSec - lastBoostAbilitySentAtSec >=
-        getAuthoritativeBoostRepeatIntervalSec(),
+    boost: false,
   });
 
 const resolveAuthoritativeFireTargetId = ({
@@ -343,7 +332,7 @@ export const resolveAuthoritativeCombatControlStep = ({
   connectionState,
   inputSendIntervalMs,
   inputState,
-  lastBoostAbilitySentAtSec,
+  lastBoostHeldSent,
   lastInputSentAtMs,
   lastShieldAimSentAtMs,
   nowSec,
@@ -364,7 +353,7 @@ export const resolveAuthoritativeCombatControlStep = ({
     aimWorld: Vec2;
     selectedRocketKind: RocketKind;
   };
-  lastBoostAbilitySentAtSec: number;
+  lastBoostHeldSent: boolean;
   lastInputSentAtMs: number;
   lastShieldAimSentAtMs: number;
   nowSec: number;
@@ -400,6 +389,7 @@ export const resolveAuthoritativeCombatControlStep = ({
     return {
       aimDir: null,
       boostAvailable,
+      boostHeld: false,
       dispatchEnabled,
       fireTargetId: undefined,
       queuedAbilitySlots: [],
@@ -415,10 +405,12 @@ export const resolveAuthoritativeCombatControlStep = ({
     playerPos: playerPlanet.pos,
   });
   const shieldActive = playerPlanet.shieldActive && playerPlanet.shieldLoad > 0;
+  const boostHeld = pendingAbilityRequests.boost;
 
   return {
     aimDir,
     boostAvailable,
+    boostHeld,
     dispatchEnabled,
     fireTargetId: resolveAuthoritativeFireTargetId({
       seekerLockProgress: seekerLock.progress,
@@ -426,13 +418,11 @@ export const resolveAuthoritativeCombatControlStep = ({
       selectedRocketKind: inputState.selectedRocketKind,
     }),
     queuedAbilitySlots: getAuthoritativeQueuedAbilitySlots({
-      boostAvailable,
-      lastBoostAbilitySentAtSec,
-      nowSec,
       pendingAbilityRequests,
     }),
     seekerLock,
     sendInput: shouldDispatchAuthoritativeInput({
+      boostHeldChanged: boostHeld !== lastBoostHeldSent,
       inputSendIntervalMs,
       lastInputSentAtMs,
       shieldActive,

@@ -1,8 +1,13 @@
 import { ARCHETYPES } from "./archetypes";
 import {
   ARENA_ASTEROID_FIELD_SPEC,
+  ARENA_RADIUS,
   CACHE_SPEC,
+  CACHE_TANGENTIAL_SPEED_MAX,
+  CACHE_TANGENTIAL_SPEED_MIN,
   DEFAULT_ARENA_RADIUS,
+  getOuterRingMax,
+  getOuterRingMin,
   PLANET_HP,
   ROCKET_SPECS,
   SHIELD_EXT_MULTIPLIER,
@@ -34,6 +39,10 @@ const SHIELD_LOAD_REFERENCE_DURATION_SEC = 4;
 const UMBRA_DRAG_DURATION_SEC = 2;
 const UMBRA_DRAG_TOTAL_VELOCITY_MULTIPLIER = 0.3;
 const TAU = Math.PI * 2;
+const CACHE_CENTER_SPAWN_CHANCE = 0.5;
+const CACHE_CENTER_RING_MIN_RATIO = 0.12;
+const CACHE_CENTER_RING_MAX_RATIO = 0.36;
+const CACHE_SPAWN_ANGLE_JITTER_RAD = 0.24;
 const PREFERRED_LOCAL_PLAYER_ORBIT_INDEX = 4;
 const ARENA_ASTEROID_SPEED = {
   large: 132,
@@ -98,6 +107,22 @@ export interface BoundaryAsteroidSpawn {
   pos: Vec2;
   radius: number;
   ttlSec: number;
+  vel: Vec2;
+}
+
+export type CacheSpawnBand = "center" | "outer";
+
+export interface CacheSpawnKinematicsOptions {
+  arenaRadius?: number;
+  preferredAngleRad?: number;
+  rng: () => number;
+}
+
+export interface CacheSpawnKinematics {
+  angle: number;
+  band: CacheSpawnBand;
+  pos: Vec2;
+  radialDistance: number;
   vel: Vec2;
 }
 
@@ -182,6 +207,68 @@ export const rollCacheContents = (rng: () => number): CacheContents => {
   return cloneCacheContents(
     SIMPLE_CACHE_KINDS[Math.floor(rng() * SIMPLE_CACHE_KINDS.length)]!,
   );
+};
+
+const sampleAnnulusRadius = (
+  sample: number,
+  minRadius: number,
+  maxRadius: number,
+): number => {
+  const innerRadius = Math.max(0, Math.min(minRadius, maxRadius));
+  const outerRadius = Math.max(0, Math.max(minRadius, maxRadius));
+  const safeSample = clamp(sample, 0, 1);
+  return Math.sqrt(
+    innerRadius * innerRadius +
+      (outerRadius * outerRadius - innerRadius * innerRadius) * safeSample,
+  );
+};
+
+export const sampleCacheSpawnKinematics = ({
+  arenaRadius = ARENA_RADIUS,
+  preferredAngleRad,
+  rng,
+}: CacheSpawnKinematicsOptions): CacheSpawnKinematics => {
+  const angle =
+    preferredAngleRad ??
+    rng() * TAU + (rng() - 0.5) * CACHE_SPAWN_ANGLE_JITTER_RAD;
+  const safeArenaRadius = Math.max(arenaRadius, 1);
+  const radialBandSample = rng();
+  const band: CacheSpawnBand =
+    radialBandSample < CACHE_CENTER_SPAWN_CHANCE ? "center" : "outer";
+  const radialSample =
+    band === "center"
+      ? radialBandSample / CACHE_CENTER_SPAWN_CHANCE
+      : (radialBandSample - CACHE_CENTER_SPAWN_CHANCE) /
+        (1 - CACHE_CENTER_SPAWN_CHANCE);
+  const radialDistance =
+    band === "center"
+      ? sampleAnnulusRadius(
+          radialSample,
+          safeArenaRadius * CACHE_CENTER_RING_MIN_RATIO,
+          safeArenaRadius * CACHE_CENTER_RING_MAX_RATIO,
+        )
+      : sampleAnnulusRadius(
+          radialSample,
+          getOuterRingMin(safeArenaRadius),
+          getOuterRingMax(safeArenaRadius),
+        );
+  const tangentialDir = fromAngle(
+    angle + (Math.PI / 2) * (rng() < 0.5 ? -1 : 1),
+  );
+  const driftSpeed =
+    CACHE_TANGENTIAL_SPEED_MIN +
+    (CACHE_TANGENTIAL_SPEED_MAX - CACHE_TANGENTIAL_SPEED_MIN) * rng();
+
+  return {
+    angle,
+    band,
+    pos: {
+      x: Math.cos(angle) * radialDistance,
+      y: Math.sin(angle) * radialDistance,
+    },
+    radialDistance,
+    vel: scale(tangentialDir, driftSpeed),
+  };
 };
 
 export const getBoundaryAsteroidDamage = (

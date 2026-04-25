@@ -966,10 +966,11 @@ export const buildShotScores = ({
       shieldLikelihood >= 0.6 &&
       expectedDamage < damage * 0.45 &&
       target.hp > expectedDamage * 1.15;
+    const scoreFloor = rocketKind === "light" ? 12 : 24;
     const allowFire =
       !shieldedLane &&
       confidence >= threshold &&
-      (score >= 24 || target.hp <= damage * Math.max(0.55, confidence));
+      (score >= scoreFloor || target.hp <= damage * Math.max(0.55, confidence));
 
     let holdReason: string | undefined;
     if (!allowFire) {
@@ -1206,8 +1207,14 @@ export const scoreMovementGoals = ({
     bestCache === null
       ? 0
       : estimateCacheValue(bestCache.contents, self, privateState);
-  const boostMagnitude =
+  const boostForcePerSec =
     BOOST_SPEC.magnitude * ARCHETYPES[self.archetype].boostMagnitudeMultiplier;
+  const boostCapacity = Math.max(
+    1,
+    BOOST_SPEC.charges + ARCHETYPES[self.archetype].boostChargeBonus,
+  );
+  const boostDrainDurationSec = Math.max(dt, BOOST_SPEC.depleteSec);
+  const boostLoadBurnPerStep = boostCapacity * (dt / boostDrainDurationSec);
   const goals: EvaluatedMoveGoal[] = [];
 
   for (const candidate of candidates) {
@@ -1217,12 +1224,7 @@ export const scoreMovementGoals = ({
 
     let predictedSelf = clonePlanet(self);
     let predictedRockets = enemyRockets.map(cloneRocket);
-    if (candidate.usesBoost) {
-      predictedSelf.vel = add(
-        predictedSelf.vel,
-        scale(candidate.dir, boostMagnitude),
-      );
-    }
+    let predictedBoostLoad = boostCharges;
 
     let minBoundaryRatio = 1;
     let minBoundaryMargin = Number.POSITIVE_INFINITY;
@@ -1250,6 +1252,19 @@ export const scoreMovementGoals = ({
 
     for (let step = 0; step < steps; step += 1) {
       const stepSunsState = predictedSunsByStep[step]!;
+      if (candidate.usesBoost && predictedBoostLoad > 0) {
+        const boostLoadBurned = Math.min(
+          predictedBoostLoad,
+          boostLoadBurnPerStep,
+        );
+        const boostForceDurationSec =
+          boostLoadBurned / (boostCapacity / boostDrainDurationSec);
+        predictedBoostLoad = Math.max(0, predictedBoostLoad - boostLoadBurned);
+        predictedSelf.vel = add(
+          predictedSelf.vel,
+          scale(candidate.dir, boostForcePerSec * boostForceDurationSec),
+        );
+      }
       predictedSelf = stepBody(
         predictedSelf,
         stepSunsState,

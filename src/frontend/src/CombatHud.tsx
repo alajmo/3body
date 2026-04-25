@@ -17,21 +17,11 @@ import type {
 
 const KILL_FEED_DURATION_SEC = 4;
 
-const formatClock = (valueSec: number): string => {
-  const totalSeconds = Math.max(0, Math.floor(valueSec));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
-};
-
 const formatRtt = (rttMs: number | null): string =>
   rttMs === null ? "--" : `${Math.max(0, Math.round(rttMs))} ms`;
 
 const formatFps = (fps: number): string =>
   fps > 0 ? `${Math.max(0, Math.round(fps))} FPS` : "-- FPS";
-
-const formatFrameTime = (frameTimeMs: number): string =>
-  frameTimeMs > 0 ? `${frameTimeMs.toFixed(1)} ms` : "-- ms";
 
 export const formatHudDiagnosticsReport = (
   hud: GameViewportHudState,
@@ -500,7 +490,9 @@ function WorldMinimap({ minimap }: { minimap: GameViewportMinimapState }) {
                   >
                     {highlight}
                     <circle
-                      className="minimap__marker minimap__marker--planet"
+                      className={`minimap__marker minimap__marker--planet minimap__marker--planet-${
+                        entity.highlighted ? "self" : "enemy"
+                      }`}
                       cx={point.x}
                       cy={point.y}
                       r={markerRadius}
@@ -643,26 +635,14 @@ export function CombatHud({
     "--hud-pill-radius": `${hudTuning.pillRadius}px`,
     "--hud-shortcuts-section-gap": `${hudTuning.shortcutsSectionGap}px`,
     "--hud-side-inset": `${hudTuning.sideInset}px`,
-    "--hud-timer-width": `${hudTuning.timerWidth}px`,
     "--hud-top-inset": `${hudTuning.topInset}px`,
   } as CSSProperties;
   const hasSideDock = showPerformanceTools;
   const hasBottomShortcuts = hud.sandboxControlsEnabled;
   const showSandboxPlaybackControls = hud.connection.state === "local";
   const hasCopyableStats = hud.profilingEnabled && hud.debugItems.length > 0;
-  const connectionDetail = [
-    hud.connection.label.trim(),
-    hud.connection.extrapolating ? "Extrapolating" : null,
-  ]
-    .filter((value): value is string => value !== null && value.length > 0)
-    .join(" · ");
-  const showConnectionDetail =
-    connectionDetail.length > 0 &&
-    connectionDetail.toLowerCase() !== hud.connection.state.toLowerCase();
-  const timerStatus = hud.blackHoleActive ? "Overtime active" : null;
   const showWorldMinimap =
-    showPerformanceTools &&
-    (hud.minimap.arenaRadius > 0 || hud.minimap.entities.length > 0);
+    hud.minimap.arenaRadius > 0 || hud.minimap.entities.length > 0;
 
   return (
     <div
@@ -809,6 +789,16 @@ export function CombatHud({
                   >
                     Reset
                   </button>
+                  <button
+                    type="button"
+                    className="hud-button"
+                    disabled={controller === null}
+                    onClick={() =>
+                      controller?.setBotsEnabled(!hud.botsEnabled)
+                    }
+                  >
+                    {hud.botsEnabled ? "Disable AI" : "Enable AI"}
+                  </button>
                 </div>
               </div>
             ) : null}
@@ -821,31 +811,8 @@ export function CombatHud({
         </div>
       ) : null}
 
-      <section className="match-timer hud-pill">
-        <div className="hud-pill__label">Match</div>
-        <div className="match-timer__value">
-          {formatClock(hud.timerElapsedSec)}
-        </div>
-        {timerStatus !== null ? (
-          <div
-            className={`match-timer__status${
-              hud.blackHoleActive
-                ? " match-timer__status--active"
-                : ""
-            }`}
-          >
-            {timerStatus}
-          </div>
-        ) : null}
-      </section>
-
       <section className="connection-indicator hud-pill">
         <div className="connection-indicator__row">
-          <span
-            className={`connection-indicator__state connection-indicator__state--${hud.connection.state}`}
-          >
-            {hud.connection.state}
-          </span>
           <div className="connection-indicator__metrics">
             <span className="connection-indicator__metric">
               {formatRtt(hud.connection.rttMs)}
@@ -853,14 +820,8 @@ export function CombatHud({
             <span className="connection-indicator__metric">
               {formatFps(hud.connection.fps)}
             </span>
-            <span className="connection-indicator__metric">
-              {formatFrameTime(hud.connection.frameTimeMs)}
-            </span>
           </div>
         </div>
-        {showConnectionDetail ? (
-          <div className="connection-indicator__label">{connectionDetail}</div>
-        ) : null}
       </section>
 
       {hud.sandboxControlsEnabled ? (
