@@ -1,8 +1,10 @@
 import { statSync } from "node:fs";
 import { extname, resolve, sep } from "node:path";
+import type { TuningMode } from "@3body/shared";
 import { config } from "./config";
 import type { ConnectionWebSocketData } from "./connection";
 import {
+  isTuningMode,
   loadEditorTuningIntoRuntime,
   readEditorTuningDocument,
   syncEditorTuningDocumentToCurrent,
@@ -215,27 +217,57 @@ try {
         });
       }
 
-      if (request.method === "GET" && url.pathname === "/api/editor/tuning") {
-        return Response.json(await readEditorTuningDocument());
+      if (request.method === "GET" && url.pathname === "/api/editor/enabled") {
+        return Response.json({ enabled: config.editorEnabled });
       }
 
-      if (request.method === "PUT" && url.pathname === "/api/editor/tuning") {
-        try {
-          const body = await request.json();
-          return Response.json(await writeEditorTuningDocument(body));
-        } catch {
-          return jsonError(400, "Invalid tuning document");
+      const editorTuningMatch = url.pathname.match(
+        /^\/api\/editor\/tuning\/([^/]+)$/,
+      );
+      if (
+        config.editorEnabled &&
+        editorTuningMatch &&
+        isTuningMode(editorTuningMatch[1] ?? "")
+      ) {
+        const mode = editorTuningMatch[1]! as TuningMode;
+        if (request.method === "GET") {
+          return Response.json(await readEditorTuningDocument(mode));
+        }
+
+        if (request.method === "PUT") {
+          try {
+            const body = await request.json();
+            return Response.json(await writeEditorTuningDocument(mode, body));
+          } catch {
+            return jsonError(400, "Invalid tuning document");
+          }
         }
       }
 
       if (
-        request.method === "POST" &&
-        url.pathname === "/api/editor/tuning/sync-current"
+        config.editorEnabled &&
+        editorTuningMatch &&
+        !isTuningMode(editorTuningMatch[1] ?? "")
       ) {
+        return jsonError(400, "Invalid tuning mode");
+      }
+
+      const editorTuningSyncMatch = url.pathname.match(
+        /^\/api\/editor\/tuning\/([^/]+)\/sync-current$/,
+      );
+      if (
+        config.editorEnabled &&
+        request.method === "POST" &&
+        editorTuningSyncMatch
+      ) {
+        const mode = editorTuningSyncMatch[1] ?? "";
+        if (!isTuningMode(mode)) {
+          return jsonError(400, "Invalid tuning mode");
+        }
         try {
-          return Response.json(await syncEditorTuningDocumentToCurrent());
+          return Response.json(await syncEditorTuningDocumentToCurrent(mode));
         } catch {
-          return jsonError(500, "Unable to sync editor tuning to current.json");
+          return jsonError(500, "Unable to sync editor tuning to current file");
         }
       }
 

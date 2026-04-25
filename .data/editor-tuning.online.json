@@ -414,6 +414,7 @@
     },
     "orbits": {
       "boundaryDebris": {
+        "blackHoleCollapseSec": 60,
         "coolColor": "#8ca8c7",
         "density": 5,
         "dustSize": 12,
@@ -528,6 +529,7 @@
           "spawnRatePerSec": 1
         }
       },
+      "boundaryRampAfterSec": 20,
       "instantDeath": true,
       "radius": 18000
     },
@@ -535,7 +537,7 @@
       "killRadius": 150,
       "mass": 50000000,
       "rampSec": 30,
-      "spawnSec": 30
+      "spawnSec": 300
     },
     "camera": {
       "gameplayCameraWorldHeight": 14000,
@@ -736,10 +738,13 @@
       "wildcardChance": 0.25
     },
     "timers": {
+      "cycleCountdownSec": 15,
+      "cycleSec": 600,
       "countdownSec": 3,
       "lobbySec": 3,
       "pickSec": 30,
-      "rematchVoteSec": 20
+      "rematchVoteSec": 20,
+      "spawnInvulnSec": 3
     }
   }
 }

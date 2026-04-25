@@ -60,6 +60,14 @@ export interface AuthoritativeWaitlistInfo {
   total: number;
 }
 
+export interface AuthoritativeDeathInfo {
+  event: Extract<SnapshotEvent, { kind: "kill" }>;
+  kills: number;
+  damageDealt: number;
+  lifeStartTick: number | null;
+  deathTick: number;
+}
+
 export interface AuthoritativeMatchRuntimeState {
   connectionError: string | null;
   connectionState: AuthoritativeConnectionState;
@@ -79,6 +87,11 @@ export interface AuthoritativeMatchRuntimeState {
   snapshot: AuthoritativeSnapshot | null;
   snapshotBuffer: AuthoritativeSnapshot[];
   waitlist: AuthoritativeWaitlistInfo | null;
+  cycleResetCountdownSec: number | null;
+  lifeStartTick: number | null;
+  lifeKills: number;
+  lifeDamageDealt: number;
+  deathInfo: AuthoritativeDeathInfo | null;
 }
 
 export const resetAuthoritativeSnapshotBuffer = (
@@ -236,6 +249,7 @@ const applyPlanetUpdate = (
   shieldLoad: row[9],
   shieldMaxLoad: row[10],
   vel: { x: row[3], y: row[4] },
+  invulnerableUntilTick: row[12],
 });
 
 const applyRocketUpdate = (
@@ -433,4 +447,9 @@ export const createInitialAuthoritativeMatchRuntimeState =
     snapshot: null,
     snapshotBuffer: [],
     waitlist: null,
+    cycleResetCountdownSec: null,
+    lifeStartTick: null,
+    lifeKills: 0,
+    lifeDamageDealt: 0,
+    deathInfo: null,
   });

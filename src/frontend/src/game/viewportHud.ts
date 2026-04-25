@@ -197,6 +197,7 @@ export interface CreateGameViewportOptions {
   enableSandboxStorage?: boolean;
   onControllerReady?: (controller: GameViewportController | null) => void;
   onHudStateChange?: (state: GameViewportHudState) => void;
+  restartOnDeath?: boolean;
   sandboxSessionConfig?: GameViewportSandboxSessionConfig;
 }
 

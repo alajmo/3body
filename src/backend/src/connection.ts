@@ -150,6 +150,9 @@ const isVoteRematchMsg = (value: unknown): value is VoteRematchMsg =>
   value.type === "voteRematch" &&
   typeof value.yes === "boolean";
 
+const isRejoinMsg = (value: unknown): value is { type: "rejoin" } =>
+  isRecord(value) && value.type === "rejoin";
+
 const isChatMsg = (value: unknown): value is ChatMsg =>
   isRecord(value) && value.type === "chat" && typeof value.text === "string";
 
@@ -171,6 +174,25 @@ type PreparedChatMessage =
 
 type OutboundEncoding = "json" | "msgpack";
 const SNAPSHOT_ACK_RATE_LIMIT_HZ = SNAPSHOT_HZ * 2;
+
+export const getPrivateStateSignature = (
+  state: PlanetPrivateState | null,
+): string =>
+  state === null
+    ? "null"
+    : [
+        state.planetId,
+        state.ammo.light,
+        state.ammo.heavy,
+        state.ammo.seeker,
+        state.cooldowns.lightReloadUntilTick,
+        state.cooldowns.heavyReloadUntilTick,
+        state.cooldowns.seekerReloadUntilTick,
+        state.cooldowns.nextBoostChargeAtTick ?? "",
+        state.boostCharges,
+        state.gravityPulseHeld ? 1 : 0,
+        state.nextShieldExt ? 1 : 0,
+      ].join("|");
 
 export class Connection {
   ws?: Bun.ServerWebSocket<ConnectionWebSocketData>;
@@ -242,8 +264,7 @@ export class Connection {
   }
 
   rememberSentSelfState(state: PlanetPrivateState | null): void {
-    this.lastSentSelfStateSignature =
-      state === null ? "null" : JSON.stringify(state);
+    this.lastSentSelfStateSignature = getPrivateStateSignature(state);
   }
 
   #withSendTimestamp(message: ServerMsg): ServerMsg {
@@ -697,6 +718,19 @@ export class Connection {
           return;
         }
         this.service.handleVoteRematch(this, parsed);
+        return;
+
+      case "rejoin":
+        if (!isRejoinMsg(parsed)) {
+          this.rejectInvalidMessage("Invalid rejoin payload", "invalid_rejoin");
+          return;
+        }
+        if (
+          !this.enforceRateLimit("meta", "room_action", "Too many room actions")
+        ) {
+          return;
+        }
+        this.service.handleRejoin(this);
         return;
 
       default:

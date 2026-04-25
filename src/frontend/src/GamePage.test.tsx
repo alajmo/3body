@@ -2,18 +2,22 @@ import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GamePage } from "./GamePage";
 
-const { gameViewportPanelSpy, getRuntimeTuningDocumentMock } = vi.hoisted(
-  () => ({
-    gameViewportPanelSpy: vi.fn(),
-    getRuntimeTuningDocumentMock: vi.fn(),
-  }),
-);
+const {
+  gameViewportPanelSpy,
+  getRuntimeTuningDocumentMock,
+  loadRuntimeTuningDocumentMock,
+} = vi.hoisted(() => ({
+  gameViewportPanelSpy: vi.fn(),
+  getRuntimeTuningDocumentMock: vi.fn(),
+  loadRuntimeTuningDocumentMock: vi.fn(),
+}));
 
 vi.mock("./GameViewportPanel", () => ({
   GameViewportPanel: (props: {
     className?: string;
     defaultBotsEnabled?: boolean;
     displayMode?: string;
+    restartOnDeath?: boolean;
     showPerformanceTools?: boolean;
   }) => {
     gameViewportPanelSpy(props);
@@ -23,12 +27,15 @@ vi.mock("./GameViewportPanel", () => ({
 
 vi.mock("./game/runtimeTuning", () => ({
   getRuntimeTuningDocument: () => getRuntimeTuningDocumentMock(),
+  loadRuntimeTuningDocument: (mode: string) =>
+    loadRuntimeTuningDocumentMock(mode),
 }));
 
 describe("GamePage", () => {
   beforeEach(() => {
     gameViewportPanelSpy.mockClear();
     getRuntimeTuningDocumentMock.mockReset();
+    loadRuntimeTuningDocumentMock.mockResolvedValue(undefined);
   });
 
   it("renders the local game viewport shell with the tuned display mode", () => {
@@ -44,7 +51,8 @@ describe("GamePage", () => {
     expect(gameViewportPanelSpy.mock.calls[0]?.[0]).toEqual(
       expect.objectContaining({
         className: "app-shell",
-        defaultBotsEnabled: false,
+        defaultBotsEnabled: true,
+        restartOnDeath: true,
         displayMode: "vhs",
         showPerformanceTools: import.meta.env.DEV,
       }),
@@ -64,7 +72,8 @@ describe("GamePage", () => {
     expect(gameViewportPanelSpy.mock.calls[0]?.[0]).toEqual(
       expect.objectContaining({
         className: "app-shell",
-        defaultBotsEnabled: false,
+        defaultBotsEnabled: true,
+        restartOnDeath: true,
         displayMode: "default",
         showPerformanceTools: import.meta.env.DEV,
       }),

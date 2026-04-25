@@ -3,6 +3,10 @@
     - when asteroids, ramp up
     - sun orientation, etc.
 
+  - / menu: Sketchbook 2024-11-7
+  - gameplay loop: Sketchbook 2024-10-30
+  - intense/end-cycle variant: Sketchbook 2024-08-01
+
 - Shake camera when get hit by missile, I think we already have something for when a planet is destroyed 
 - Flicker HUD and screen on missile hit (when a missile hits the player) , be able to test in /edit&item=HUD
 - Asteroids losing from the circle radius going into the game, big, small, etc. shouldnt maybe destroy but damage depending on the asteroid size

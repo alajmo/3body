@@ -529,13 +529,14 @@
         }
       },
       "instantDeath": true,
-      "radius": 18000
+      "radius": 18000,
+      "boundaryRampAfterSec": 20
     },
     "blackHole": {
       "killRadius": 150,
       "mass": 50000000,
       "rampSec": 30,
-      "spawnSec": 30
+      "spawnSec": 300
     },
     "camera": {
       "gameplayCameraWorldHeight": 14000,
@@ -739,7 +740,10 @@
       "countdownSec": 3,
       "lobbySec": 3,
       "pickSec": 30,
-      "rematchVoteSec": 20
+      "rematchVoteSec": 20,
+      "cycleSec": 600,
+      "cycleCountdownSec": 15,
+      "spawnInvulnSec": 3
     }
   }
 }

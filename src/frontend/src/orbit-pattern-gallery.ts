@@ -312,7 +312,7 @@ heading.textContent = "Orbit Pattern Gallery";
 const description = createElement(
   "p",
   undefined,
-  "This page previews the baked fixed patterns currently exposed in /edit orbit, including the newer smooth 2D flower-style loops.",
+  "This page previews the baked fixed patterns currently exposed in /online/edit orbit, including the newer smooth 2D flower-style loops.",
 );
 
 const heroMeta = createElement("div", "hero-meta");

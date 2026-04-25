@@ -2,25 +2,23 @@ import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 
-const {
-  editPageSpy,
-  gamePageSpy,
-  networkGamePageSpy,
-  notFoundPageSpy,
-  playMenuPageSpy,
-} = vi.hoisted(() => ({
-  editPageSpy: vi.fn(),
-  gamePageSpy: vi.fn(),
-  networkGamePageSpy: vi.fn(),
-  notFoundPageSpy: vi.fn(),
-  playMenuPageSpy: vi.fn(),
-}));
+const { editPageSpy, gamePageSpy, networkGamePageSpy, playMenuPageSpy } =
+  vi.hoisted(() => ({
+    editPageSpy: vi.fn(),
+    gamePageSpy: vi.fn(),
+    networkGamePageSpy: vi.fn(),
+    playMenuPageSpy: vi.fn(),
+  }));
 
 vi.mock("./EditPage", () => ({
-  EditPage: () => {
+  EditPage: ({ mode }: { mode: string }) => {
     editPageSpy();
-    return <div data-testid="edit-page">edit</div>;
+    return <div data-testid="edit-page">edit {mode}</div>;
   },
+}));
+
+vi.mock("./editorAccess", () => ({
+  isEditorEnabled: () => true,
 }));
 
 vi.mock("./GamePage", () => ({
@@ -44,13 +42,6 @@ vi.mock("./PlayMenuPage", () => ({
   },
 }));
 
-vi.mock("./NotFoundPage", () => ({
-  NotFoundPage: () => {
-    notFoundPageSpy();
-    return <div data-testid="not-found-page">not-found</div>;
-  },
-}));
-
 describe("App", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -66,13 +57,24 @@ describe("App", () => {
     expect(editPageSpy).not.toHaveBeenCalled();
   });
 
-  it("renders the edit page on /edit", () => {
-    window.history.pushState({}, "", "/edit");
+  it("renders the online edit page on /online/edit", () => {
+    window.history.pushState({}, "", "/online/edit");
 
     render(<App />);
 
     expect(screen.getByTestId("edit-page")).toBeInTheDocument();
+    expect(screen.getByText("edit online")).toBeInTheDocument();
     expect(gamePageSpy).not.toHaveBeenCalled();
+  });
+
+  it("renders the offline edit page on /offline/edit", () => {
+    window.history.pushState({}, "", "/offline/edit");
+
+    render(<App />);
+
+    expect(screen.getByTestId("edit-page")).toBeInTheDocument();
+    expect(screen.getByText("edit offline")).toBeInTheDocument();
+    expect(networkGamePageSpy).not.toHaveBeenCalled();
   });
 
   it("renders the network page on /online", () => {
@@ -95,12 +97,13 @@ describe("App", () => {
     expect(networkGamePageSpy).not.toHaveBeenCalled();
   });
 
-  it("renders the not-found page on unknown routes", () => {
+  it("redirects unknown routes to the play menu", () => {
     window.history.pushState({}, "", "/kaka");
 
     render(<App />);
 
-    expect(screen.getByTestId("not-found-page")).toBeInTheDocument();
+    expect(screen.getByTestId("play-menu-page")).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/");
     expect(gamePageSpy).not.toHaveBeenCalled();
     expect(editPageSpy).not.toHaveBeenCalled();
     expect(networkGamePageSpy).not.toHaveBeenCalled();

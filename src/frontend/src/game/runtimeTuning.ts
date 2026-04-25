@@ -4,9 +4,11 @@ import {
   BOOST_SPEC,
   cloneGameTuningDocument,
   CURRENT_GAME_TUNING,
+  CURRENT_TUNING_BY_MODE,
   sanitizeGameTuning,
   SHIELD_SPEC,
   type GameTuningDocument,
+  type TuningMode,
 } from "@3body/shared";
 
 interface RuntimeViewportDefaults {
@@ -31,17 +33,21 @@ export const applyRuntimeTuningDocument = (value: GameTuningDocument) => {
 };
 
 export const loadRuntimeTuningDocument = async (
+  mode: TuningMode = "online",
   fetchImpl: typeof fetch = fetch,
 ): Promise<GameTuningDocument> => {
+  const fallback = CURRENT_TUNING_BY_MODE[mode];
   try {
-    const response = await fetchImpl("/api/editor/tuning");
+    const response = await fetchImpl(`/api/editor/tuning/${mode}`);
     if (!response.ok) {
+      applyRuntimeTuningDocument(fallback);
       return runtimeTuningDocument;
     }
 
-    const nextDocument = sanitizeGameTuning(await response.json());
+    const nextDocument = sanitizeGameTuning(await response.json(), fallback);
     applyRuntimeTuningDocument(nextDocument);
   } catch {
+    applyRuntimeTuningDocument(fallback);
     return runtimeTuningDocument;
   }
 

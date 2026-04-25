@@ -1,6 +1,7 @@
 import {
   ARCHETYPE_IDS,
   type ClientMsg,
+  type CycleResetCountdownMsg,
   type DeltaSnapshotMsg,
   decodeProtocolMessage,
   type ErrorMsg,
@@ -13,6 +14,8 @@ import {
   type PongMsg,
   type RematchStateMsg,
   ROOM_CAPACITY,
+  type RosterStateMsg,
+  SIM_HZ,
   type SnapshotV2Msg,
   type WaitlistStateMsg,
   type WelcomeMsg,
@@ -27,6 +30,7 @@ import {
 import { formatAuthoritativeWinnerLabel } from "./authoritativeMatchLabels";
 import { CombatHud } from "./CombatHud";
 import {
+  type AuthoritativeDeathInfo,
   type AuthoritativeMatchRuntimeState,
   appendAuthoritativeSnapshot,
   applyDeltaSnapshotToWorld,
@@ -76,6 +80,8 @@ interface MatchPanelUiState {
   roomId: string | null;
   roomRoster: AuthoritativeMatchRuntimeState["roomRoster"];
   waitlist: AuthoritativeMatchRuntimeState["waitlist"];
+  cycleResetCountdownSec: AuthoritativeMatchRuntimeState["cycleResetCountdownSec"];
+  deathInfo: AuthoritativeMatchRuntimeState["deathInfo"];
 }
 
 const buildSocketUrl = (windowTarget: Window): string => {
@@ -171,6 +177,8 @@ const snapshotUiState = (
   roomId: runtime.roomId,
   roomRoster: [...runtime.roomRoster],
   waitlist: runtime.waitlist,
+  cycleResetCountdownSec: runtime.cycleResetCountdownSec,
+  deathInfo: runtime.deathInfo,
 });
 
 const areRoomRostersEqual = (
@@ -224,7 +232,53 @@ const areMatchPanelUiStatesEqual = (
   current.rematchState === next.rematchState &&
   current.roomId === next.roomId &&
   areRoomRostersEqual(current.roomRoster, next.roomRoster) &&
-  areWaitlistInfoEqual(current.waitlist, next.waitlist);
+  areWaitlistInfoEqual(current.waitlist, next.waitlist) &&
+  current.cycleResetCountdownSec === next.cycleResetCountdownSec &&
+  current.deathInfo === next.deathInfo;
+
+const formatSurvivalDuration = (
+  deathTick: number,
+  lifeStartTick: number | null,
+): string => {
+  if (lifeStartTick === null || deathTick < lifeStartTick) {
+    return "--";
+  }
+  const totalSec = Math.max(0, (deathTick - lifeStartTick) / SIM_HZ);
+  const minutes = Math.floor(totalSec / 60);
+  const seconds = Math.floor(totalSec % 60);
+  if (minutes > 0) {
+    return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+  }
+  return `${seconds}s`;
+};
+
+const describeDeathCause = (
+  deathInfo: AuthoritativeDeathInfo,
+  rosterByPlayerId: ReadonlyMap<string, string>,
+): string => {
+  const { event } = deathInfo;
+  if (event.killerPlayerId && event.killerPlayerId !== event.victimPlayerId) {
+    const killerName =
+      rosterByPlayerId.get(event.killerPlayerId) ?? "another pilot";
+    return `Eliminated by ${killerName}`;
+  }
+  switch (event.cause) {
+    case "blackHole":
+      return "Pulled into the black hole";
+    case "boundaryAsteroid":
+      return "Shattered by boundary debris";
+    case "boundary":
+      return "Breached the arena boundary";
+    case "neutronStar":
+      return "Crushed by a neutron star";
+    case "planetCollision":
+      return "Lost in a planet collision";
+    case "sun":
+      return "Burned up in a sun";
+    case "rocket":
+      return "Destroyed by a rocket";
+  }
+};
 
 const formatCountdown = (targetAtMs: number, nowMs: number): string => {
   const remainingSec = Math.max(0, Math.ceil((targetAtMs - nowMs) / 1000));
@@ -428,6 +482,15 @@ export function AuthoritativeGamePanel({
     });
     setConnectionSessionVersion((current) => current + 1);
   }, []);
+
+  const rejoinCombat = useCallback(() => {
+    if (dispatchRuntimeMessage({ type: "rejoin" })) {
+      runtimeRef.current.deathInfo = null;
+      runtimeRef.current.lifeKills = 0;
+      runtimeRef.current.lifeDamageDealt = 0;
+      runtimeRef.current.lifeStartTick = null;
+    }
+  }, [dispatchRuntimeMessage]);
 
   useEffect(() => {
     const timerId = window.setInterval(() => {
@@ -647,6 +710,7 @@ export function AuthoritativeGamePanel({
             runtimeRef.current.roomId = message.roomId;
             runtimeRef.current.roomRoster = message.roster;
             runtimeRef.current.waitlist = null;
+            runtimeRef.current.cycleResetCountdownSec = null;
             storage.setItem(PROFILE_TOKEN_STORAGE_KEY, message.profileToken);
             storage.setItem(RESUME_TOKEN_STORAGE_KEY, message.resumeToken);
             storage.setItem(ROOM_ID_STORAGE_KEY, message.roomId);
@@ -662,6 +726,13 @@ export function AuthoritativeGamePanel({
               total: message.total,
             };
             runtimeRef.current.phase = "waitlist";
+            syncUiState();
+            return;
+          }
+
+          case "rosterState": {
+            const message = parsed as RosterStateMsg;
+            runtimeRef.current.roomRoster = message.roster;
             syncUiState();
             return;
           }
@@ -685,6 +756,10 @@ export function AuthoritativeGamePanel({
             runtimeRef.current.matchEnd = null;
             runtimeRef.current.rematchState = null;
             runtimeRef.current.phase = "pick";
+            runtimeRef.current.deathInfo = null;
+            runtimeRef.current.lifeKills = 0;
+            runtimeRef.current.lifeDamageDealt = 0;
+            runtimeRef.current.lifeStartTick = null;
             syncUiState();
             maybeAutoPick();
             return;
@@ -692,6 +767,8 @@ export function AuthoritativeGamePanel({
           case "fullSnapshot": {
             const message = parsed as FullSnapshotMsg;
             const phaseChanged = runtimeRef.current.phase !== "combat";
+            const hadCycleCountdown =
+              runtimeRef.current.cycleResetCountdownSec !== null;
             networkDiagnosticsRef.current.recordSnapshot(
               parsed.type,
               message.tick,
@@ -705,11 +782,15 @@ export function AuthoritativeGamePanel({
               world: message.world,
             });
             runtimeRef.current.phase = "combat";
+            runtimeRef.current.cycleResetCountdownSec = null;
+            if (runtimeRef.current.lifeStartTick === null) {
+              runtimeRef.current.lifeStartTick = message.tick;
+            }
             sendMeasuredClientMessage(socket, {
               tick: message.tick,
               type: "ackSnapshot",
             });
-            if (phaseChanged) {
+            if (phaseChanged || hadCycleCountdown) {
               syncUiState();
             }
             return;
@@ -786,14 +867,50 @@ export function AuthoritativeGamePanel({
             return;
           }
 
-          case "event":
+          case "cycleResetCountdown": {
+            const message = parsed as CycleResetCountdownMsg;
+            runtimeRef.current.cycleResetCountdownSec = message.remainingSec;
+            syncUiState();
+            return;
+          }
+
+          case "event": {
+            const incomingEvent = (parsed as EventMsg).event;
             runtimeRef.current.recentEvents.push({
-              event: (parsed as EventMsg).event,
+              event: incomingEvent,
               id: runtimeRef.current.nextEventId,
               receivedAtMs: Date.now(),
             });
             runtimeRef.current.nextEventId += 1;
+
+            const localPlayerId = runtimeRef.current.playerId;
+            if (localPlayerId !== null) {
+              if (
+                incomingEvent.kind === "hit" &&
+                incomingEvent.attackerPlayerId === localPlayerId
+              ) {
+                runtimeRef.current.lifeDamageDealt += incomingEvent.damage;
+              } else if (incomingEvent.kind === "kill") {
+                if (
+                  incomingEvent.killerPlayerId === localPlayerId &&
+                  incomingEvent.victimPlayerId !== localPlayerId
+                ) {
+                  runtimeRef.current.lifeKills += 1;
+                }
+                if (incomingEvent.victimPlayerId === localPlayerId) {
+                  runtimeRef.current.deathInfo = {
+                    event: incomingEvent,
+                    kills: runtimeRef.current.lifeKills,
+                    damageDealt: runtimeRef.current.lifeDamageDealt,
+                    lifeStartTick: runtimeRef.current.lifeStartTick,
+                    deathTick: incomingEvent.tick,
+                  };
+                  syncUiState();
+                }
+              }
+            }
             return;
+          }
 
           case "matchEnd":
             runtimeRef.current.matchEnd = parsed as MatchEndMsg;
@@ -894,9 +1011,13 @@ export function AuthoritativeGamePanel({
           showPerformanceTools={false}
         />
       </div>
+      {uiState.cycleResetCountdownSec !== null && uiState.phase === "combat" ? (
+        <div className="cycle-reset-countdown" role="status">
+          Round restarts in {uiState.cycleResetCountdownSec}
+        </div>
+      ) : null}
       {(() => {
-        const showModal =
-          uiState.phase !== "combat" || hudState.playerHp <= 0;
+        const showModal = uiState.phase !== "combat" || hudState.playerHp <= 0;
         if (!showModal) {
           return null;
         }
@@ -904,21 +1025,64 @@ export function AuthoritativeGamePanel({
           <div className="match-modal-overlay">
             <section className="match-modal">
               {uiState.phase === "lobby" ? (
-                <LobbyRoomBody
-                  lobbyState={uiState.lobbyState}
-                  nowMs={nowMs}
-                />
+                <LobbyRoomBody lobbyState={uiState.lobbyState} nowMs={nowMs} />
               ) : uiState.phase === "combat" ? (
                 <>
                   <div className="match-modal__eyebrow">Eliminated</div>
                   <h1 className="match-modal__title">Your planet is gone</h1>
+                  {uiState.deathInfo ? (
+                    <div className="match-modal__body">
+                      <div className="death-summary">
+                        <div className="death-summary__cause">
+                          {describeDeathCause(
+                            uiState.deathInfo,
+                            new Map(
+                              uiState.roomRoster.map((entry) => [
+                                entry.playerId,
+                                entry.name,
+                              ]),
+                            ),
+                          )}
+                        </div>
+                        <div className="death-summary__stats">
+                          <div className="death-summary__stat">
+                            <span className="death-summary__stat-label">
+                              Planets destroyed
+                            </span>
+                            <span className="death-summary__stat-value">
+                              {uiState.deathInfo.kills}
+                            </span>
+                          </div>
+                          <div className="death-summary__stat">
+                            <span className="death-summary__stat-label">
+                              Damage dealt
+                            </span>
+                            <span className="death-summary__stat-value">
+                              {Math.round(uiState.deathInfo.damageDealt)}
+                            </span>
+                          </div>
+                          <div className="death-summary__stat">
+                            <span className="death-summary__stat-label">
+                              Survived
+                            </span>
+                            <span className="death-summary__stat-value">
+                              {formatSurvivalDuration(
+                                uiState.deathInfo.deathTick,
+                                uiState.deathInfo.lifeStartTick,
+                              )}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="match-modal__actions">
                     <button
                       type="button"
                       className="edit-action-button"
-                      onClick={queueFreshMatch}
+                      onClick={rejoinCombat}
                     >
-                      Rejoin Lobby
+                      Rejoin
                     </button>
                   </div>
                 </>
@@ -981,27 +1145,30 @@ function LobbyRoomBody({
           : `Game starts in ${remainingSec}s`}
       </h1>
       <ol className="lobby-room__slots">
-        {Array.from({ length: ROOM_CAPACITY }, (_, seat) => {
-          const player = playerBySeat.get(seat);
-          const isHuman = player !== undefined && !player.isBot;
-          const label = isHuman ? player.name : `Bot ${seat + 1}`;
-          return (
-            <li
-              key={seat}
-              className={`lobby-room__slot${
-                isHuman ? " lobby-room__slot--filled" : ""
-              }`}
-            >
-              <span className="lobby-room__slot-index">
-                {String(seat + 1).padStart(2, "0")}
-              </span>
-              <span className="lobby-room__slot-name">{label}</span>
-              <span className="lobby-room__slot-status">
-                {isHuman ? "joined" : "open"}
-              </span>
-            </li>
-          );
-        })}
+        {Array.from({ length: ROOM_CAPACITY }, (_, index) => index + 1).map(
+          (seatNumber) => {
+            const seat = seatNumber - 1;
+            const player = playerBySeat.get(seat);
+            const isHuman = player !== undefined && !player.isBot;
+            const label = isHuman ? player.name : `Bot ${seat + 1}`;
+            return (
+              <li
+                key={`lobby-seat-${seatNumber}`}
+                className={`lobby-room__slot${
+                  isHuman ? " lobby-room__slot--filled" : ""
+                }`}
+              >
+                <span className="lobby-room__slot-index">
+                  {String(seat + 1).padStart(2, "0")}
+                </span>
+                <span className="lobby-room__slot-name">{label}</span>
+                <span className="lobby-room__slot-status">
+                  {isHuman ? "joined" : "open"}
+                </span>
+              </li>
+            );
+          },
+        )}
       </ol>
     </>
   );

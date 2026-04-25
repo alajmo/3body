@@ -24,6 +24,7 @@ export type PlayerName = string;
 export type RoomId = string;
 export type PlayerRole = "player" | "spectator";
 export type BotDifficulty = "easy" | "normal" | "hard";
+export type TuningMode = "online" | "offline";
 export type AbilitySlot = "q" | "w" | "g";
 export type ErrorCode =
   | "invalid_room"
@@ -118,6 +119,7 @@ export type SnapshotPlanetUpdateRow = [
   shieldLoad: number,
   shieldMaxLoad: number,
   debuffs: PlanetPublic["debuffs"],
+  invulnerableUntilTick: number,
 ];
 
 export type SnapshotRocketUpdateRow = [
@@ -303,6 +305,10 @@ export interface VoteRematchMsg {
   yes: boolean;
 }
 
+export interface RejoinMsg {
+  type: "rejoin";
+}
+
 export type ClientMsg =
   | HelloMsg
   | PickArchetypeMsg
@@ -314,7 +320,8 @@ export type ClientMsg =
   | AbilityMsg
   | ShieldAimMsg
   | ChatMsg
-  | VoteRematchMsg;
+  | VoteRematchMsg
+  | RejoinMsg;
 
 export interface WelcomeMsg {
   type: "welcome";
@@ -415,6 +422,16 @@ export interface WaitlistStateMsg {
   total: number;
 }
 
+export interface RosterStateMsg {
+  type: "rosterState";
+  roster: RoomRosterEntry[];
+}
+
+export interface CycleResetCountdownMsg {
+  type: "cycleResetCountdown";
+  remainingSec: number;
+}
+
 export type ServerMsg =
   | WelcomeMsg
   | ErrorMsg
@@ -428,7 +445,9 @@ export type ServerMsg =
   | ChatMessageMsg
   | RematchStateMsg
   | MatchEndMsg
-  | WaitlistStateMsg;
+  | WaitlistStateMsg
+  | RosterStateMsg
+  | CycleResetCountdownMsg;
 
 export const PLAYER_NAME_MIN_LENGTH = 1;
 export const PLAYER_NAME_MAX_LENGTH = 16;

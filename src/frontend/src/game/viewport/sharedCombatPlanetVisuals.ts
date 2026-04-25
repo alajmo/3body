@@ -190,6 +190,7 @@ export const createSharedCombatPlanetVisual = ({
 
 export const syncSharedCombatPlanetVisual = ({
   archetypeVisuals,
+  invulnerable = false,
   nowSec,
   planetPosition,
   renderRadius,
@@ -197,6 +198,7 @@ export const syncSharedCombatPlanetVisual = ({
   visible = true,
 }: {
   archetypeVisuals: Pick<PlanetArchetypeVisualSpec, "auraGap" | "auraScale">;
+  invulnerable?: boolean;
   nowSec: number;
   planetPosition: Vec2;
   renderRadius: number;
@@ -205,8 +207,15 @@ export const syncSharedCombatPlanetVisual = ({
 }) => {
   visual.mesh.visible = visible;
   visual.glowMesh.visible = visible;
-  visual.surfaceOpacityUniform.value = 1;
-  visual.glowOpacityUniform.value = 1;
+  const invulnerabilityPulse = invulnerable
+    ? 0.5 + Math.sin(nowSec * 18) * 0.5
+    : 0;
+  visual.surfaceOpacityUniform.value = invulnerable
+    ? 0.72 + invulnerabilityPulse * 0.16
+    : 1;
+  visual.glowOpacityUniform.value = invulnerable
+    ? 1.25 + invulnerabilityPulse * 0.55
+    : 1;
 
   if (!visible) {
     return;
@@ -224,8 +233,8 @@ export const syncSharedCombatPlanetVisual = ({
   visual.glowMesh.position.set(planetPosition.x, planetPosition.y, 0.16);
   visual.mesh.scale.set(renderRadius, renderRadius, renderRadius);
   visual.glowMesh.scale.set(
-    renderRadius * archetypeVisuals.auraScale,
-    renderRadius * archetypeVisuals.auraScale,
+    renderRadius * archetypeVisuals.auraScale * (invulnerable ? 1.18 : 1),
+    renderRadius * archetypeVisuals.auraScale * (invulnerable ? 1.18 : 1),
     1,
   );
   visual.mesh.setRotationFromAxisAngle(

@@ -86,7 +86,7 @@ describe("EditPage", () => {
       const method = init?.method ?? "GET";
       const path = String(input);
       const document =
-        method === "PUT" && path === "/api/editor/tuning"
+        method === "PUT" && path === "/api/editor/tuning/online"
           ? (JSON.parse(String(init?.body)) as typeof CURRENT_GAME_TUNING)
           : initialDocument;
 
@@ -104,7 +104,7 @@ describe("EditPage", () => {
     vi.stubGlobal("fetch", fetchMock);
     applyRuntimeTuningDocument(CURRENT_GAME_TUNING);
     window.localStorage.clear();
-    window.history.pushState({}, "", "/edit");
+    window.history.pushState({}, "", "/online/edit");
   });
 
   afterEach(() => {
@@ -114,10 +114,10 @@ describe("EditPage", () => {
   it("renders background event markers in the background card preview", async () => {
     mockTuningFetch();
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     const backgroundButton = getGameplayViewButton();
@@ -134,10 +134,10 @@ describe("EditPage", () => {
     customDocument.visuals.background.eventsEnabled = false;
     mockTuningFetch(customDocument);
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     const backgroundButton = getGameplayViewButton();
@@ -154,10 +154,10 @@ describe("EditPage", () => {
   it("renders turret controls and saves cannon tuning changes", async () => {
     mockTuningFetch();
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     expect(
@@ -182,7 +182,7 @@ describe("EditPage", () => {
     });
 
     const saveCall = fetchMock.mock.calls[1];
-    expect(saveCall?.[0]).toBe("/api/editor/tuning");
+    expect(saveCall?.[0]).toBe("/api/editor/tuning/online");
     expect(saveCall?.[1]).toMatchObject({
       method: "PUT",
     });
@@ -205,12 +205,12 @@ describe("EditPage", () => {
 
   it("does not render a turret-only planet size control", async () => {
     mockTuningFetch();
-    window.history.pushState({}, "", "/edit?item=turret");
+    window.history.pushState({}, "", "/online/edit?item=turret");
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     expect(screen.getByTestId("editor-preview-stage")).toHaveAttribute(
@@ -221,22 +221,26 @@ describe("EditPage", () => {
   });
 
   it("saves overview display mode changes into tuning", async () => {
-    mockTuningFetch();
+    const initialDocument = structuredClone(CURRENT_GAME_TUNING);
+    initialDocument.visuals.displayMode = "default";
+    mockTuningFetch(initialDocument);
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     expect(screen.getByTestId("editor-preview-stage")).toHaveAttribute(
       "data-item-id",
       "overview",
     );
-    expect(screen.getByTestId("editor-preview-stage")).toHaveAttribute(
-      "data-overview-display-mode",
-      "default",
-    );
+    await waitFor(() => {
+      expect(screen.getByTestId("editor-preview-stage")).toHaveAttribute(
+        "data-overview-display-mode",
+        "default",
+      );
+    });
 
     fireEvent.change(screen.getByLabelText("Display mode"), {
       target: { value: "vhs" },
@@ -251,7 +255,7 @@ describe("EditPage", () => {
       "vhs",
     );
     const saveCall = fetchMock.mock.calls[1];
-    expect(saveCall?.[0]).toBe("/api/editor/tuning");
+    expect(saveCall?.[0]).toBe("/api/editor/tuning/online");
     expect(saveCall?.[1]).toMatchObject({
       method: "PUT",
     });
@@ -266,12 +270,12 @@ describe("EditPage", () => {
 
   it("renders missile scale controls and saves rocket visual scale changes", async () => {
     mockTuningFetch();
-    window.history.pushState({}, "", "/edit?item=rocketlight");
+    window.history.pushState({}, "", "/online/edit?item=rocketlight");
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     expect(screen.getByTestId("editor-preview-stage")).toHaveAttribute(
@@ -292,7 +296,7 @@ describe("EditPage", () => {
     });
 
     const saveCall = fetchMock.mock.calls[1];
-    expect(saveCall?.[0]).toBe("/api/editor/tuning");
+    expect(saveCall?.[0]).toBe("/api/editor/tuning/online");
     expect(saveCall?.[1]).toMatchObject({
       method: "PUT",
     });
@@ -311,12 +315,12 @@ describe("EditPage", () => {
 
   it("reads the selected edit item from the query param", async () => {
     mockTuningFetch();
-    window.history.pushState({}, "", "/edit?item=turret");
+    window.history.pushState({}, "", "/online/edit?item=turret");
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     expect(screen.getByTestId("editor-preview-stage")).toHaveAttribute(
@@ -330,12 +334,12 @@ describe("EditPage", () => {
 
   it("supports the neutron query alias", async () => {
     mockTuningFetch();
-    window.history.pushState({}, "", "/edit?item=neutron");
+    window.history.pushState({}, "", "/online/edit?item=neutron");
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     expect(screen.getByTestId("editor-preview-stage")).toHaveAttribute(
@@ -350,14 +354,14 @@ describe("EditPage", () => {
   it("syncs the selected edit item into the query param", async () => {
     mockTuningFetch();
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     fireEvent.click(screen.getByRole("button", { name: /Turret/i }));
-    expect(window.location.pathname).toBe("/edit");
+    expect(window.location.pathname).toBe("/online/edit");
     expect(window.location.search).toBe("?item=turret");
 
     fireEvent.click(screen.getByRole("button", { name: /Shield/i }));
@@ -371,15 +375,15 @@ describe("EditPage", () => {
   it("syncs the neutron stars item into the canonical query param", async () => {
     mockTuningFetch();
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     fireEvent.click(screen.getByRole("button", { name: /Neutron Stars/i }));
 
-    expect(window.location.pathname).toBe("/edit");
+    expect(window.location.pathname).toBe("/online/edit");
     expect(window.location.search).toBe("?item=neutron");
     expect(screen.getByTestId("editor-preview-stage")).toHaveAttribute(
       "data-item-id",
@@ -389,12 +393,12 @@ describe("EditPage", () => {
 
   it("renders the AI gameplay view and syncs its sandbox controls", async () => {
     mockTuningFetch();
-    window.history.pushState({}, "", "/edit?item=ai-gameplay");
+    window.history.pushState({}, "", "/online/edit?item=ai-gameplay");
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     expect(screen.getByTestId("edit-game-viewport-panel")).toHaveAttribute(
@@ -435,12 +439,12 @@ describe("EditPage", () => {
 
   it("toggles AI gameplay fullscreen mode from the inspector action", async () => {
     mockTuningFetch();
-    window.history.pushState({}, "", "/edit?item=ai-gameplay");
+    window.history.pushState({}, "", "/online/edit?item=ai-gameplay");
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     const previewStage = screen.getByTestId("ai-gameplay-preview-stage");
@@ -490,7 +494,7 @@ describe("EditPage", () => {
 
   it("does not exit fullscreen when AI gameplay preview is not mounted", async () => {
     mockTuningFetch();
-    window.history.pushState({}, "", "/edit?item=background");
+    window.history.pushState({}, "", "/online/edit?item=background");
 
     const exitFullscreenMock = vi.fn(async () => {});
     Object.defineProperty(document, "fullscreenElement", {
@@ -502,10 +506,10 @@ describe("EditPage", () => {
       value: exitFullscreenMock,
     });
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     expect(exitFullscreenMock).not.toHaveBeenCalled();
@@ -513,7 +517,7 @@ describe("EditPage", () => {
 
   it("keeps the AI sandbox config stable across fullscreen state rerenders", async () => {
     mockTuningFetch();
-    window.history.pushState({}, "", "/edit?item=ai-gameplay");
+    window.history.pushState({}, "", "/online/edit?item=ai-gameplay");
 
     let fullscreenElement: Element | null = null;
     Object.defineProperty(document, "fullscreenElement", {
@@ -521,10 +525,10 @@ describe("EditPage", () => {
       get: () => fullscreenElement,
     });
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     const initialSandboxConfig =
@@ -544,14 +548,14 @@ describe("EditPage", () => {
     ).toBe(initialSandboxConfig);
   });
 
-  it("updates the selected item from history navigation on /edit", async () => {
+  it("updates the selected item from history navigation on /online/edit", async () => {
     mockTuningFetch();
-    window.history.pushState({}, "", "/edit?item=background");
+    window.history.pushState({}, "", "/online/edit?item=background");
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     expect(screen.getByTestId("editor-preview-stage")).toHaveAttribute(
@@ -559,7 +563,7 @@ describe("EditPage", () => {
       "background",
     );
 
-    window.history.pushState({}, "", "/edit?item=shield");
+    window.history.pushState({}, "", "/online/edit?item=shield");
     window.dispatchEvent(new PopStateEvent("popstate"));
 
     await waitFor(() => {
@@ -573,10 +577,10 @@ describe("EditPage", () => {
   it("renders all cache variants in the caches selector preview", async () => {
     mockTuningFetch();
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     const cacheButton = screen.getByRole("button", { name: /Caches/i });
@@ -588,10 +592,10 @@ describe("EditPage", () => {
   it("explains cache effects in the cache inspector", async () => {
     mockTuningFetch();
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     fireEvent.click(screen.getByRole("button", { name: /Caches/i }));
@@ -617,10 +621,10 @@ describe("EditPage", () => {
     };
     mockTuningFetch(customDocument);
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     fireEvent.click(screen.getByRole("button", { name: /Caches/i }));
@@ -648,10 +652,10 @@ describe("EditPage", () => {
   it("saves large badge sizes directly for sandbox rendering", async () => {
     mockTuningFetch();
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     fireEvent.click(screen.getByRole("button", { name: /Caches/i }));
@@ -675,10 +679,10 @@ describe("EditPage", () => {
   it("saves the cache pickup radius independently from badge size", async () => {
     mockTuningFetch();
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     fireEvent.click(screen.getByRole("button", { name: /Caches/i }));
@@ -707,10 +711,10 @@ describe("EditPage", () => {
   it("saves the maximum rendered cache badge size without backend clamping", async () => {
     mockTuningFetch();
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     fireEvent.click(screen.getByRole("button", { name: /Caches/i }));
@@ -736,10 +740,10 @@ describe("EditPage", () => {
   it("renders gravity pulse in the abilities editor group", async () => {
     mockTuningFetch();
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     fireEvent.click(screen.getByRole("button", { name: /Gravity Pulse/i }));
@@ -762,10 +766,10 @@ describe("EditPage", () => {
   it("renders background controls and saves backdrop tuning changes", async () => {
     mockTuningFetch();
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     fireEvent.click(getGameplayViewButton());
@@ -791,7 +795,7 @@ describe("EditPage", () => {
     });
 
     const saveCall = fetchMock.mock.calls[1];
-    expect(saveCall?.[0]).toBe("/api/editor/tuning");
+    expect(saveCall?.[0]).toBe("/api/editor/tuning/online");
     expect(saveCall?.[1]).toMatchObject({
       method: "PUT",
     });
@@ -809,10 +813,10 @@ describe("EditPage", () => {
   it("renders asteroid-field controls under background and saves per-size tuning changes", async () => {
     mockTuningFetch();
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     fireEvent.click(getGameplayViewButton());
@@ -924,10 +928,10 @@ describe("EditPage", () => {
   it("forwards numeric input min and max attributes", async () => {
     mockTuningFetch();
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     fireEvent.click(getGameplayViewButton());
@@ -941,10 +945,10 @@ describe("EditPage", () => {
   it("defers color preview updates until blur", async () => {
     mockTuningFetch();
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     fireEvent.click(getGameplayViewButton());
@@ -971,10 +975,10 @@ describe("EditPage", () => {
   it("defers numeric preview updates until blur or Enter", async () => {
     mockTuningFetch();
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     fireEvent.click(getGameplayViewButton());
@@ -1024,10 +1028,10 @@ describe("EditPage", () => {
     customDocument.visuals.background.starTwinkleEnabled = false;
     mockTuningFetch(customDocument);
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     fireEvent.click(getGameplayViewButton());
@@ -1061,10 +1065,10 @@ describe("EditPage", () => {
   it("renders neutron star controls and saves neutron-star gameplay changes", async () => {
     mockTuningFetch();
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     fireEvent.click(screen.getByRole("button", { name: /Neutron Stars/i }));
@@ -1110,10 +1114,10 @@ describe("EditPage", () => {
   it("saves neutron-star visual changes", async () => {
     mockTuningFetch();
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     fireEvent.click(screen.getByRole("button", { name: /Neutron Stars/i }));
@@ -1146,10 +1150,10 @@ describe("EditPage", () => {
   it("saves uncapped neutron star sizes", async () => {
     mockTuningFetch();
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     fireEvent.click(screen.getByRole("button", { name: /Neutron Stars/i }));
@@ -1187,10 +1191,10 @@ describe("EditPage", () => {
   it("saves uncapped neutron star masses", async () => {
     mockTuningFetch();
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     fireEvent.click(screen.getByRole("button", { name: /Neutron Stars/i }));
@@ -1224,10 +1228,10 @@ describe("EditPage", () => {
     customDocument.gameplay.neutronStars.count = 2;
     mockTuningFetch(customDocument);
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     fireEvent.click(getGameplayViewButton());
@@ -1270,10 +1274,10 @@ describe("EditPage", () => {
     customDocument.visuals.neutronStars.jetOpacity = 0.33;
     mockTuningFetch(customDocument);
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     fireEvent.click(screen.getByRole("button", { name: /Neutron Stars/i }));
@@ -1317,10 +1321,10 @@ describe("EditPage", () => {
     physicsSeedDocument.gameplay.orbits.starMotion.mode = "physicsSeed";
     mockTuningFetch(physicsSeedDocument);
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     fireEvent.click(
@@ -1354,10 +1358,10 @@ describe("EditPage", () => {
   it("saves uncapped orbit planet circle radius", async () => {
     mockTuningFetch();
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     fireEvent.click(
@@ -1388,10 +1392,10 @@ describe("EditPage", () => {
     physicsSeedDocument.gameplay.orbits.starMotion.mode = "physicsSeed";
     mockTuningFetch(physicsSeedDocument);
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     fireEvent.click(
@@ -1445,10 +1449,10 @@ describe("EditPage", () => {
       fixedPatternDocument.gameplay.orbits.suns,
     );
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     fireEvent.click(
@@ -1523,10 +1527,10 @@ describe("EditPage", () => {
       fixedPatternDocument.gameplay.orbits.suns,
     );
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     fireEvent.click(
@@ -1558,10 +1562,10 @@ describe("EditPage", () => {
   it("saves uncapped orbit sun radius", async () => {
     mockTuningFetch();
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     fireEvent.click(
@@ -1595,10 +1599,10 @@ describe("EditPage", () => {
   it("saves uncapped orbit boundary debris controls", async () => {
     mockTuningFetch();
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     fireEvent.click(
@@ -1674,10 +1678,10 @@ describe("EditPage", () => {
   it("resets only the selected planet panel", async () => {
     mockTuningFetch();
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     fireEvent.click(screen.getByRole("button", { name: /Planets/i }));
@@ -1737,10 +1741,10 @@ describe("EditPage", () => {
   it("saves uncapped planet body scale", async () => {
     mockTuningFetch();
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     fireEvent.click(screen.getByRole("button", { name: /Planets/i }));
@@ -1768,10 +1772,10 @@ describe("EditPage", () => {
   it("renders arena controls and saves arena tuning changes", async () => {
     mockTuningFetch();
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     fireEvent.click(
@@ -1814,10 +1818,10 @@ describe("EditPage", () => {
   it("renders per-sun controls and saves sun tuning changes", async () => {
     mockTuningFetch();
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     fireEvent.click(
@@ -1851,10 +1855,10 @@ describe("EditPage", () => {
   it("renders seeker lock controls and saves seeker lock seconds", async () => {
     mockTuningFetch();
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     fireEvent.click(
@@ -1890,10 +1894,10 @@ describe("EditPage", () => {
   it("saves the gameplay camera height", async () => {
     mockTuningFetch();
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     const cameraHeightInput = await screen.findByLabelText(
@@ -1927,10 +1931,10 @@ describe("EditPage", () => {
   it("shows a Sync action on overview and posts the current sync request", async () => {
     mockTuningFetch();
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     const syncButton = await screen.findByRole("button", { name: /^Sync$/i });
@@ -1941,7 +1945,7 @@ describe("EditPage", () => {
     });
 
     const syncCall = fetchMock.mock.calls[1];
-    expect(syncCall?.[0]).toBe("/api/editor/tuning/sync-current");
+    expect(syncCall?.[0]).toBe("/api/editor/tuning/online/sync-current");
     expect(syncCall?.[1]).toMatchObject({
       method: "POST",
     });
@@ -1950,10 +1954,10 @@ describe("EditPage", () => {
   it("saves the preview camera height", async () => {
     mockTuningFetch();
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     const inspectionCameraHeightInput = await screen.findByLabelText(
@@ -1989,10 +1993,10 @@ describe("EditPage", () => {
   it("shows the HUD only on overview and hud pages", async () => {
     mockTuningFetch();
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     expect(screen.getByTestId("editor-preview-stage")).toHaveAttribute(
@@ -2044,10 +2048,10 @@ describe("EditPage", () => {
   it("restarts the orbit preview without changing tuning values", async () => {
     mockTuningFetch();
 
-    render(<EditPage />);
+    render(<EditPage mode="online" />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+      expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
     });
 
     fireEvent.click(screen.getByRole("button", { name: /Orbits/i }));

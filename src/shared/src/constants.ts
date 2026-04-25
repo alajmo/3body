@@ -69,10 +69,13 @@ export interface NeutronStarSpec {
 }
 
 export interface MatchTimerSpec {
+  cycleCountdownSec: number;
+  cycleSec: number;
   lobbySec: number;
   pickSec: number;
   countdownSec: number;
   rematchVoteSec: number;
+  spawnInvulnSec: number;
 }
 
 export interface ArenaBoundarySpec {
@@ -97,7 +100,7 @@ export const SIM_HZ = 60;
 export const FIXED_STEP_SEC = 1 / SIM_HZ;
 export const SNAPSHOT_HZ = 60;
 export const PLANET_HP = 100;
-export const ROOM_CAPACITY = 7;
+export const ROOM_CAPACITY = 15;
 
 export const ROCKET_SPECS = {
   light: { ...initialGameplay.rockets.light },
@@ -134,7 +137,7 @@ export const ARENA_BOUNDARY_SPEC: ArenaBoundarySpec = {
   baseDps: 5,
   instantDeath: initialGameplay.arena.instantDeath,
   maxDps: 20,
-  rampAfterSec: 5,
+  rampAfterSec: initialGameplay.arena.boundaryRampAfterSec,
 };
 
 export const BLACK_HOLE_SPEC: BlackHoleSpec = {
@@ -249,6 +252,7 @@ export const applyGameplayTuning = (gameplay: GameplayTuning) => {
   Object.assign(ROCKET_SPECS.seeker, gameplay.rockets.seeker);
   ARENA_RADIUS = gameplay.arena.radius;
   ARENA_BOUNDARY_SPEC.instantDeath = gameplay.arena.instantDeath;
+  ARENA_BOUNDARY_SPEC.rampAfterSec = gameplay.arena.boundaryRampAfterSec;
   Object.assign(
     ARENA_ASTEROID_FIELD_SPEC.micro,
     gameplay.arena.asteroidField.micro,

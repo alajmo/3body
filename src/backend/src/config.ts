@@ -48,6 +48,23 @@ const parseOriginsEnv = (
     .filter((origin) => origin.length > 0);
 };
 
+const parseBooleanEnv = (name: string, fallback: boolean): boolean => {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") {
+    return fallback;
+  }
+
+  const normalized = raw.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+
+  throw new Error(`${name} must be a boolean`);
+};
+
 const tickHz = parseIntegerEnv("TICK_HZ", SIM_HZ);
 if (tickHz % SNAPSHOT_HZ !== 0) {
   throw new Error(
@@ -77,6 +94,7 @@ export interface AppConfig {
   chatWindowMs: number;
   chatMaxChars: number;
   outboundQueueMaxBytes: number;
+  editorEnabled: boolean;
 }
 
 export const config: AppConfig = {
@@ -92,7 +110,7 @@ export const config: AppConfig = {
     0,
     0,
   ),
-  maxRooms: parseIntegerEnv("MAX_ROOMS", 7),
+  maxRooms: parseIntegerEnv("MAX_ROOMS", 1),
   roomIdleTimeoutMs: parseIntegerEnv("ROOM_IDLE_TIMEOUT_MS", 60_000),
   reclaimGraceMs: parseIntegerEnv("RECLAIM_GRACE_MS", 30_000),
   shutdownGraceMs: parseIntegerEnv("SHUTDOWN_GRACE_MS", 10_000),
@@ -107,5 +125,9 @@ export const config: AppConfig = {
   outboundQueueMaxBytes: parseIntegerEnv(
     "OUTBOUND_QUEUE_MAX_BYTES",
     1024 * 1024,
+  ),
+  editorEnabled: parseBooleanEnv(
+    "EDITOR_ENABLED",
+    process.env.NODE_ENV !== "production",
   ),
 };

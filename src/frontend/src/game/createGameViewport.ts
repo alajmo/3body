@@ -162,6 +162,9 @@ export function createGameViewport(
   const displayMode =
     options.displayMode ?? getRuntimeTuningDocument().visuals.displayMode;
   const observerMode = sandboxSessionConfig.playerBehavior === "bot";
+  const restartOnDeath = options.restartOnDeath === true;
+  const RESTART_ON_DEATH_DELAY_SEC = 2.5;
+  let playerDeathAtSec: number | null = null;
   const sandboxStorageEnabled = options.enableSandboxStorage === true;
   const storage = sandboxStorageEnabled
     ? (hostElement.ownerDocument.defaultView?.localStorage ?? null)
@@ -437,6 +440,7 @@ export function createGameViewport(
               nextState,
               simulationState,
             });
+            playerDeathAtSec = null;
             resetProfiling();
             clearPlanetExplosions();
             cameraState.shakeOffsetX = 0;
@@ -524,6 +528,24 @@ export function createGameViewport(
                   simulationFrame.playerPlanet.pos,
                   0,
                 );
+              }
+
+              if (restartOnDeath && !sandboxPaused) {
+                const playerDead =
+                  simulationFrame.playerPlanet === null ||
+                  !simulationFrame.playerPlanet.alive;
+                if (playerDead) {
+                  if (playerDeathAtSec === null) {
+                    playerDeathAtSec = nowSec;
+                  } else if (
+                    nowSec - playerDeathAtSec >=
+                    RESTART_ON_DEATH_DELAY_SEC
+                  ) {
+                    resetSandbox?.();
+                  }
+                } else {
+                  playerDeathAtSec = null;
+                }
               }
 
               const currentEffectsQuality = renderQuality.effectsQuality;

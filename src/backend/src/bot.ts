@@ -57,13 +57,18 @@ export class Bot {
   }
 
   decide(context: BotContext): QueuedCombatMessage[] {
-    return decideCombatBot(
+    const commands = decideCombatBot(
       {
         ...context,
         difficulty: this.difficulty,
         runtime: context.runtime,
       },
       this.#memory,
-    ).map((command) => attachPlayerId(this.playerId, command));
+    );
+    const queuedCommands: QueuedCombatMessage[] = [];
+    for (const command of commands) {
+      queuedCommands.push(attachPlayerId(this.playerId, command));
+    }
+    return queuedCommands;
   }
 }

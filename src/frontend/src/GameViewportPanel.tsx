@@ -15,6 +15,7 @@ export function GameViewportPanel({
   displayMode,
   enableSandboxStorage = false,
   hudTuning = getRuntimeTuningDocument().visuals.hud,
+  restartOnDeath = false,
   showPerformanceTools = true,
 }: {
   className?: string;
@@ -22,6 +23,7 @@ export function GameViewportPanel({
   displayMode?: ShowcaseDisplayMode;
   enableSandboxStorage?: boolean;
   hudTuning?: HudVisualTuning;
+  restartOnDeath?: boolean;
   showPerformanceTools?: boolean;
 }) {
   const viewportElementRef = useRef<HTMLDivElement | null>(null);
@@ -48,8 +50,9 @@ export function GameViewportPanel({
           setHudState(nextState);
         });
       },
+      restartOnDeath,
     });
-  }, [defaultBotsEnabled, displayMode, enableSandboxStorage]);
+  }, [defaultBotsEnabled, displayMode, enableSandboxStorage, restartOnDeath]);
 
   return (
     <div className={className}>

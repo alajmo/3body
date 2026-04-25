@@ -134,7 +134,7 @@ describe("authoritativeMatchRuntime", () => {
       tick: 11,
       type: "snapshotV2",
       updates: {
-        planets: [[1, 18, 28, 4, 5, 71, 0, 1, 1, 14, 22, {}]],
+        planets: [[1, 18, 28, 4, 5, 71, 0, 1, 1, 14, 22, {}, 42]],
       },
     };
 
@@ -149,6 +149,7 @@ describe("authoritativeMatchRuntime", () => {
         shieldAimDir: { x: 0, y: 1 },
         shieldLoad: 14,
         shieldMaxLoad: 22,
+        invulnerableUntilTick: 42,
         vel: { x: 4, y: 5 },
       }),
     );

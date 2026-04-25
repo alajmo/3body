@@ -1,0 +1,749 @@
+{
+  "version": 1,
+  "visuals": {
+    "background": {
+      "baseColor": "#020307",
+      "distantBodiesColor": "#513447",
+      "distantBodiesEnabled": true,
+      "distantBodiesOpacity": 0.3,
+      "distantBodiesScale": 0.75,
+      "dustBrightness": 0.2,
+      "dustDensity": 1,
+      "dustDrift": 1,
+      "dustEnabled": true,
+      "dustSize": 1,
+      "eventsEnabled": true,
+      "eventsFrequency": 0.3,
+      "eventsIntensity": 0.2,
+      "glowColor": "#0f2748",
+      "movingObjectsBrightness": 0.34,
+      "movingObjectsDensity": 3,
+      "movingObjectsEnabled": false,
+      "movingObjectsSize": 4,
+      "movingObjectsSpeed": 1,
+      "nebulaColor": "#244a82",
+      "nebulaDrift": 1,
+      "nebulaEnabled": true,
+      "nebulaScale": 1,
+      "nebulaStrength": 0.36,
+      "starBrightness": 3,
+      "starColorVariance": 1,
+      "starDensity": 3,
+      "starSize": 3,
+      "starsEnabled": true,
+      "starTwinkleAmount": 2,
+      "starTwinkleEnabled": true
+    },
+    "displayMode": "vhs",
+    "planets": {
+      "archetypes": {
+        "terra": {
+          "auraGap": 0,
+          "auraScale": 2.2,
+          "bodyScale": 12,
+          "color": "#9fc66f",
+          "continentsScale": 1,
+          "forestAltitude": 0,
+          "forestColor": "#2c5a2a",
+          "forestCoverage": 0.95,
+          "forestPatchSize": 1,
+          "mountainHeight": 1,
+          "mountainsScale": 1,
+          "oceanDeepColor": "#1f4f85",
+          "oceanShallowColor": "#5ca5d8",
+          "seaLevel": 0.5,
+          "trailColor": "#d6ef8a"
+        },
+        "ignis": {
+          "auraGap": 0,
+          "auraScale": 2.2,
+          "bodyScale": 12,
+          "color": "#ff8550",
+          "continentsScale": 1,
+          "forestAltitude": 0,
+          "forestColor": "#6e3422",
+          "forestCoverage": 0,
+          "forestPatchSize": 1,
+          "mountainHeight": 1,
+          "mountainsScale": 1,
+          "oceanDeepColor": "#5a1f15",
+          "oceanShallowColor": "#a04d26",
+          "seaLevel": 0.5,
+          "trailColor": "#ffb07c"
+        },
+        "glacius": {
+          "auraGap": 0,
+          "auraScale": 2.2,
+          "bodyScale": 12,
+          "color": "#8ed8ff",
+          "continentsScale": 1,
+          "forestAltitude": 0,
+          "forestColor": "#6e8797",
+          "forestCoverage": 0,
+          "forestPatchSize": 1,
+          "mountainHeight": 1,
+          "mountainsScale": 1,
+          "oceanDeepColor": "#285a93",
+          "oceanShallowColor": "#74b9f4",
+          "seaLevel": 0.5,
+          "trailColor": "#d5f4ff"
+        },
+        "volans": {
+          "auraGap": 0,
+          "auraScale": 2.2,
+          "bodyScale": 12,
+          "color": "#5fe7da",
+          "continentsScale": 1,
+          "forestAltitude": 0,
+          "forestColor": "#1f6b5b",
+          "forestCoverage": 0.55,
+          "forestPatchSize": 1,
+          "mountainHeight": 1,
+          "mountainsScale": 1,
+          "oceanDeepColor": "#1b5c6a",
+          "oceanShallowColor": "#40b7be",
+          "seaLevel": 0.5,
+          "trailColor": "#8ff7ee"
+        },
+        "oculus": {
+          "auraGap": 0.1,
+          "auraScale": 3,
+          "bodyScale": 10,
+          "color": "#ffd56b",
+          "continentsScale": 2,
+          "forestAltitude": 0.1,
+          "forestColor": "#8ac026",
+          "forestCoverage": 0,
+          "forestPatchSize": 2,
+          "mountainHeight": 1.1,
+          "mountainsScale": 1,
+          "oceanDeepColor": "#6d451c",
+          "oceanShallowColor": "#b88836",
+          "seaLevel": 0.1,
+          "trailColor": "#fff1a4"
+        },
+        "umbra": {
+          "auraGap": 0,
+          "auraScale": 2.2,
+          "bodyScale": 12,
+          "color": "#8c7dff",
+          "continentsScale": 1,
+          "forestAltitude": 0,
+          "forestColor": "#3a2a52",
+          "forestCoverage": 0.4,
+          "forestPatchSize": 1,
+          "mountainHeight": 1,
+          "mountainsScale": 1,
+          "oceanDeepColor": "#2b1e61",
+          "oceanShallowColor": "#6b51d6",
+          "seaLevel": 0.5,
+          "trailColor": "#b3a8ff"
+        },
+        "corvus": {
+          "auraGap": 0,
+          "auraScale": 2.2,
+          "bodyScale": 12,
+          "color": "#d7e4ff",
+          "continentsScale": 1,
+          "forestAltitude": 0,
+          "forestColor": "#496170",
+          "forestCoverage": 0,
+          "forestPatchSize": 1,
+          "mountainHeight": 1,
+          "mountainsScale": 1,
+          "oceanDeepColor": "#394b63",
+          "oceanShallowColor": "#94a8c0",
+          "seaLevel": 0.5,
+          "trailColor": "#f3f7ff"
+        }
+      },
+      "material": {
+        "aoMax": 1.03,
+        "aoMin": 0.94,
+        "baseRadius": 0.84,
+        "coastEnd": 0.52,
+        "coastStart": 0.48,
+        "continentsGain": 0.55,
+        "continentsLacunarity": 2,
+        "continentsOctaves": 4,
+        "continentsScale": 1.35,
+        "detailScale": 12.5,
+        "displacementBudget": 0.28,
+        "edgeOutlineStrength": 0.14,
+        "forestBandEnd": 0.18,
+        "forestBandStart": 0.02,
+        "forestClumpEnd": 0.78,
+        "forestClumpScale": 22,
+        "forestClumpStart": 0.42,
+        "forestFadeEnd": 0.3,
+        "forestFadeStart": 0.62,
+        "forestLightTint": {
+          "hue": 0,
+          "saturation": 0.08,
+          "lightness": 0.08
+        },
+        "forestSpeckleScale": 64,
+        "heightLandScale": 0.52,
+        "heightOceanScale": 0.44,
+        "highlandEnd": 0.42,
+        "highlandStart": 0.05,
+        "highlandTint": {
+          "hue": -0.03,
+          "saturation": -0.2,
+          "lightness": 0.14
+        },
+        "landElevationEnd": 1,
+        "landElevationStart": 0.5,
+        "landMaskEnd": 0.56,
+        "landMaskStart": 0.42,
+        "lambertMax": 1,
+        "lambertMin": 0.38,
+        "lightDirection": {
+          "x": -0.35,
+          "y": 0.55,
+          "z": 0.9
+        },
+        "lowlandTint": {
+          "hue": 0.02,
+          "saturation": 0.06,
+          "lightness": -0.08
+        },
+        "mountainHeightContribution": 0.55,
+        "mountainsGain": 0.52,
+        "mountainsLacunarity": 2.15,
+        "mountainsOctaves": 6,
+        "mountainsScale": 6.4,
+        "oceanDeepTint": {
+          "hue": 0.55,
+          "saturation": 0.25,
+          "lightness": -0.22
+        },
+        "oceanDepthEnd": 0.3,
+        "oceanDepthStart": 0.48,
+        "oceanShallowTint": {
+          "hue": 0.5,
+          "saturation": 0.2,
+          "lightness": -0.06
+        },
+        "polarEnd": 0.94,
+        "polarMountainInfluence": 0.08,
+        "polarStart": 0.78,
+        "rimPower": 2.6,
+        "rimStrength": 0.1,
+        "rimTintBlend": 0.42,
+        "rockEnd": 0.72,
+        "rockStart": 0.42,
+        "rockTint": {
+          "hue": 0,
+          "saturation": -0.5,
+          "lightness": -0.04
+        },
+        "seaLevel": 0.5,
+        "snowEnd": 0.96,
+        "snowStart": 0.78,
+        "snowTint": {
+          "hue": 0,
+          "saturation": -0.7,
+          "lightness": 0.24
+        }
+      },
+      "variation": {
+        "forestDensityJitterMax": 1.3,
+        "forestDensityJitterMin": 0.6,
+        "spinTiltMaxY": 0.72,
+        "spinTiltMinY": -0.72
+      },
+      "aura": {
+        "alpha": 0.16,
+        "bodyBoundaryMax": 0.975,
+        "bodyBoundaryMin": 0.08,
+        "brightness": 0.56,
+        "contactFeatherScale": 1.95,
+        "fadeStartMax": 0.995,
+        "fadeStartMinOffset": 0.02,
+        "fadeStartRemainingScale": 0.18,
+        "glowInnerTint": {
+          "hue": -0.08,
+          "saturation": 0.1,
+          "lightness": 0.28
+        },
+        "glowOuterTint": {
+          "hue": -0.04,
+          "saturation": 0.04,
+          "lightness": 0.2
+        },
+        "haloEnvelopePower": 1.85,
+        "haloTailBias": 0.28,
+        "haloTailScale": 0.72,
+        "innerEdgeMax": 0.985,
+        "innerFeatherBase": 0.12,
+        "innerFeatherMax": 0.085,
+        "innerFeatherMin": 0.02,
+        "minRemaining": 0.025,
+        "pulseAmplitude": 0.06,
+        "pulseBase": 0.94,
+        "pulseFrequency": 0.18,
+        "pulseSeedPhase": 1.9,
+        "riseStartFeatherScale": 0.9
+      }
+    },
+    "suns": {
+      "profiles": [
+        {
+          "bodyScale": 1,
+          "color": "#ffd78a",
+          "coreBrightness": 1,
+          "glowBrightness": 1,
+          "glowColor": "#ffefb5",
+          "glowScale": 1.7,
+          "warpScale": 3.2
+        },
+        {
+          "bodyScale": 1,
+          "color": "#ffd78a",
+          "coreBrightness": 1,
+          "glowBrightness": 1,
+          "glowColor": "#ffefb5",
+          "glowScale": 1.7,
+          "warpScale": 3.2
+        },
+        {
+          "bodyScale": 1,
+          "color": "#ffd78a",
+          "coreBrightness": 1,
+          "glowBrightness": 1,
+          "glowColor": "#ffefb5",
+          "glowScale": 1.7,
+          "warpScale": 3.2
+        }
+      ]
+    },
+    "blackHole": {
+      "coreRadius": 110,
+      "lensRadius": 330,
+      "ringRadius": 205
+    },
+    "neutronStars": {
+      "haloOpacity": 0.94,
+      "haloScale": 2.1,
+      "jetLengthScale": 4.2,
+      "jetOpacity": 0.86,
+      "jetWidthScale": 0.3,
+      "lensOpacity": 0.8,
+      "lensScale": 2.8
+    },
+    "cannon": {
+      "barrelLength": 26,
+      "barrelWidth": 9,
+      "bandLength": 3.5,
+      "bandWidth": 11.5,
+      "breechDepth": 14,
+      "breechLength": 11,
+      "breechWidth": 16,
+      "flashDurationSec": 0.14,
+      "flashRadius": 16,
+      "muzzleLength": 4,
+      "muzzleRadius": 5.6,
+      "stemLength": 4,
+      "stemWidth": 8
+    },
+    "rockets": {
+      "light": {
+        "bodyScale": {
+          "x": 24,
+          "y": 4.8
+        },
+        "core": "#f4f9ff",
+        "flameScale": {
+          "x": 22,
+          "y": 9
+        },
+        "hudAccent": "#f5fbff",
+        "scale": 8,
+        "trail": "#b7e6ff",
+        "trailScale": {
+          "x": 30,
+          "y": 6
+        }
+      },
+      "heavy": {
+        "bodyScale": {
+          "x": 31,
+          "y": 7.8
+        },
+        "core": "#ff8d4a",
+        "flameScale": {
+          "x": 28,
+          "y": 14
+        },
+        "hudAccent": "#ff7a3d",
+        "scale": 8,
+        "trail": "#ff6130",
+        "trailScale": {
+          "x": 36,
+          "y": 9
+        }
+      },
+      "seeker": {
+        "bodyScale": {
+          "x": 27,
+          "y": 6.2
+        },
+        "core": "#f564ff",
+        "flameScale": {
+          "x": 25,
+          "y": 11
+        },
+        "hudAccent": "#ff61eb",
+        "scale": 8,
+        "trail": "#ff4dd4",
+        "trailScale": {
+          "x": 33,
+          "y": 7.5
+        }
+      }
+    },
+    "abilities": {
+      "boostColor": "#8bc6ff",
+      "shieldColor": "#86ecff",
+      "wildcardColor": "#ffd37a"
+    },
+    "caches": {
+      "badgeBaseSize": 500,
+      "badgeScale": 1
+    },
+    "orbits": {
+      "boundaryDebris": {
+        "coolColor": "#8ca8c7",
+        "density": 5,
+        "dustSize": 12,
+        "largeRockScale": 4,
+        "smallRockScale": 3,
+        "speed": 3,
+        "thickness": 2000,
+        "warmColor": "#b7a18e"
+      }
+    },
+    "hud": {
+      "bottomInset": 20,
+      "cardRadius": 14,
+      "compactCardRadius": 10,
+      "connectionWidth": 220,
+      "dockGap": 10,
+      "killFeedEntryRadius": 12,
+      "leftColumnWidth": 320,
+      "panelBlurPx": 14,
+      "panelGap": 12,
+      "panelRadius": 18,
+      "pillRadius": 16,
+      "shortcutsSectionGap": 18,
+      "sideInset": 20,
+      "timerWidth": 240,
+      "topInset": 20
+    }
+  },
+  "gameplay": {
+    "ai": {
+      "execution": {
+        "boostCommitScoreDelta": 7.5,
+        "boostPenaltyMultipleCharges": 0.08,
+        "boostPenaltySingleCharge": 0.22,
+        "cacheRunFireConfidence": 0.74,
+        "pressureLightOverrideConfidence": 0.44,
+        "pressureLightOverrideDamage": 6,
+        "pressureLightOverrideWaste": 0.24,
+        "repositionFireConfidence": 0.7
+      },
+      "movement": {
+        "candidateDirections": 12,
+        "evaluationHorizonSec": {
+          "easy": 0.8,
+          "normal": 2.4,
+          "hard": 3.1
+        },
+        "objectiveFanoutDeg": 28,
+        "simulationSteps": {
+          "easy": 10,
+          "normal": 30,
+          "hard": 40
+        }
+      },
+      "shots": {
+        "confidenceThresholds": {
+          "easy": {
+            "light": 0.17,
+            "heavy": 0.21,
+            "seeker": 0.2
+          },
+          "normal": {
+            "light": 0.48,
+            "heavy": 0.58,
+            "seeker": 0.52
+          },
+          "hard": {
+            "light": 0.58,
+            "heavy": 0.67,
+            "seeker": 0.6
+          }
+        },
+        "targetPredictionHorizonSec": {
+          "easy": 0.675,
+          "normal": 2.15,
+          "hard": 2.75
+        },
+        "targetPredictionSteps": {
+          "easy": 9,
+          "normal": 28,
+          "hard": 34
+        }
+      },
+      "threat": {
+        "lookaheadSec": {
+          "easy": 0.75,
+          "normal": 2.1,
+          "hard": 2.8
+        },
+        "simulationSteps": {
+          "easy": 9,
+          "normal": 24,
+          "hard": 30
+        }
+      }
+    },
+    "arena": {
+      "asteroidField": {
+        "large": {
+          "damage": 5,
+          "randomization": 0.2,
+          "spawnRatePerSec": 1
+        },
+        "micro": {
+          "damage": 1,
+          "randomization": 0.2,
+          "spawnRatePerSec": 2
+        },
+        "small": {
+          "damage": 2,
+          "randomization": 1,
+          "spawnRatePerSec": 1
+        }
+      },
+      "instantDeath": true,
+      "radius": 18000,
+      "boundaryRampAfterSec": 5
+    },
+    "blackHole": {
+      "killRadius": 150,
+      "mass": 50000000,
+      "rampSec": 20,
+      "spawnSec": 180
+    },
+    "camera": {
+      "gameplayCameraWorldHeight": 14000,
+      "previewCameraWorldHeight": 7600
+    },
+    "neutronStars": {
+      "count": 2,
+      "minMassKg": 3000000,
+      "maxMassKg": 4000000,
+      "minSize": 400,
+      "maxSize": 500,
+      "randomizePositionInsidePlayableCircle": false
+    },
+    "orbits": {
+      "planetStartSpeedScale": 1,
+      "starPatternDistanceScale": 9,
+      "starMotion": {
+        "mode": "fixedPattern",
+        "patternId": "equilateral-circle",
+        "speed": 2
+      },
+      "sunStartDistanceScale": 5,
+      "planetCircleRadius": 14000,
+      "suns": [
+        {
+          "mass": 140000,
+          "pos": {
+            "x": -1600,
+            "y": 0
+          },
+          "radius": 300,
+          "vel": {
+            "x": 72.32160915498832,
+            "y": 110.93745960353417
+          }
+        },
+        {
+          "mass": 140000,
+          "pos": {
+            "x": 1600,
+            "y": 0
+          },
+          "radius": 500,
+          "vel": {
+            "x": 72.32160915498832,
+            "y": 110.93745960353417
+          }
+        },
+        {
+          "mass": 140000,
+          "pos": {
+            "x": 0,
+            "y": 0
+          },
+          "radius": 700,
+          "vel": {
+            "x": -144.64321830997665,
+            "y": -221.87491920706827
+          }
+        }
+      ],
+      "planets": [
+        {
+          "pos": {
+            "x": 1051.733345716462,
+            "y": -486.2037513362361
+          },
+          "radius": 22,
+          "vel": {
+            "x": 207.27459254394333,
+            "y": 436.57125872427775
+          }
+        },
+        {
+          "pos": {
+            "x": 1237.2001757998341,
+            "y": 495.31145926706535
+          },
+          "radius": 22,
+          "vel": {
+            "x": -163.37440434072008,
+            "y": 400.77881724748056
+          }
+        },
+        {
+          "pos": {
+            "x": 460.1445835773605,
+            "y": 1556.3928974903736
+          },
+          "radius": 22,
+          "vel": {
+            "x": -372.65622642539535,
+            "y": 111.7201256085271
+          }
+        },
+        {
+          "pos": {
+            "x": -1196.4670734311585,
+            "y": 1528.8907139662576
+          },
+          "radius": 22,
+          "vel": {
+            "x": -272.90915043475695,
+            "y": -216.89824635627662
+          }
+        },
+        {
+          "pos": {
+            "x": -1985.7429230504715,
+            "y": 198.96788944608195
+          },
+          "radius": 22,
+          "vel": {
+            "x": -37.30840816112747,
+            "y": -348.6404574643785
+          }
+        },
+        {
+          "pos": {
+            "x": -1491.5073043121004,
+            "y": -1768.4204616689865
+          },
+          "radius": 24,
+          "vel": {
+            "x": 241.48513032988333,
+            "y": -205.26122266372127
+          }
+        },
+        {
+          "pos": {
+            "x": 510.8599255453144,
+            "y": -2319.9217869943445
+          },
+          "radius": 24,
+          "vel": {
+            "x": 304.54386524914696,
+            "y": 67.92373710106013
+          }
+        }
+      ]
+    },
+    "rockets": {
+      "light": {
+        "damage": 15,
+        "lockSec": 0,
+        "maxAmmo": 5,
+        "radius": 50,
+        "reloadSec": 0.5,
+        "speed": 4000,
+        "startAmmo": 5,
+        "turnRate": 10,
+        "ttlSec": 8
+      },
+      "heavy": {
+        "damage": 70,
+        "lockSec": 0,
+        "maxAmmo": 2,
+        "radius": 14,
+        "reloadSec": 4,
+        "speed": 4000,
+        "startAmmo": 2,
+        "turnRate": 0,
+        "ttlSec": 8
+      },
+      "seeker": {
+        "damage": 35,
+        "lockSec": 1,
+        "maxAmmo": 3,
+        "radius": 12,
+        "reloadSec": 4,
+        "speed": 3500,
+        "startAmmo": 3,
+        "turnRate": 2.356194490192345,
+        "ttlSec": 8
+      }
+    },
+    "abilities": {
+      "shield": {
+        "cooldownSec": 15,
+        "durationSec": 4,
+        "arcDeg": 120
+      },
+      "boost": {
+        "charges": 1,
+        "cooldownSec": 1,
+        "depleteSec": 3,
+        "magnitude": 2000
+      },
+      "gravityPulse": {
+        "force": 3000,
+        "radius": 2000
+      }
+    },
+    "cache": {
+      "count": 8,
+      "pickupRadius": 200,
+      "respawnSec": 10,
+      "wildcardChance": 0.25
+    },
+    "timers": {
+      "countdownSec": 3,
+      "lobbySec": 3,
+      "pickSec": 30,
+      "rematchVoteSec": 20,
+      "cycleSec": 600,
+      "cycleCountdownSec": 15,
+      "spawnInvulnSec": 3
+    }
+  }
+}

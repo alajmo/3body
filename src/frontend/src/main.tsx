@@ -1,5 +1,6 @@
 import { ARENA_RADIUS } from "@3body/shared";
 import { createRoot } from "react-dom/client";
+import { loadEditorEnabled } from "./editorAccess";
 import { loadRuntimeTuningDocument } from "./game/runtimeTuning";
 import "./styles.css";
 
@@ -11,7 +12,15 @@ if (appElement === null) {
 
 console.log("[frontend] @3body/shared loaded", { arenaRadius: ARENA_RADIUS });
 
-await loadRuntimeTuningDocument();
+const initialPathname = window.location.pathname || "/";
+const initialTuningMode = initialPathname.startsWith("/offline")
+  ? "offline"
+  : "online";
+
+await Promise.all([
+  loadRuntimeTuningDocument(initialTuningMode),
+  loadEditorEnabled(),
+]);
 const { App } = await import("./App");
 
 createRoot(appElement).render(<App />);

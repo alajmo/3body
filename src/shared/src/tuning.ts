@@ -14,8 +14,9 @@ import {
   DEFAULT_FIXED_ORBIT_PATTERN,
   ORBIT_PATTERN_BY_ID,
 } from "./orbitPatternCatalog";
-import type { BotDifficulty } from "./protocol";
-import currentTuningDocument from "./tuning/current.json";
+import type { BotDifficulty, TuningMode } from "./protocol";
+import currentOfflineTuningDocument from "./tuning/current.offline.json";
+import currentOnlineTuningDocument from "./tuning/current.online.json";
 import type { Vec2 } from "./vec2";
 
 export interface ShieldSpec extends AbilitySpec {
@@ -335,6 +336,7 @@ export interface ArenaAsteroidFieldTuning {
 
 export interface ArenaGameplayTuning {
   asteroidField: ArenaAsteroidFieldTuning;
+  boundaryRampAfterSec: number;
   instantDeath: boolean;
   radius: number;
 }
@@ -1658,6 +1660,7 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
           spawnRatePerSec: 0.55,
         },
       },
+      boundaryRampAfterSec: 20,
       instantDeath: true,
       radius: 2_000,
     },
@@ -1806,10 +1809,13 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
       randomizePositionInsidePlayableCircle: true,
     },
     timers: {
+      cycleCountdownSec: 15,
+      cycleSec: 600,
       lobbySec: 10,
       pickSec: 30,
       countdownSec: 3,
       rematchVoteSec: 20,
+      spawnInvulnSec: 3,
     },
   },
 };
@@ -2161,6 +2167,12 @@ const sanitizeArenaGameplayTuning = (
       source.asteroidField,
       fallback.asteroidField,
     ),
+    boundaryRampAfterSec: sanitizeNumber(
+      source.boundaryRampAfterSec,
+      fallback.boundaryRampAfterSec,
+      0,
+      600,
+    ),
     instantDeath: sanitizeBoolean(source.instantDeath, fallback.instantDeath),
     radius: sanitizeNumber(
       source.radius,
@@ -2380,6 +2392,13 @@ const sanitizeMatchTimerSpec = (
       : {};
 
   return {
+    cycleCountdownSec: sanitizeInteger(
+      source.cycleCountdownSec,
+      fallback.cycleCountdownSec,
+      1,
+      120,
+    ),
+    cycleSec: sanitizeInteger(source.cycleSec, fallback.cycleSec, 30, 7200),
     countdownSec: sanitizeInteger(
       source.countdownSec,
       fallback.countdownSec,
@@ -2393,6 +2412,12 @@ const sanitizeMatchTimerSpec = (
       fallback.rematchVoteSec,
       1,
       300,
+    ),
+    spawnInvulnSec: sanitizeNumber(
+      source.spawnInvulnSec,
+      fallback.spawnInvulnSec,
+      0,
+      15,
     ),
   };
 };
@@ -2601,7 +2626,10 @@ const sanitizePlanetArchetypeVisualSpec = (
   };
 };
 
-export const sanitizeGameTuning = (value: unknown): GameTuningDocument => {
+export const sanitizeGameTuning = (
+  value: unknown,
+  fallback: GameTuningDocument = DEFAULT_GAME_TUNING,
+): GameTuningDocument => {
   const source =
     value !== null && typeof value === "object"
       ? (value as Partial<GameTuningDocument>)
@@ -2614,8 +2642,6 @@ export const sanitizeGameTuning = (value: unknown): GameTuningDocument => {
     source.gameplay !== null && typeof source.gameplay === "object"
       ? (source.gameplay as Partial<GameplayTuning>)
       : ({} as Partial<GameplayTuning>);
-  const fallback = DEFAULT_GAME_TUNING;
-
   const nextArchetypes = Object.fromEntries(
     ARCHETYPE_IDS.map((archetype) => [
       archetype,
@@ -3109,6 +3135,18 @@ export const cloneGameTuningDocument = (
 ): GameTuningDocument =>
   JSON.parse(JSON.stringify(value)) as GameTuningDocument;
 
-export const CURRENT_GAME_TUNING: GameTuningDocument = sanitizeGameTuning(
-  currentTuningDocument,
+export const CURRENT_ONLINE_TUNING: GameTuningDocument = sanitizeGameTuning(
+  currentOnlineTuningDocument,
 );
+
+export const CURRENT_OFFLINE_TUNING: GameTuningDocument = sanitizeGameTuning(
+  currentOfflineTuningDocument,
+  DEFAULT_GAME_TUNING,
+);
+
+export const CURRENT_GAME_TUNING: GameTuningDocument = CURRENT_ONLINE_TUNING;
+
+export const CURRENT_TUNING_BY_MODE: Record<TuningMode, GameTuningDocument> = {
+  offline: CURRENT_OFFLINE_TUNING,
+  online: CURRENT_ONLINE_TUNING,
+};

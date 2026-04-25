@@ -194,6 +194,7 @@ const createPlanet = (
   player: SpawnPlayer,
   entityIds: EntityIdSequence,
   tuningDocument: GameTuningDocument,
+  invulnerableUntilTick = 0,
 ): { planet: PlanetPublic; privateState: PlanetPrivateState } => {
   const orbitTuning = tuningDocument.gameplay.orbits;
   const planetVisualTuning =
@@ -231,6 +232,7 @@ const createPlanet = (
       playerId: player.playerId,
       archetype: player.archetypeId,
       hp: PLANET_HP,
+      invulnerableUntilTick,
       radius: tunedPlanet.radius * planetVisualTuning.bodyScale,
       pos: {
         x: Math.cos(resolvedAngle) * planetRingRadius,
@@ -258,6 +260,24 @@ const createPlanet = (
   };
 };
 
+export const createPlayerSpawnState = (
+  index: number,
+  count: number,
+  player: SpawnPlayer,
+  entityIds: EntityIdSequence,
+  invulnerableUntilTick = 0,
+): { planet: PlanetPublic; privateState: PlanetPrivateState } => {
+  const tuningDocument = getRuntimeEditorTuningDocument("online");
+  return createPlanet(
+    index,
+    count,
+    player,
+    entityIds,
+    tuningDocument,
+    invulnerableUntilTick,
+  );
+};
+
 const createCache = (entityIds: EntityIdSequence, rng: () => number): Cache => {
   const spawn = sampleCacheSpawnKinematics({ arenaRadius: ARENA_RADIUS, rng });
 
@@ -280,7 +300,7 @@ export const createInitialMatchState = (
   privateStates: Map<PlayerId, PlanetPrivateState>;
 } => {
   const rng = mulberry32(seed);
-  const tuningDocument = getRuntimeEditorTuningDocument();
+  const tuningDocument = getRuntimeEditorTuningDocument("online");
   const { orbitStarMotion, suns } = createInitialSuns(
     entityIds,
     tuningDocument,

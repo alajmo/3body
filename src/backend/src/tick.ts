@@ -37,6 +37,7 @@ import {
   hasSweptCircleOverlap,
   hasCrossedBlackHoleHorizon,
   len,
+  MATCH_TIMERS,
   type NeutronStar,
   normalize,
   PLANET_HP,
@@ -72,6 +73,7 @@ import {
   sub,
   type Vec2,
   type WildcardKind,
+  type WorldOrbitStarMotion,
 } from "@3body/shared";
 import type { AppConfig } from "./config";
 import type { RocketRuntimeState, Room } from "./room";
@@ -361,12 +363,17 @@ const diffEntityCollection = <T extends { id: number }>(
   previous: readonly T[],
   current: readonly T[],
 ): { changed?: T[]; removed?: number[] } => {
-  const previousById = new Map(previous.map((entity) => [entity.id, entity]));
-  const currentById = new Map(current.map((entity) => [entity.id, entity]));
+  const previousById = new Map<number, T>();
+  for (const entity of previous) {
+    previousById.set(entity.id, entity);
+  }
+
+  const currentIds = new Set<number>();
   const changed: T[] = [];
   const removed: number[] = [];
 
   for (const entity of current) {
+    currentIds.add(entity.id);
     const previousEntity = previousById.get(entity.id);
     if (previousEntity === undefined || previousEntity !== entity) {
       changed.push(entity);
@@ -374,7 +381,7 @@ const diffEntityCollection = <T extends { id: number }>(
   }
 
   for (const entity of previous) {
-    if (!currentById.has(entity.id)) {
+    if (!currentIds.has(entity.id)) {
       removed.push(entity.id);
     }
   }
@@ -394,10 +401,96 @@ interface CompactEntityDiff<T, TRow extends readonly [number, ...unknown[]]> {
 const sameJson = (left: unknown, right: unknown): boolean =>
   JSON.stringify(left) === JSON.stringify(right);
 
+const sameVec2 = (left: Vec2, right: Vec2): boolean =>
+  left.x === right.x && left.y === right.y;
+
+const sameBlackHole = (
+  left: BlackHole | null,
+  right: BlackHole | null,
+): boolean =>
+  left === right ||
+  (left !== null &&
+    right !== null &&
+    left.id === right.id &&
+    left.kind === right.kind &&
+    left.mass === right.mass &&
+    left.radius === right.radius &&
+    left.killRadius === right.killRadius &&
+    sameVec2(left.pos, right.pos) &&
+    sameVec2(left.vel, right.vel));
+
+const sameCacheContents = (
+  left: CacheContents,
+  right: CacheContents,
+): boolean => {
+  if (left === right) {
+    return true;
+  }
+  if (left.kind !== right.kind) {
+    return false;
+  }
+
+  switch (left.kind) {
+    case "wildcard":
+      return (
+        right.kind === "wildcard" && left.wildcard.kind === right.wildcard.kind
+      );
+    case "heavyAmmo":
+    case "repair":
+    case "seekerPack":
+    case "shieldExt":
+      return true;
+  }
+};
+
+const sameOrbitStarMotion = (
+  left: WorldOrbitStarMotion | null,
+  right: WorldOrbitStarMotion | null,
+): boolean =>
+  left === right ||
+  (left !== null &&
+    right !== null &&
+    left.mode === right.mode &&
+    left.elapsedSec === right.elapsedSec &&
+    left.patternId === right.patternId &&
+    left.speed === right.speed &&
+    left.baseDistanceScale === right.baseDistanceScale &&
+    left.distanceScale === right.distanceScale &&
+    left.sunIds[0] === right.sunIds[0] &&
+    left.sunIds[1] === right.sunIds[1] &&
+    left.sunIds[2] === right.sunIds[2]);
+
+const sameSnapshotRowValue = (left: unknown, right: unknown): boolean => {
+  if (left === right) {
+    return true;
+  }
+
+  if (
+    (typeof left === "object" && left !== null) ||
+    (typeof right === "object" && right !== null)
+  ) {
+    return sameJson(left, right);
+  }
+
+  return false;
+};
+
 const rowChanged = <TRow extends readonly [number, ...unknown[]]>(
   previous: TRow,
   current: TRow,
-): boolean => !sameJson(previous, current);
+): boolean => {
+  if (previous.length !== current.length) {
+    return true;
+  }
+
+  for (let index = 0; index < current.length; index += 1) {
+    if (!sameSnapshotRowValue(previous[index], current[index])) {
+      return true;
+    }
+  }
+
+  return false;
+};
 
 const diffCompactEntityCollection = <
   T extends { id: number },
@@ -407,16 +500,22 @@ const diffCompactEntityCollection = <
   current: readonly T[],
   options: {
     hasStaticChanged: (previous: T, current: T) => boolean;
+    hasUpdateChanged?: (previous: T, current: T) => boolean;
     toUpdateRow: (entity: T) => TRow;
   },
 ): CompactEntityDiff<T, TRow> => {
-  const previousById = new Map(previous.map((entity) => [entity.id, entity]));
-  const currentById = new Map(current.map((entity) => [entity.id, entity]));
+  const previousById = new Map<number, T>();
+  for (const entity of previous) {
+    previousById.set(entity.id, entity);
+  }
+
+  const currentIds = new Set<number>();
   const spawns: T[] = [];
   const updates: TRow[] = [];
   const removed: number[] = [];
 
   for (const entity of current) {
+    currentIds.add(entity.id);
     const previousEntity = previousById.get(entity.id);
     if (
       previousEntity === undefined ||
@@ -426,15 +525,19 @@ const diffCompactEntityCollection = <
       continue;
     }
 
-    const previousRow = options.toUpdateRow(previousEntity);
-    const currentRow = options.toUpdateRow(entity);
-    if (rowChanged(previousRow, currentRow)) {
-      updates.push(currentRow);
+    const updateChanged =
+      options.hasUpdateChanged?.(previousEntity, entity) ??
+      rowChanged(
+        options.toUpdateRow(previousEntity),
+        options.toUpdateRow(entity),
+      );
+    if (updateChanged) {
+      updates.push(options.toUpdateRow(entity));
     }
   }
 
   for (const entity of previous) {
-    if (!currentById.has(entity.id)) {
+    if (!currentIds.has(entity.id)) {
       removed.push(entity.id);
     }
   }
@@ -481,6 +584,7 @@ const planetUpdateRow = (planet: PlanetPublic): SnapshotPlanetUpdateRow => [
   planet.shieldLoad,
   planet.shieldMaxLoad,
   planet.debuffs,
+  planet.invulnerableUntilTick ?? 0,
 ];
 
 const rocketUpdateRow = (rocket: Rocket): SnapshotRocketUpdateRow => [
@@ -509,6 +613,49 @@ const debrisUpdateRow = (debris: Debris): SnapshotDebrisUpdateRow => [
   debris.ttlUntilTick,
 ];
 
+const hasSunUpdateChanged = (previous: Sun, current: Sun): boolean =>
+  !sameVec2(previous.pos, current.pos) ||
+  !sameVec2(previous.vel, current.vel) ||
+  previous.mass !== current.mass ||
+  previous.radius !== current.radius;
+
+const hasNeutronStarUpdateChanged = (
+  previous: NeutronStar,
+  current: NeutronStar,
+): boolean =>
+  !sameVec2(previous.pos, current.pos) ||
+  !sameVec2(previous.vel, current.vel) ||
+  previous.mass !== current.mass ||
+  previous.radius !== current.radius;
+
+const hasPlanetUpdateChanged = (
+  previous: PlanetPublic,
+  current: PlanetPublic,
+): boolean =>
+  !sameVec2(previous.pos, current.pos) ||
+  !sameVec2(previous.vel, current.vel) ||
+  previous.hp !== current.hp ||
+  !sameVec2(previous.shieldAimDir, current.shieldAimDir) ||
+  previous.shieldActive !== current.shieldActive ||
+  previous.shieldLoad !== current.shieldLoad ||
+  previous.shieldMaxLoad !== current.shieldMaxLoad ||
+  previous.debuffs.dragUntilTick !== current.debuffs.dragUntilTick ||
+  (previous.invulnerableUntilTick ?? 0) !==
+    (current.invulnerableUntilTick ?? 0);
+
+const hasRocketUpdateChanged = (previous: Rocket, current: Rocket): boolean =>
+  !sameVec2(previous.pos, current.pos) ||
+  !sameVec2(previous.vel, current.vel) ||
+  previous.ttlUntilTick !== current.ttlUntilTick;
+
+const hasCacheUpdateChanged = (previous: Cache, current: Cache): boolean =>
+  !sameVec2(previous.pos, current.pos) || !sameVec2(previous.vel, current.vel);
+
+const hasDebrisUpdateChanged = (previous: Debris, current: Debris): boolean =>
+  !sameVec2(previous.pos, current.pos) ||
+  !sameVec2(previous.vel, current.vel) ||
+  previous.ttlUntilTick !== current.ttlUntilTick;
+
 const hasSunStaticChanged = (previous: Sun, current: Sun): boolean =>
   previous.kind !== current.kind;
 
@@ -536,7 +683,7 @@ const hasRocketStaticChanged = (previous: Rocket, current: Rocket): boolean =>
 const hasCacheStaticChanged = (previous: Cache, current: Cache): boolean =>
   previous.kind !== current.kind ||
   previous.radius !== current.radius ||
-  !sameJson(previous.contents, current.contents);
+  !sameCacheContents(previous.contents, current.contents);
 
 const hasDebrisStaticChanged = (previous: Debris, current: Debris): boolean =>
   previous.kind !== current.kind ||
@@ -583,10 +730,13 @@ const markPlayerDeath = (
   playerId: PlayerId,
   tick: number,
 ): void => {
-  const runtime = room.combatRuntimeFor(playerId);
-  runtime.deathTick ??= tick;
-  room.privateStates.delete(playerId);
+  room.markPlayerDeath(playerId, tick);
 };
+
+const isPlanetInvulnerable = (
+  planet: Pick<PlanetPublic, "invulnerableUntilTick">,
+  tick: number,
+): boolean => (planet.invulnerableUntilTick ?? 0) > tick;
 
 const refreshBoostLoad = (
   privateState: PlanetPrivateState,
@@ -1032,16 +1182,15 @@ const enqueueBotCombatMessages = (room: Room, config: AppConfig): void => {
     return;
   }
 
-  for (const playerId of room.activeBotPlayerIds()) {
+  for (const self of room.world.planets) {
+    const playerId = self.playerId;
     const difficulty = room.botDifficultyFor(playerId);
     if (difficulty === null) {
       continue;
     }
 
-    const self =
-      room.world.planets.find((planet) => planet.playerId === playerId) ?? null;
     const privateState = room.privateStates.get(playerId);
-    if (!self || !privateState) {
+    if (!privateState) {
       continue;
     }
 
@@ -1173,6 +1322,10 @@ const applyPlanetCollisions = (
   for (let index = 0; index < planets.length; index += 1) {
     const planet = planets[index]!;
 
+    if (isPlanetInvulnerable(planet, nextTick)) {
+      continue;
+    }
+
     if (isInsideBlackHole(planet, blackHole)) {
       deadPlayerIds.add(planet.playerId);
       swallowedPlanets.push(planet);
@@ -1218,7 +1371,11 @@ const applyPlanetCollisions = (
       otherIndex += 1
     ) {
       const other = planets[otherIndex]!;
-      if (deadPlayerIds.has(other.playerId)) {
+      if (
+        deadPlayerIds.has(other.playerId) ||
+        isPlanetInvulnerable(planet, nextTick) ||
+        isPlanetInvulnerable(other, nextTick)
+      ) {
         continue;
       }
 
@@ -1277,6 +1434,11 @@ const applyBoundaryEffects = (
     const distanceFromOrigin = len(planet.pos);
     if (distanceFromOrigin <= room.world!.arenaRadius) {
       runtime.boundaryEnteredTick = undefined;
+      survivors.push(planet);
+      continue;
+    }
+
+    if (isPlanetInvulnerable(planet, nextTick)) {
       survivors.push(planet);
       continue;
     }
@@ -1436,9 +1598,10 @@ const applyBoundaryAsteroidImpacts = ({
     ) {
       const planet = nextPlanets[planetIndex]!;
       if (
+        isPlanetInvulnerable(planet, nextTick) ||
         dist(piece.pos, planet.pos) >
-        getBoundaryAsteroidImpactRadius(piece.asteroidTier, piece.radius) +
-          planet.radius
+          getBoundaryAsteroidImpactRadius(piece.asteroidTier, piece.radius) +
+            planet.radius
       ) {
         continue;
       }
@@ -1684,6 +1847,11 @@ const applyRocketCollisions = (
       }
 
       if (dist(rocket.pos, planet.pos) <= rocket.radius + planet.radius) {
+        if (isPlanetInvulnerable(planet, nextTick)) {
+          consumed = true;
+          break;
+        }
+
         const absorbedByShield = shieldProtectsImpact(
           planet,
           rocket.pos,
@@ -1897,7 +2065,17 @@ const applyCooldownsAndRegen = (
     planetIndex < room.world.planets.length;
     planetIndex += 1
   ) {
-    const planet = room.world.planets[planetIndex]!;
+    let planet = room.world.planets[planetIndex]!;
+    if (
+      (planet.invulnerableUntilTick ?? 0) > 0 &&
+      (planet.invulnerableUntilTick ?? 0) <= nextTick
+    ) {
+      planet = {
+        ...planet,
+        invulnerableUntilTick: 0,
+      };
+      room.world.planets[planetIndex] = planet;
+    }
     const privateState = room.privateStates.get(planet.playerId);
     if (!privateState) {
       continue;
@@ -2142,8 +2320,25 @@ const updateWorld = (room: Room, config: AppConfig): void => {
   room.recordPlanetPositions(lagCompHistoryEntries(config.tickHz));
   room.recordSnapshotState(config.snapshotHistoryTicks);
 
-  if (room.world.planets.length <= 1) {
-    room.finalizeMatch(Date.now(), config.tickHz);
+  const cycleTicks = Math.max(
+    config.tickHz,
+    Math.round(MATCH_TIMERS.cycleSec * config.tickHz),
+  );
+  const countdownTicks = Math.max(
+    config.tickHz,
+    Math.round(MATCH_TIMERS.cycleCountdownSec * config.tickHz),
+  );
+  const remainingTicks = cycleTicks - room.tick;
+  if (remainingTicks > 0 && remainingTicks <= countdownTicks) {
+    const remainingSec = Math.ceil(remainingTicks / config.tickHz);
+    if (room.lastCycleCountdownRemainingSec !== remainingSec) {
+      room.lastCycleCountdownRemainingSec = remainingSec;
+      room.queueCycleResetCountdown(remainingSec);
+    }
+  }
+
+  if (room.tick >= cycleTicks) {
+    room.resetCombatCycle(Date.now(), config.tickHz);
   }
 };
 
@@ -2196,7 +2391,7 @@ export const buildRoomDeltaSnapshot = (
       ...(caches.changed ? { caches: caches.changed } : {}),
       ...(debris.changed ? { debris: debris.changed } : {}),
       ...(currentBlackHole !== null &&
-      JSON.stringify(previousBlackHole) !== JSON.stringify(currentBlackHole)
+      !sameBlackHole(previousBlackHole, currentBlackHole)
         ? { blackHole: currentBlackHole }
         : {}),
     },
@@ -2232,6 +2427,7 @@ export const buildRoomSnapshotV2 = (
     room.world.suns,
     {
       hasStaticChanged: hasSunStaticChanged,
+      hasUpdateChanged: hasSunUpdateChanged,
       toUpdateRow: sunUpdateRow,
     },
   );
@@ -2240,6 +2436,7 @@ export const buildRoomSnapshotV2 = (
     room.world.neutronStars,
     {
       hasStaticChanged: hasNeutronStarStaticChanged,
+      hasUpdateChanged: hasNeutronStarUpdateChanged,
       toUpdateRow: neutronStarUpdateRow,
     },
   );
@@ -2248,6 +2445,7 @@ export const buildRoomSnapshotV2 = (
     room.world.planets,
     {
       hasStaticChanged: hasPlanetStaticChanged,
+      hasUpdateChanged: hasPlanetUpdateChanged,
       toUpdateRow: planetUpdateRow,
     },
   );
@@ -2256,6 +2454,7 @@ export const buildRoomSnapshotV2 = (
     room.world.rockets,
     {
       hasStaticChanged: hasRocketStaticChanged,
+      hasUpdateChanged: hasRocketUpdateChanged,
       toUpdateRow: rocketUpdateRow,
     },
   );
@@ -2264,6 +2463,7 @@ export const buildRoomSnapshotV2 = (
     room.world.caches,
     {
       hasStaticChanged: hasCacheStaticChanged,
+      hasUpdateChanged: hasCacheUpdateChanged,
       toUpdateRow: cacheUpdateRow,
     },
   );
@@ -2272,6 +2472,7 @@ export const buildRoomSnapshotV2 = (
     room.world.debris,
     {
       hasStaticChanged: hasDebrisStaticChanged,
+      hasUpdateChanged: hasDebrisUpdateChanged,
       toUpdateRow: debrisUpdateRow,
     },
   );
@@ -2304,10 +2505,10 @@ export const buildRoomSnapshotV2 = (
       ...(debris.updates ? { debris: debris.updates } : {}),
       ...(previousBlackHole !== null &&
       currentBlackHole !== null &&
-      !sameJson(previousBlackHole, currentBlackHole)
+      !sameBlackHole(previousBlackHole, currentBlackHole)
         ? { blackHole: currentBlackHole }
         : {}),
-      ...(!sameJson(previousOrbitStarMotion, currentOrbitStarMotion)
+      ...(!sameOrbitStarMotion(previousOrbitStarMotion, currentOrbitStarMotion)
         ? { orbitStarMotion: currentOrbitStarMotion }
         : {}),
     },

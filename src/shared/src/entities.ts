@@ -35,6 +35,7 @@ export type PlanetPublic = EntityBase & {
   playerId: PlayerId;
   archetype: ArchetypeId;
   hp: number;
+  invulnerableUntilTick?: number;
   shieldAimDir: Vec2;
   shieldActive: boolean;
   shieldLoad: number;

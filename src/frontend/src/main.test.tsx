@@ -35,7 +35,8 @@ describe("main", () => {
 
     await import("./main");
 
-    expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning");
+    expect(fetchMock).toHaveBeenCalledWith("/api/editor/tuning/online");
+    expect(fetchMock).toHaveBeenCalledWith("/api/editor/enabled");
     expect(createRootMock).toHaveBeenCalledWith(document.getElementById("app"));
     expect(renderMock).toHaveBeenCalledTimes(1);
     expect(logSpy).toHaveBeenCalledWith("[frontend] @3body/shared loaded", {

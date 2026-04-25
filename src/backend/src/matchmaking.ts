@@ -2,6 +2,7 @@ import {
   type AbilityMsg,
   type ArchetypeId,
   type ChatMsg,
+  type DeltaSnapshotMsg,
   type FireRocketMsg,
   type HelloMsg,
   type InputMsg,
@@ -12,11 +13,12 @@ import {
   type ProfileToken,
   type ServerMsg,
   type ShieldAimMsg,
+  type SnapshotV2Msg,
   type VoteRematchMsg,
 } from "@3body/shared";
 import type { AppConfig } from "./config";
 import { config } from "./config";
-import { Connection } from "./connection";
+import { Connection, getPrivateStateSignature } from "./connection";
 import { newOpaqueToken, newRoomId } from "./ids";
 import { log } from "./log";
 import type { QueuedCombatMessage, RoomAdvanceEvent } from "./room";
@@ -302,6 +304,10 @@ export class MatchmakingService {
       this.broadcastLobbyState(room);
     } else {
       this.sendCurrentPhaseState(connection, room);
+      if (room.phase === "combat" && result.participant !== undefined) {
+        this.broadcastRosterState(room);
+        this.broadcastFullSnapshots(room);
+      }
     }
 
     log.info("player_admitted", {
@@ -475,18 +481,13 @@ export class MatchmakingService {
   }
 
   handleCombatInput(connection: Connection, message: InputMsg): void {
-    this.dispatchCombatAction(
-      connection,
-      "input",
-      null,
-      (playerId) => ({
-        type: "input",
-        playerId,
-        boostHeld: message.boostHeld,
-        mouseDir: message.mouseDir,
-        clientTick: message.clientTick,
-      }),
-    );
+    this.dispatchCombatAction(connection, "input", null, (playerId) => ({
+      type: "input",
+      playerId,
+      boostHeld: message.boostHeld,
+      mouseDir: message.mouseDir,
+      clientTick: message.clientTick,
+    }));
   }
 
   handleFireRocket(connection: Connection, message: FireRocketMsg): void {
@@ -558,6 +559,32 @@ export class MatchmakingService {
     }
   }
 
+  handleRejoin(connection: Connection): void {
+    const resolved = this.resolveRoomParticipant(connection);
+    if (!resolved) {
+      return;
+    }
+
+    const { room, participant } = resolved;
+    if (room.phase !== "combat") {
+      connection.sendError("phase_invalid", "rejoin is only valid in combat");
+      return;
+    }
+
+    if (participant.isBot) {
+      connection.sendError("invalid_action", "Bots cannot rejoin");
+      return;
+    }
+
+    if (!room.respawnPlayer(participant.playerId, this.config.tickHz)) {
+      connection.sendError("invalid_action", "Player is already alive");
+      return;
+    }
+
+    this.broadcastRosterState(room);
+    this.broadcastFullSnapshots(room);
+  }
+
   handleChat(connection: Connection, message: ChatMsg): void {
     const resolved = this.resolveRoomParticipant(connection);
     if (!resolved) {
@@ -612,8 +639,13 @@ export class MatchmakingService {
       Date.now(),
       this.config.reclaimGraceMs,
     );
-    if (changed && room.phase === "lobby") {
-      this.broadcastLobbyState(room);
+    if (changed) {
+      if (room.phase === "lobby") {
+        this.broadcastLobbyState(room);
+      } else {
+        this.broadcastRosterState(room);
+        this.broadcastFullSnapshots(room);
+      }
     }
 
     this.drainWaitlist();
@@ -628,9 +660,7 @@ export class MatchmakingService {
   }
 
   activeMatchRoomIds(): string[] {
-    return [...this.#rooms.values()]
-      .filter((room) => room.phase === "combat")
-      .map((room) => room.id);
+    return [];
   }
 
   closeAllConnections(code = 1012, reason = "server_shutdown"): void {
@@ -647,8 +677,13 @@ export class MatchmakingService {
   pruneRooms(nowMs = Date.now()): void {
     for (const room of this.#rooms.values()) {
       const changed = room.releaseExpiredReclaims(nowMs);
-      if (changed && room.phase === "lobby") {
-        this.broadcastLobbyState(room);
+      if (changed) {
+        if (room.phase === "lobby") {
+          this.broadcastLobbyState(room);
+        } else {
+          this.broadcastRosterState(room);
+          this.broadcastFullSnapshots(room);
+        }
       }
 
       this.processRoomEvents(room, room.advance(nowMs));
@@ -743,9 +778,7 @@ export class MatchmakingService {
     playerName: Exclude<ReturnType<typeof normalizePlayerName>, null>;
     profileTokenHash: string;
   }): RoomAdmissionSuccess | RoomAdmissionFailure {
-    let room = [...this.#rooms.values()].find(
-      (candidate) => candidate.phase === "lobby" && !candidate.isFull(),
-    );
+    let room = [...this.#rooms.values()][0];
 
     if (!room) {
       if (this.#rooms.size >= this.config.maxRooms) {
@@ -760,6 +793,14 @@ export class MatchmakingService {
       this.#rooms.set(room.id, room);
     }
 
+    if (room.isFull()) {
+      return {
+        ok: false,
+        code: "server_full",
+        message: "The public room is full",
+      };
+    }
+
     const participant = room.addPlayer({
       playerId: input.playerId,
       name: input.playerName,
@@ -767,6 +808,7 @@ export class MatchmakingService {
       profileTokenHash: input.profileTokenHash,
       resumeToken: newOpaqueToken(),
     });
+    room.spawnLatePlayer(participant.playerId, this.config.tickHz);
 
     return {
       ok: true,
@@ -857,16 +899,6 @@ export class MatchmakingService {
       };
     }
 
-    if (room.phase !== "lobby") {
-      return {
-        ok: true,
-        room,
-        reclaimed: false,
-        role: "spectator",
-        resumeToken: newOpaqueToken(),
-      };
-    }
-
     if (room.isFull()) {
       return {
         ok: false,
@@ -882,6 +914,7 @@ export class MatchmakingService {
       profileTokenHash: input.profileTokenHash,
       resumeToken: newOpaqueToken(),
     });
+    room.spawnLatePlayer(participant.playerId, this.config.tickHz);
 
     return {
       ok: true,
@@ -974,6 +1007,9 @@ export class MatchmakingService {
         case "rematchState":
           this.broadcastRematchState(room);
           break;
+        case "rosterState":
+          this.broadcastRosterState(room);
+          break;
       }
     }
   }
@@ -988,11 +1024,16 @@ export class MatchmakingService {
     if (!ticker) {
       ticker = new RoomTicker(room, this.config, (activeRoom, broadcast) => {
         this.broadcastRoomEvents(activeRoom);
-        if (broadcast.emitFullSnapshot) {
+        this.drainWaitlist();
+        const botRosterChanged = activeRoom.ensureBotFloor(this.config.tickHz);
+        if (botRosterChanged) {
+          this.broadcastRosterState(activeRoom);
+        }
+        const emitFullSnapshot =
+          broadcast.emitFullSnapshot || activeRoom.takeFullSnapshotRequest();
+        if (emitFullSnapshot) {
           this.enqueueFinishedMatchSummary(activeRoom);
           this.broadcastFullSnapshots(activeRoom);
-          this.broadcastMatchEnd(activeRoom);
-          this.broadcastRematchState(activeRoom);
           return;
         }
         if (broadcast.emitDeltaSnapshot) {
@@ -1015,6 +1056,17 @@ export class MatchmakingService {
     }
   }
 
+  private broadcastRosterState(room: Room): void {
+    const message = {
+      type: "rosterState",
+      roster: room.roster(),
+    } as const;
+
+    for (const connId of room.activeConnectionIds()) {
+      this.#connections.get(connId)?.send(message);
+    }
+  }
+
   private broadcastPickState(room: Room): void {
     const message = room.pickState();
 
@@ -1025,7 +1077,8 @@ export class MatchmakingService {
 
   private broadcastFullSnapshots(room: Room): void {
     room.recordSnapshotState(this.config.snapshotHistoryTicks);
-    for (const connId of room.activeConnectionIds()) {
+    const connectionIds = room.activeConnectionIds();
+    for (const connId of connectionIds) {
       const connection = this.#connections.get(connId);
       const snapshot = room.fullSnapshotFor(
         connection?.role === "spectator" ? undefined : connection?.playerId,
@@ -1038,32 +1091,37 @@ export class MatchmakingService {
   }
 
   private broadcastRoomEvents(room: Room): void {
+    this.broadcastCycleResetCountdowns(room);
     const events = room.drainPendingEvents();
     if (events.length === 0) {
       return;
     }
 
+    const connectionIds = room.activeConnectionIds();
     for (const event of events) {
-      for (const connId of room.activeConnectionIds()) {
-        this.#connections.get(connId)?.send({
-          type: "event",
-          event,
-        });
+      const message = {
+        type: "event",
+        event,
+      } as const;
+      for (const connId of connectionIds) {
+        this.#connections.get(connId)?.send(message);
       }
     }
   }
 
-  private broadcastMatchEnd(room: Room): void {
-    const message = room.matchEndMessage();
-    if (!message) {
+  private broadcastCycleResetCountdowns(room: Room): void {
+    const messages = room.drainCycleResetCountdowns();
+    if (messages.length === 0) {
       return;
     }
 
-    for (const connId of room.activeConnectionIds()) {
-      this.#connections.get(connId)?.send(message);
+    const connectionIds = room.activeConnectionIds();
+    for (const message of messages) {
+      for (const connId of connectionIds) {
+        this.#connections.get(connId)?.send(message);
+      }
     }
   }
-
 
   private broadcastRematchState(room: Room): void {
     const message = room.rematchStateMessage();
@@ -1078,7 +1136,29 @@ export class MatchmakingService {
 
   private broadcastDeltaSnapshots(room: Room): void {
     room.recordSnapshotState(this.config.snapshotHistoryTicks);
-    for (const connId of room.activeConnectionIds()) {
+    const connectionIds = room.activeConnectionIds();
+    const snapshotCache = new Map<
+      string,
+      DeltaSnapshotMsg | SnapshotV2Msg | null
+    >();
+    const getPublicSnapshot = (
+      snapshotVersion: 1 | 2,
+      baseTick: number,
+    ): DeltaSnapshotMsg | SnapshotV2Msg | null => {
+      const cacheKey = `${snapshotVersion}:${baseTick}`;
+      if (snapshotCache.has(cacheKey)) {
+        return snapshotCache.get(cacheKey) ?? null;
+      }
+
+      const snapshot =
+        snapshotVersion === 2
+          ? buildRoomSnapshotV2(room, baseTick)
+          : buildRoomDeltaSnapshot(room, baseTick);
+      snapshotCache.set(cacheKey, snapshot);
+      return snapshot;
+    };
+
+    for (const connId of connectionIds) {
       const connection = this.#connections.get(connId);
       if (!connection) {
         continue;
@@ -1098,10 +1178,7 @@ export class MatchmakingService {
         }
         continue;
       }
-      const snapshot =
-        connection.snapshotVersion === 2
-          ? buildRoomSnapshotV2(room, baseTick)
-          : buildRoomDeltaSnapshot(room, baseTick);
+      const snapshot = getPublicSnapshot(connection.snapshotVersion, baseTick);
       if (!snapshot) {
         continue;
       }
@@ -1110,8 +1187,7 @@ export class MatchmakingService {
         connection.role === "spectator" || connection.playerId === undefined
           ? null
           : (room.privateStates.get(connection.playerId) ?? null);
-      const currentSelfSignature =
-        currentSelf === null ? "null" : JSON.stringify(currentSelf);
+      const currentSelfSignature = getPrivateStateSignature(currentSelf);
       const includeSelf =
         currentSelfSignature !== connection.lastSentSelfStateSignature;
 

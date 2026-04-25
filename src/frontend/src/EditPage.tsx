@@ -14,6 +14,7 @@ import {
   type RocketKind,
   resolveEditorFixedOrbitPatternId,
   sanitizeGameTuning,
+  type TuningMode,
 } from "@3body/shared";
 import { startTransition, useEffect, useMemo, useRef, useState } from "react";
 import { EditGameViewportPanel } from "./EditGameViewportPanel";
@@ -1510,7 +1511,7 @@ function EditorItemPreview({
   }
 }
 
-export function EditPage() {
+export function EditPage({ mode }: { mode: TuningMode }) {
   const [documentValue, setDocumentValue] = useState(createDocumentSnapshot);
   const [selectedItemId, setSelectedItemId] = useState<EditorItemId>(() =>
     typeof window === "undefined"
@@ -1602,7 +1603,7 @@ export function EditPage() {
 
     const load = async () => {
       try {
-        const response = await fetch("/api/editor/tuning");
+        const response = await fetch(`/api/editor/tuning/${mode}`);
         if (!response.ok) {
           throw new Error(`Request failed with ${response.status}`);
         }
@@ -1642,7 +1643,7 @@ export function EditPage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [mode]);
 
   const applyPreviewChange = (updater: (draft: GameTuningDocument) => void) => {
     const nextDocument = normalizeEditorTuningDocument(
@@ -1660,7 +1661,7 @@ export function EditPage() {
     });
 
     try {
-      const response = await fetch("/api/editor/tuning", {
+      const response = await fetch(`/api/editor/tuning/${mode}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -1708,7 +1709,7 @@ export function EditPage() {
     });
 
     try {
-      const response = await fetch("/api/editor/tuning/sync-current", {
+      const response = await fetch(`/api/editor/tuning/${mode}/sync-current`, {
         method: "POST",
       });
       if (!response.ok) {
@@ -5540,7 +5541,9 @@ export function EditPage() {
     <div className="edit-shell">
       <aside className="edit-column edit-column--objects">
         <section className="edit-panel edit-panel--views">
-          <div className="edit-panel__eyebrow">Views</div>
+          <div className="edit-panel__eyebrow">
+            {mode === "online" ? "Online tuning" : "Offline tuning"}
+          </div>
           <div className="edit-object-list">
             {EDITOR_VIEW_ITEMS.map((item) => (
               <button

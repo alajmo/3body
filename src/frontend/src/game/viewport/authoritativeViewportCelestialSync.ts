@@ -224,6 +224,7 @@ export const buildAuthoritativeViewportCelestialSync = ({
     syncVisual: ({ planet, visual }) => {
       syncSharedCombatPlanetVisual({
         archetypeVisuals: tuning.visuals.planets.archetypes[planet.archetype],
+        invulnerable: (planet.invulnerableUntilTick ?? 0) > 0,
         nowSec,
         planetPosition: planet.pos,
         renderRadius: planet.radius,

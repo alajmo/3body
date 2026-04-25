@@ -5,6 +5,7 @@ import {
   type AbilityMsg,
   type ArchetypeId,
   type BotDifficulty,
+  type CycleResetCountdownMsg,
   type EntityId,
   type FireRocketMsg,
   type FullSnapshotMsg,
@@ -31,7 +32,7 @@ import {
 } from "@3body/shared";
 import { Bot } from "./bot";
 import { EntityIdSequence, newOpaqueToken } from "./ids";
-import { createInitialMatchState } from "./spawn";
+import { createInitialMatchState, createPlayerSpawnState } from "./spawn";
 
 const snapshotWorld = (world: World): World => ({
   ...world,
@@ -49,7 +50,8 @@ export type RoomAdvanceEvent =
   | "lobbyState"
   | "pickState"
   | "combatStarted"
-  | "rematchState";
+  | "rematchState"
+  | "rosterState";
 
 const DEFAULT_INPUT_DIR: Vec2 = { x: 1, y: 0 };
 
@@ -165,8 +167,8 @@ interface RoomParticipant {
 const bySeat = (left: RoomParticipant, right: RoomParticipant): number =>
   left.seat - right.seat;
 
-const HUMAN_AUTOFILL_SEED_SALT = 0x51a77e1d;
 const BOT_PICK_SEED_SALT = 0x3a5391c5;
+const DEFAULT_BOT_FLOOR = 5;
 
 const botNameForSeat = (seat: number): PlayerName =>
   `Bot ${seat + 1}` as PlayerName;
@@ -180,6 +182,7 @@ export class Room {
   readonly rng: () => number;
   readonly seed: number;
   readonly snapshotHistory: SnapshotHistoryEntry[] = [];
+  readonly #snapshotHistoryByTick = new Map<number, SnapshotHistoryEntry>();
   readonly planetPositionHistory = new Map<
     EntityId,
     PlanetPositionHistoryEntry[]
@@ -201,9 +204,12 @@ export class Room {
   readonly combatIntents = new Map<PlayerId, CombatIntentState>();
   readonly combatPlayerRuntime = new Map<PlayerId, CombatPlayerRuntime>();
   readonly pendingEvents: SnapshotEvent[] = [];
+  readonly pendingCycleResetCountdowns: CycleResetCountdownMsg[] = [];
   readonly rocketRuntime = new Map<EntityId, RocketRuntimeState>();
   readonly cacheRespawnAtTicks: number[] = [];
   readonly rematchYesPlayerIds = new Set<PlayerId>();
+  lastCycleCountdownRemainingSec?: number;
+  fullSnapshotRequested = false;
 
   constructor(
     readonly id: string,
@@ -298,6 +304,12 @@ export class Room {
       return false;
     }
 
+    if (this.phase === "combat" && !this.privateStates.has(playerId)) {
+      this.removeParticipant(playerId);
+      this.refreshIdleState(nowMs);
+      return true;
+    }
+
     participant.connected = false;
     participant.connId = undefined;
     participant.reclaimDeadlineAtMs = nowMs + reclaimGraceMs;
@@ -316,7 +328,6 @@ export class Room {
       if (
         participant.isBot ||
         participant.connected ||
-        this.phase === "combat" ||
         this.phase === "ended" ||
         participant.reclaimDeadlineAtMs === undefined ||
         participant.reclaimDeadlineAtMs > nowMs
@@ -324,9 +335,7 @@ export class Room {
         continue;
       }
 
-      this.participants.delete(participant.playerId);
-      this.privateStates.delete(participant.playerId);
-      this.botControllers.delete(participant.playerId);
+      this.removeParticipant(participant.playerId);
       changed = true;
     }
 
@@ -481,18 +490,28 @@ export class Room {
       return;
     }
 
-    this.snapshotHistory.push({
+    const entry: SnapshotHistoryEntry = {
       tick: this.tick,
       world: snapshotWorld(this.world),
-    });
+    };
+    this.snapshotHistory.push(entry);
+    this.#snapshotHistoryByTick.set(entry.tick, entry);
 
     while (this.snapshotHistory.length > maxEntries) {
-      this.snapshotHistory.shift();
+      const removed = this.snapshotHistory.shift();
+      if (removed !== undefined) {
+        this.#snapshotHistoryByTick.delete(removed.tick);
+      }
     }
   }
 
   snapshotStateFor(tick: number): SnapshotHistoryEntry | null {
-    return this.snapshotHistory.find((entry) => entry.tick === tick) ?? null;
+    return this.#snapshotHistoryByTick.get(tick) ?? null;
+  }
+
+  private clearSnapshotHistory(): void {
+    this.snapshotHistory.length = 0;
+    this.#snapshotHistoryByTick.clear();
   }
 
   recordPlanetPositions(maxEntries?: number): void {
@@ -566,6 +585,29 @@ export class Room {
     return drained;
   }
 
+  queueCycleResetCountdown(remainingSec: number): void {
+    this.pendingCycleResetCountdowns.push({
+      type: "cycleResetCountdown",
+      remainingSec,
+    });
+  }
+
+  drainCycleResetCountdowns(): CycleResetCountdownMsg[] {
+    const drained = [...this.pendingCycleResetCountdowns];
+    this.pendingCycleResetCountdowns.length = 0;
+    return drained;
+  }
+
+  requestFullSnapshot(): void {
+    this.fullSnapshotRequested = true;
+  }
+
+  takeFullSnapshotRequest(): boolean {
+    const requested = this.fullSnapshotRequested;
+    this.fullSnapshotRequested = false;
+    return requested;
+  }
+
   intentFor(playerId: PlayerId): CombatIntentState {
     let intent = this.combatIntents.get(playerId);
     if (intent) {
@@ -596,6 +638,18 @@ export class Room {
     };
     this.combatPlayerRuntime.set(playerId, runtime);
     return runtime;
+  }
+
+  markPlayerDeath(playerId: PlayerId, tick: number): void {
+    const runtime = this.combatRuntimeFor(playerId);
+    runtime.deathTick ??= tick;
+    this.privateStates.delete(playerId);
+
+    const participant = this.participants.get(playerId);
+    if (participant?.isBot) {
+      this.removeParticipant(playerId);
+      this.requestFullSnapshot();
+    }
   }
 
   ensureBotController(playerId: PlayerId, difficulty: BotDifficulty): Bot {
@@ -781,12 +835,8 @@ export class Room {
   }
 
   advance(nowMs: number): RoomAdvanceEvent[] {
-    if (
-      this.phase === "lobby" &&
-      this.hasHumanParticipants() &&
-      (this.isFull() || nowMs >= this.autoStartAtMs)
-    ) {
-      return this.transitionToPick(nowMs);
+    if (this.phase === "lobby" && this.hasHumanParticipants()) {
+      return this.transitionToCombat(nowMs);
     }
 
     if (
@@ -801,24 +851,13 @@ export class Room {
     return [];
   }
 
-  private transitionToPick(nowMs: number): RoomAdvanceEvent[] {
-    if (this.phase !== "lobby") {
+  private transitionToCombat(nowMs: number): RoomAdvanceEvent[] {
+    if (this.phase !== "pick" && this.phase !== "lobby") {
       return [];
     }
 
     this.fillBots();
-    this.assignBotPicks();
-    this.phase = "pick";
-    this.pickDeadlineAtMs = nowMs + MATCH_TIMERS.pickSec * 1000;
-    return ["lobbyState", "pickState"];
-  }
-
-  private transitionToCombat(nowMs: number): RoomAdvanceEvent[] {
-    if (this.phase !== "pick") {
-      return [];
-    }
-
-    this.assignMissingHumanPicks();
+    this.assignRandomArchetypes(this.sortedParticipants());
     const matchState = createInitialMatchState(
       this.seed,
       this.sortedParticipants().map((participant) => ({
@@ -837,13 +876,16 @@ export class Room {
     this.rematchYesPlayerIds.clear();
     this.combatInputQueue.length = 0;
     this.pendingEvents.length = 0;
+    this.pendingCycleResetCountdowns.length = 0;
     this.combatIntents.clear();
     this.combatPlayerRuntime.clear();
     this.rocketRuntime.clear();
     this.cacheRespawnAtTicks.length = 0;
-    this.snapshotHistory.length = 0;
+    this.clearSnapshotHistory();
     this.planetPositionHistory.clear();
     this.botControllers.clear();
+    this.lastCycleCountdownRemainingSec = undefined;
+    this.fullSnapshotRequested = false;
     for (const participant of this.sortedParticipants()) {
       this.combatIntents.set(participant.playerId, {
         mouseDir: { ...DEFAULT_INPUT_DIR },
@@ -866,7 +908,156 @@ export class Room {
     this.recordPlanetPositions();
     this.phase = "combat";
     this.combatStartedAtMs = nowMs;
-    return ["pickState", "combatStarted"];
+    return ["rosterState", "combatStarted"];
+  }
+
+  spawnLatePlayer(playerId: PlayerId, tickHz: number): boolean {
+    if (this.phase !== "combat" || !this.world) {
+      return false;
+    }
+
+    const participant = this.participants.get(playerId);
+    if (!participant || this.privateStates.has(playerId)) {
+      return false;
+    }
+
+    this.spawnParticipant(participant, tickHz);
+    this.requestFullSnapshot();
+    return true;
+  }
+
+  respawnPlayer(playerId: PlayerId, tickHz: number): boolean {
+    if (this.phase !== "combat" || !this.world) {
+      return false;
+    }
+
+    const participant = this.participants.get(playerId);
+    if (!participant || participant.isBot || this.privateStates.has(playerId)) {
+      return false;
+    }
+
+    this.spawnParticipant(participant, tickHz);
+    this.requestFullSnapshot();
+    return true;
+  }
+
+  resetCombatCycle(nowMs: number, tickHz: number): void {
+    if (this.phase !== "combat") {
+      return;
+    }
+
+    this.fillBots();
+    this.assignRandomArchetypes(this.sortedParticipants());
+    const matchState = createInitialMatchState(
+      this.seed ^ Math.floor(this.rng() * 0xffffffff),
+      this.sortedParticipants().map((participant) => ({
+        playerId: participant.playerId,
+        archetypeId: participant.archetypeId!,
+      })),
+      this.entityIds,
+    );
+
+    const cycleInvulnerableUntilTick = Math.round(
+      MATCH_TIMERS.spawnInvulnSec * tickHz,
+    );
+    this.world = {
+      ...matchState.world,
+      planets: matchState.world.planets.map((planet) => ({
+        ...planet,
+        invulnerableUntilTick: cycleInvulnerableUntilTick,
+      })),
+    };
+    this.privateStates = matchState.privateStates;
+    this.matchEnd = undefined;
+    this.pendingFinishedMatchSummary = undefined;
+    this.rematchDeadlineAtMs = undefined;
+    this.rematchYesPlayerIds.clear();
+    this.combatInputQueue.length = 0;
+    this.pendingEvents.length = 0;
+    this.pendingCycleResetCountdowns.length = 0;
+    this.combatIntents.clear();
+    this.combatPlayerRuntime.clear();
+    this.rocketRuntime.clear();
+    this.cacheRespawnAtTicks.length = 0;
+    this.clearSnapshotHistory();
+    this.planetPositionHistory.clear();
+    this.botControllers.clear();
+    this.tick = 0;
+    this.lastCycleCountdownRemainingSec = undefined;
+    for (const participant of this.sortedParticipants()) {
+      this.combatIntents.set(participant.playerId, {
+        mouseDir: { ...DEFAULT_INPUT_DIR },
+        shieldAimDir: { ...DEFAULT_INPUT_DIR },
+        boostHeld: false,
+        boostActive: false,
+        lastInputClientTick: -1,
+      });
+      this.combatPlayerRuntime.set(participant.playerId, {
+        kills: 0,
+        nearMisses: 0,
+        damageDealt: 0,
+      });
+      const difficulty = this.botDifficultyFor(participant.playerId);
+      if (difficulty !== null) {
+        this.ensureBotController(participant.playerId, difficulty);
+      }
+    }
+    this.recordPlanetPositions();
+    this.combatStartedAtMs = nowMs;
+    this.requestFullSnapshot();
+  }
+
+  private spawnParticipant(participant: RoomParticipant, tickHz: number): void {
+    if (!this.world) {
+      return;
+    }
+
+    this.assignRandomArchetypes([participant]);
+    const participants = this.sortedParticipants();
+    const index = Math.max(
+      0,
+      participants.findIndex(
+        (entry) => entry.playerId === participant.playerId,
+      ),
+    );
+    const invulnerableUntilTick =
+      this.tick + Math.round(MATCH_TIMERS.spawnInvulnSec * tickHz);
+    const { planet, privateState } = createPlayerSpawnState(
+      index,
+      participants.length,
+      {
+        playerId: participant.playerId,
+        archetypeId: participant.archetypeId!,
+      },
+      this.entityIds,
+      invulnerableUntilTick,
+    );
+    this.world = {
+      ...this.world,
+      planets: [
+        ...this.world.planets.filter(
+          (existing) => existing.playerId !== participant.playerId,
+        ),
+        planet,
+      ],
+    };
+    this.privateStates.set(participant.playerId, privateState);
+    this.combatIntents.set(participant.playerId, {
+      mouseDir: { ...DEFAULT_INPUT_DIR },
+      shieldAimDir: { ...DEFAULT_INPUT_DIR },
+      boostHeld: false,
+      boostActive: false,
+      lastInputClientTick: -1,
+    });
+    this.combatPlayerRuntime.set(participant.playerId, {
+      kills: 0,
+      nearMisses: 0,
+      damageDealt: 0,
+    });
+    const difficulty = this.botDifficultyFor(participant.playerId);
+    if (difficulty !== null) {
+      this.ensureBotController(participant.playerId, difficulty);
+    }
   }
 
   private restartForRematch(nowMs: number): void {
@@ -884,7 +1075,7 @@ export class Room {
     this.combatPlayerRuntime.clear();
     this.rocketRuntime.clear();
     this.cacheRespawnAtTicks.length = 0;
-    this.snapshotHistory.length = 0;
+    this.clearSnapshotHistory();
     this.planetPositionHistory.clear();
     this.botControllers.clear();
     this.tick = 0;
@@ -900,8 +1091,32 @@ export class Room {
     this.assignBotPicks();
   }
 
+  ensureBotFloor(tickHz: number): boolean {
+    const before = this.size;
+    this.fillBots();
+    if (this.phase === "combat") {
+      for (const participant of this.sortedParticipants()) {
+        if (
+          !participant.isBot ||
+          this.privateStates.has(participant.playerId)
+        ) {
+          continue;
+        }
+        this.spawnParticipant(participant, tickHz);
+      }
+      if (this.size !== before) {
+        this.requestFullSnapshot();
+      }
+    }
+    return this.size !== before;
+  }
+
   private fillBots(): void {
-    while (this.size < ROOM_CAPACITY) {
+    while (
+      this.sortedParticipants().filter((participant) => participant.isBot)
+        .length < DEFAULT_BOT_FLOOR &&
+      this.size < ROOM_CAPACITY
+    ) {
       const seat = this.nextOpenSeat();
       if (seat === null) {
         return;
@@ -929,14 +1144,6 @@ export class Room {
       (participant) => participant.isBot,
     );
     this.assignArchetypes(bots, BOT_PICK_SEED_SALT);
-  }
-
-  private assignMissingHumanPicks(): void {
-    const humansMissingPicks = this.sortedParticipants().filter(
-      (participant) =>
-        !participant.isBot && participant.archetypeId === undefined,
-    );
-    this.assignArchetypes(humansMissingPicks, HUMAN_AUTOFILL_SEED_SALT);
   }
 
   private assignArchetypes(targets: RoomParticipant[], seedSalt: number): void {
@@ -972,6 +1179,14 @@ export class Room {
     }
   }
 
+  private assignRandomArchetypes(targets: RoomParticipant[]): void {
+    for (const participant of targets.sort(bySeat)) {
+      const index = Math.floor(this.rng() * ARCHETYPE_IDS.length);
+      participant.archetypeId = ARCHETYPE_IDS[index]!;
+      participant.lockedIn = true;
+    }
+  }
+
   private hasHumanParticipants(): boolean {
     return this.sortedParticipants().some((participant) => !participant.isBot);
   }
@@ -980,6 +1195,25 @@ export class Room {
     return this.sortedParticipants().every(
       (participant) => participant.archetypeId !== undefined,
     );
+  }
+
+  private removeParticipant(playerId: PlayerId): void {
+    this.participants.delete(playerId);
+    this.privateStates.delete(playerId);
+    this.botControllers.delete(playerId);
+    this.combatIntents.delete(playerId);
+    this.combatPlayerRuntime.delete(playerId);
+    if (this.world) {
+      this.world = {
+        ...this.world,
+        planets: this.world.planets.filter(
+          (planet) => planet.playerId !== playerId,
+        ),
+        rockets: this.world.rockets.filter(
+          (rocket) => rocket.ownerId !== playerId,
+        ),
+      };
+    }
   }
 
   private nextOpenSeat(): number | null {
