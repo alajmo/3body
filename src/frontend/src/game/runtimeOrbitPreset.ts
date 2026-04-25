@@ -10,7 +10,7 @@ import {
   resolveEditorFixedOrbitPatternId,
   sampleOrbitPatternTrackWithDynamicDistanceScale,
 } from "@3body/shared";
-import { DEFAULT_ORBIT_PRESET, type OrbitPreset } from "./orbitPresets";
+import type { OrbitPreset } from "./orbitPresets";
 import { getRuntimeTuningDocument } from "./runtimeTuning";
 
 export type RuntimeOrbitStarMotion =
@@ -162,13 +162,6 @@ const createFixedPatternSunMotion = (
 export const resolveRuntimeOrbitPreset = (
   preset: OrbitPreset,
 ): ResolvedRuntimeOrbitPreset => {
-  if (preset.id !== DEFAULT_ORBIT_PRESET.id) {
-    return {
-      preset,
-      starMotion: { mode: "physicsSeed" },
-    };
-  }
-
   const orbitTuning = getRuntimeTuningDocument().gameplay.orbits;
   const sunDistanceScale = orbitTuning.sunStartDistanceScale;
   const starMotion =

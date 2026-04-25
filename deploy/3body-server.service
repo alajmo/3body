@@ -5,20 +5,18 @@ After=network.target
 [Service]
 Type=simple
 # Replace with the user/group and paths you actually deploy with.
-User=3body
-Group=3body
-WorkingDirectory=/var/www/3body
-EnvironmentFile=-/etc/3body/3body.env
-Environment=DATA_DIR=/var/lib/3body
+User=samir
+Group=samir
+WorkingDirectory=/home/samir/3body
+EnvironmentFile=-/home/samir/3body/3body.env
+Environment=DATA_DIR=/home/samir/3body/data
 Environment=HOST=127.0.0.1
 Environment=PORT=8080
-ExecStart=/usr/local/bin/3body-server
+ExecStart=/home/samir/3body/bin/3body-server
 Restart=always
 RestartSec=3
 KillSignal=SIGTERM
 TimeoutStopSec=15
-StateDirectory=3body
-StateDirectoryMode=0750
 UMask=0077
 NoNewPrivileges=true
 

@@ -13,7 +13,6 @@ interface RuntimeViewportDefaults {
   blackHoleSettings: typeof BLACK_HOLE_SPEC;
   boostSettings: typeof BOOST_SPEC;
   cacheBadgeScale: number;
-  orbitPresetId: string | null;
   profilingEnabled: boolean;
   shieldSettings: {
     cooldownSec: number;
@@ -57,7 +56,6 @@ export const createViewportDefaultsFromRuntimeTuning =
       blackHoleSettings: { ...BLACK_HOLE_SPEC },
       boostSettings: { ...BOOST_SPEC },
       cacheBadgeScale: tuning.visuals.caches.badgeScale,
-      orbitPresetId: null,
       profilingEnabled: false,
       shieldSettings: {
         cooldownSec: SHIELD_SPEC.cooldownSec,

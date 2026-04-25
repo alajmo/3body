@@ -79,7 +79,7 @@ describe("orbitSandbox", () => {
     const preset = createTestPreset();
     const state = createSandboxState(preset);
 
-    expect(state.preset).toBe(preset);
+    expect(state.preset.id).toBe(preset.id);
     expect(state.suns).not.toBe(preset.suns);
     expect(state.planets).not.toBe(preset.planets);
 

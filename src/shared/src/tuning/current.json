@@ -414,7 +414,6 @@
     },
     "orbits": {
       "boundaryDebris": {
-        "blackHoleCollapseSec": 60,
         "coolColor": "#8ca8c7",
         "density": 5,
         "dustSize": 12,
@@ -530,7 +529,7 @@
         }
       },
       "instantDeath": true,
-      "radius": 15000
+      "radius": 18000
     },
     "blackHole": {
       "killRadius": 150,
@@ -555,11 +554,11 @@
       "starPatternDistanceScale": 9,
       "starMotion": {
         "mode": "fixedPattern",
-        "patternId": "clover-3",
+        "patternId": "equilateral-circle",
         "speed": 2
       },
       "sunStartDistanceScale": 5,
-      "planetCircleRadius": 10000,
+      "planetCircleRadius": 14000,
       "suns": [
         {
           "mass": 140000,
@@ -721,7 +720,7 @@
       },
       "boost": {
         "charges": 1,
-        "cooldownSec": 3,
+        "cooldownSec": 1,
         "depleteSec": 3,
         "magnitude": 2000
       },

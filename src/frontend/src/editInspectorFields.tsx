@@ -93,16 +93,17 @@ export function NumberField(props: {
   value: number;
 }) {
   const { label, onCommit, step, value } = props;
-  const [draft, setDraft] = useState(value.toString());
+  const safeValue = Number.isFinite(value) ? value : 0;
+  const [draft, setDraft] = useState(safeValue.toString());
 
   useEffect(() => {
-    setDraft(value.toString());
-  }, [value]);
+    setDraft(safeValue.toString());
+  }, [safeValue]);
 
   const commit = () => {
     const nextValue = Number(draft);
     if (!Number.isFinite(nextValue)) {
-      setDraft(value.toString());
+      setDraft(safeValue.toString());
       return;
     }
 

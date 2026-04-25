@@ -15,12 +15,7 @@ import {
 import {
   applyAbilitySettingsToSpecs as syncAbilitySettingsToSpecs,
   loadViewportSettings,
-  persistBlackHoleSettings as persistStoredBlackHoleSettings,
-  persistBoostSettings as persistStoredBoostSettings,
-  persistCacheBadgeScale as persistStoredCacheBadgeScale,
-  persistOrbitPresetId,
   persistProfilingEnabled as persistStoredProfilingEnabled,
-  persistShieldSettings as persistStoredShieldSettings,
   sanitizeAbilitySettings as sanitizeStoredAbilitySettings,
   sanitizeBlackHoleSettings as sanitizeStoredBlackHoleSettings,
   sanitizeBoostSettings as sanitizeStoredBoostSettings,
@@ -73,26 +68,21 @@ const createInitialSandboxSettingsState = (
   storage: Storage | null,
   defaultBotsEnabled: boolean,
 ): GameViewportSandboxSettingsState => {
-  const persistedSettings =
+  const tuningDefaults = createViewportDefaultsFromRuntimeTuning();
+  const profilingEnabled =
     storage !== null
-      ? loadViewportSettings(storage)
-      : createViewportDefaultsFromRuntimeTuning();
-  const storedPresetId = persistedSettings.orbitPresetId;
+      ? loadViewportSettings(storage).profilingEnabled
+      : tuningDefaults.profilingEnabled;
 
   return {
-    activePreset:
-      (storedPresetId !== null
-        ? ORBIT_PRESET_BY_ID.get(storedPresetId)
-        : undefined) ?? DEFAULT_ORBIT_PRESET,
-    blackHoleSettings: persistedSettings.blackHoleSettings,
+    activePreset: DEFAULT_ORBIT_PRESET,
+    blackHoleSettings: tuningDefaults.blackHoleSettings,
     botsEnabled: defaultBotsEnabled,
-    boostSettings: persistedSettings.boostSettings,
-    cacheBadgeScale: persistedSettings.cacheBadgeScale,
-    profilingEnabled: sanitizeStoredProfilingEnabled(
-      persistedSettings.profilingEnabled,
-    ),
+    boostSettings: tuningDefaults.boostSettings,
+    cacheBadgeScale: tuningDefaults.cacheBadgeScale,
+    profilingEnabled: sanitizeStoredProfilingEnabled(profilingEnabled),
     sandboxPaused: false,
-    shieldSettings: persistedSettings.shieldSettings,
+    shieldSettings: tuningDefaults.shieldSettings,
   };
 };
 
@@ -138,18 +128,6 @@ export const createGameViewportSandboxSettingsStore = (
     );
   };
 
-  const persistBlackHoleSettings = () => {
-    persistStoredBlackHoleSettings(options.storage, state.blackHoleSettings);
-  };
-  const persistShieldSettings = () => {
-    persistStoredShieldSettings(options.storage, state.shieldSettings);
-  };
-  const persistBoostSettings = () => {
-    persistStoredBoostSettings(options.storage, state.boostSettings);
-  };
-  const persistCacheBadgeScale = () => {
-    persistStoredCacheBadgeScale(options.storage, state.cacheBadgeScale);
-  };
   const persistProfilingEnabled = () => {
     persistStoredProfilingEnabled(options.storage, state.profilingEnabled);
   };
@@ -165,14 +143,11 @@ export const createGameViewportSandboxSettingsStore = (
         state.shieldSettings = { ...runtimeDefaults.shieldSettings };
         state.boostSettings = { ...runtimeDefaults.boostSettings };
         syncAbilitySettingsToSpecs(state.shieldSettings, state.boostSettings);
-        persistShieldSettings();
-        persistBoostSettings();
         emitSandboxHudState();
         options.onResetSandboxRequested();
       },
       resetBlackHoleSettings: () => {
         state.blackHoleSettings = { ...BLACK_HOLE_SPEC };
-        persistBlackHoleSettings();
         emitSandboxHudState();
         options.onResetSandboxRequested();
       },
@@ -189,7 +164,6 @@ export const createGameViewportSandboxSettingsStore = (
           ...state.blackHoleSettings,
           [key]: value,
         });
-        persistBlackHoleSettings();
         emitSandboxHudState();
         options.onResetSandboxRequested();
       },
@@ -199,13 +173,11 @@ export const createGameViewportSandboxSettingsStore = (
           [key]: value,
         });
         syncAbilitySettingsToSpecs(state.shieldSettings, state.boostSettings);
-        persistBoostSettings();
         emitSandboxHudState();
         options.onResetSandboxRequested();
       },
       setCacheBadgeScale: (value) => {
         state.cacheBadgeScale = sanitizeCacheBadgeScale(value);
-        persistCacheBadgeScale();
         emitSandboxHudState();
       },
       setOrbitPreset: (presetId) => {
@@ -215,7 +187,6 @@ export const createGameViewportSandboxSettingsStore = (
         }
 
         state.activePreset = nextPreset;
-        persistOrbitPresetId(options.storage, nextPreset.id);
         emitSandboxHudState();
         options.onResetSandboxRequested();
       },
@@ -243,7 +214,6 @@ export const createGameViewportSandboxSettingsStore = (
           DEFAULT_SHIELD_SETTINGS,
         );
         syncAbilitySettingsToSpecs(state.shieldSettings, state.boostSettings);
-        persistShieldSettings();
         emitSandboxHudState();
         options.onResetSandboxRequested();
       },

@@ -7,7 +7,7 @@
     }
 
     handle {
-        root * /var/www/3body
+        root * /home/samir/3body/web
         try_files {path} /index.html
         file_server
     }

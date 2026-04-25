@@ -3,14 +3,8 @@ import { BLACK_HOLE_SPEC, BOOST_SPEC, clamp, SHIELD_SPEC } from "@3body/shared";
 import {
   DEFAULT_BOOST_SETTINGS,
   DEFAULT_CACHE_BADGE_SCALE,
-  DEFAULT_SHIELD_SETTINGS,
 } from "../viewportHud";
 
-const ORBIT_PRESET_STORAGE_KEY = "3body.orbitPresetId";
-const BLACK_HOLE_SETTINGS_STORAGE_KEY = "3body.blackHoleSettings";
-const SHIELD_SETTINGS_STORAGE_KEY = "3body.shieldSettings";
-const BOOST_SETTINGS_STORAGE_KEY = "3body.boostSettings";
-const CACHE_BADGE_SCALE_STORAGE_KEY = "3body.cacheBadgeScale";
 const PROFILING_ENABLED_STORAGE_KEY = "3body.profilingEnabled";
 
 const BLACK_HOLE_SETTING_LIMITS = {
@@ -38,12 +32,7 @@ const BOOST_SETTING_LIMITS = {
 } satisfies Record<keyof BoostSpec, { min: number; max: number }>;
 
 interface LoadedViewportSettings {
-  blackHoleSettings: BlackHoleSpec;
-  boostSettings: BoostSpec;
-  cacheBadgeScale: number;
-  orbitPresetId: string | null;
   profilingEnabled: boolean;
-  shieldSettings: AbilitySpec;
 }
 
 export const sanitizeProfilingEnabled = (value: unknown): boolean =>
@@ -155,121 +144,20 @@ export const sanitizeCacheBadgeScale = (value: unknown): number =>
 
 export const loadViewportSettings = (
   storage: Storage | null,
-): LoadedViewportSettings => {
-  const orbitPresetId = readStorageItem(storage, ORBIT_PRESET_STORAGE_KEY);
-  const blackHoleSettings = (() => {
-    const storedValue = readStorageItem(
-      storage,
-      BLACK_HOLE_SETTINGS_STORAGE_KEY,
-    );
+): LoadedViewportSettings => ({
+  profilingEnabled: (() => {
+    const storedValue = readStorageItem(storage, PROFILING_ENABLED_STORAGE_KEY);
     if (storedValue === null) {
-      return { ...BLACK_HOLE_SPEC };
+      return false;
     }
 
     try {
-      return sanitizeBlackHoleSettings(
-        JSON.parse(storedValue) as Partial<BlackHoleSpec>,
-      );
+      return sanitizeProfilingEnabled(JSON.parse(storedValue));
     } catch {
-      return { ...BLACK_HOLE_SPEC };
+      return false;
     }
-  })();
-  const shieldSettings = (() => {
-    const storedValue = readStorageItem(storage, SHIELD_SETTINGS_STORAGE_KEY);
-    if (storedValue === null) {
-      return { ...DEFAULT_SHIELD_SETTINGS };
-    }
-
-    try {
-      return sanitizeAbilitySettings(
-        JSON.parse(storedValue) as Partial<AbilitySpec>,
-        DEFAULT_SHIELD_SETTINGS,
-      );
-    } catch {
-      return { ...DEFAULT_SHIELD_SETTINGS };
-    }
-  })();
-  const boostSettings = (() => {
-    const storedValue = readStorageItem(storage, BOOST_SETTINGS_STORAGE_KEY);
-    if (storedValue === null) {
-      return { ...DEFAULT_BOOST_SETTINGS };
-    }
-
-    try {
-      return sanitizeBoostSettings(
-        JSON.parse(storedValue) as Partial<BoostSpec>,
-      );
-    } catch {
-      return { ...DEFAULT_BOOST_SETTINGS };
-    }
-  })();
-
-  return {
-    blackHoleSettings,
-    boostSettings,
-    cacheBadgeScale: sanitizeCacheBadgeScale(
-      Number(readStorageItem(storage, CACHE_BADGE_SCALE_STORAGE_KEY)),
-    ),
-    orbitPresetId,
-    profilingEnabled: (() => {
-      const storedValue = readStorageItem(
-        storage,
-        PROFILING_ENABLED_STORAGE_KEY,
-      );
-      if (storedValue === null) {
-        return false;
-      }
-
-      try {
-        return sanitizeProfilingEnabled(JSON.parse(storedValue));
-      } catch {
-        return false;
-      }
-    })(),
-    shieldSettings,
-  };
-};
-
-export const persistOrbitPresetId = (
-  storage: Storage | null,
-  presetId: string,
-) => persistStorageItem(storage, ORBIT_PRESET_STORAGE_KEY, presetId);
-
-export const persistBlackHoleSettings = (
-  storage: Storage | null,
-  value: BlackHoleSpec,
-) =>
-  persistStorageItem(
-    storage,
-    BLACK_HOLE_SETTINGS_STORAGE_KEY,
-    JSON.stringify(value),
-  );
-
-export const persistShieldSettings = (
-  storage: Storage | null,
-  value: AbilitySpec,
-) =>
-  persistStorageItem(
-    storage,
-    SHIELD_SETTINGS_STORAGE_KEY,
-    JSON.stringify(value),
-  );
-
-export const persistBoostSettings = (
-  storage: Storage | null,
-  value: BoostSpec,
-) =>
-  persistStorageItem(
-    storage,
-    BOOST_SETTINGS_STORAGE_KEY,
-    JSON.stringify(value),
-  );
-
-export const persistCacheBadgeScale = (
-  storage: Storage | null,
-  value: number,
-) =>
-  persistStorageItem(storage, CACHE_BADGE_SCALE_STORAGE_KEY, value.toString());
+  })(),
+});
 
 export const persistProfilingEnabled = (
   storage: Storage | null,

@@ -784,17 +784,23 @@ const isEntityTouchingArenaBoundary = (
   arenaRadius: number,
 ): boolean => len(entity.pos) + entity.radius >= arenaRadius;
 
+const DEFAULT_BLACK_HOLE_COLLAPSE_SEC = 60;
+
 export const getEffectiveSandboxArenaRadius = (
   baseArenaRadius: number,
   elapsedSec: number,
   blackHoleSpec: BlackHoleSpec,
   collapseSec: number,
 ): number => {
-  if (elapsedSec < blackHoleSpec.spawnSec || collapseSec <= 0) {
+  const safeCollapseSec =
+    typeof collapseSec === "number" && Number.isFinite(collapseSec)
+      ? collapseSec
+      : DEFAULT_BLACK_HOLE_COLLAPSE_SEC;
+  if (elapsedSec < blackHoleSpec.spawnSec || safeCollapseSec <= 0) {
     return baseArenaRadius;
   }
   const elapsedSinceSpawn = elapsedSec - blackHoleSpec.spawnSec;
-  const factor = Math.max(0, 1 - elapsedSinceSpawn / collapseSec);
+  const factor = Math.max(0, 1 - elapsedSinceSpawn / safeCollapseSec);
   return baseArenaRadius * factor;
 };
 
