@@ -2761,11 +2761,20 @@ body {
   border-radius: 0;
   background: repeating-linear-gradient(
     90deg,
-    #ff7db8 0 8px,
-    #8ee0ff 8px 16px,
-    #fff0c4 16px 24px
+    #5a2c42 0 8px,
+    #305563 8px 16px,
+    #645a44 16px 24px
   );
   box-shadow: none;
+}
+
+.combat-hud--mode-vhs .ability-card__meter-fill {
+  background: repeating-linear-gradient(
+    90deg,
+    #361926 0 8px,
+    #1a323d 8px 16px,
+    #3b3527 16px 24px
+  );
 }
 
 .combat-hud--mode-vhs .ability-card.ability-card--compact .ability-card__meter {
@@ -4151,14 +4160,14 @@ section.sandbox-panel--dock {
   border-radius: inherit;
   background: linear-gradient(
     90deg,
-    var(--planet-bar-accent, #8ed8ff),
-    rgba(255, 255, 255, 0.9)
+    color-mix(in srgb, var(--planet-bar-accent, #8ed8ff) 78%, #0a0e16),
+    color-mix(in srgb, var(--planet-bar-accent, #8ed8ff) 88%, #1a2230)
   );
-  box-shadow: 0 0 calc(14px * var(--planet-bar-pulse, 0))
+  box-shadow: 0 0 calc(10px * var(--planet-bar-pulse, 0))
     color-mix(
       in srgb,
       var(--planet-bar-accent, #8ed8ff)
-        calc(28% + var(--planet-bar-pulse, 0) * 58%),
+        calc(16% + var(--planet-bar-pulse, 0) * 38%),
       transparent
     );
 }
@@ -4327,6 +4336,16 @@ section.sandbox-panel--dock {
   border-radius: inherit;
   background: linear-gradient(90deg, #c40d0d, #ff3b3b);
   box-shadow: 0 0 calc(18px * var(--cockpit-hit, 0)) rgba(255, 60, 60, 0.42);
+}
+
+.combat-hud .cockpit-summary .cockpit-summary__fill {
+  background: linear-gradient(90deg, #c40d0d, #ff3b3b);
+  box-shadow: 0 0 calc(18px * var(--cockpit-hit, 0)) rgba(255, 60, 60, 0.42);
+}
+
+.combat-hud--mode-vhs .cockpit-summary .cockpit-summary__fill {
+  background: linear-gradient(90deg, #3d0808, #5e1414);
+  box-shadow: 0 0 calc(8px * var(--cockpit-hit, 0)) rgba(94, 20, 20, 0.22);
 }
 
 .movement-hud {
@@ -4666,11 +4685,11 @@ section.sandbox-panel--dock {
     filter 160ms ease;
   background: linear-gradient(
     90deg,
-    color-mix(in srgb, var(--ability-accent, #8ed8ff) 72%, white),
-    color-mix(in srgb, var(--ability-accent, #8ed8ff) 92%, white)
+    color-mix(in srgb, var(--ability-accent, #8ed8ff) 70%, #0a0e16),
+    color-mix(in srgb, var(--ability-accent, #8ed8ff) 88%, #14202c)
   );
-  box-shadow: 0 0 16px
-    color-mix(in srgb, var(--ability-accent, #8ed8ff) 36%, transparent);
+  box-shadow: 0 0 10px
+    color-mix(in srgb, var(--ability-accent, #8ed8ff) 18%, transparent);
 }
 
 .ability-card--ready .ability-card__meter-fill {
@@ -4991,12 +5010,12 @@ section.sandbox-panel--dock {
 .combat-hud .ability-card__meter-fill {
   background: linear-gradient(
     90deg,
-    color-mix(in srgb, var(--meter-accent, #8ed8ff) 55%, #06090f),
-    var(--meter-accent, #8ed8ff)
+    color-mix(in srgb, var(--meter-accent, #8ed8ff) 45%, #06090f),
+    color-mix(in srgb, var(--meter-accent, #8ed8ff) 80%, #0d1622)
   );
   box-shadow:
-    0 0 8px color-mix(in srgb, var(--meter-accent, #8ed8ff) 45%, transparent),
-    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+    0 0 6px color-mix(in srgb, var(--meter-accent, #8ed8ff) 26%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 
 .combat-hud .ability-card--ready .ability-card__status {
