@@ -724,7 +724,7 @@
         "charges": 1,
         "cooldownSec": 1,
         "depleteSec": 3,
-        "magnitude": 1500
+        "magnitude": 1000
       },
       "gravityPulse": {
         "force": 3000,

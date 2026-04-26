@@ -12,6 +12,13 @@ if (appElement === null) {
 
 console.log("[frontend] @3body/shared loaded", { arenaRadius: ARENA_RADIUS });
 
+if (import.meta.env.PROD) {
+  const widget = document.createElement("script");
+  widget.async = true;
+  widget.src = "https://vibej.am/2026/widget.js";
+  document.body.appendChild(widget);
+}
+
 const initialPathname = window.location.pathname || "/";
 const initialTuningMode = initialPathname.startsWith("/offline")
   ? "offline"

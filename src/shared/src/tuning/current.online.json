@@ -717,14 +717,14 @@
     "abilities": {
       "shield": {
         "cooldownSec": 15,
-        "durationSec": 4,
-        "arcDeg": 120
+        "durationSec": 6,
+        "arcDeg": 160
       },
       "boost": {
         "charges": 1,
         "cooldownSec": 1,
         "depleteSec": 3,
-        "magnitude": 2000
+        "magnitude": 1000
       },
       "gravityPulse": {
         "force": 3000,

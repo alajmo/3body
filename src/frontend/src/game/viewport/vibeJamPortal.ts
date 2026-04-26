@@ -13,9 +13,9 @@ import {
 } from "three/webgpu";
 
 const PORTAL_DEFAULT_URL = "https://vibejam.cc/portal/2026";
-const PORTAL_DEFAULT_RADIUS = 90;
-const PORTAL_DEFAULT_TUBE = 14;
-const PORTAL_DEFAULT_TRIGGER_RADIUS = 70;
+const PORTAL_DEFAULT_RADIUS = 180;
+const PORTAL_DEFAULT_TUBE = 28;
+const PORTAL_DEFAULT_TRIGGER_RADIUS = 140;
 const PORTAL_RING_COLOR = 0x9b5cff;
 const PORTAL_GLOW_COLOR = 0xc8a8ff;
 const PORTAL_LABEL_TEXT = "VIBE JAM 2026";
