@@ -561,6 +561,14 @@ const toBotPrivateState = (
   boostCharges: controller.boostCharges,
   gravityPulseHeld: controller.gravityPulseHeld,
   nextShieldExt: controller.nextShieldExt,
+  seekerLock:
+    controller.lockTargetId !== null &&
+    controller.seekerLockAcquiredAtTick !== null
+      ? {
+          targetId: controller.lockTargetId,
+          startedAtTick: controller.seekerLockAcquiredAtTick,
+        }
+      : null,
 });
 
 const createBotWorld = (

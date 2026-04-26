@@ -300,8 +300,6 @@ export class MatchmakingService {
 
     if (transitionEvents.length > 0) {
       this.processRoomEvents(room, transitionEvents);
-    } else if (room.phase === "lobby") {
-      this.broadcastLobbyState(room);
     } else {
       this.sendCurrentPhaseState(connection, room);
       if (room.phase === "combat" && result.participant !== undefined) {
@@ -384,30 +382,6 @@ export class MatchmakingService {
     if (admitted > 0) {
       this.broadcastWaitlistState();
     }
-  }
-
-  handleReadyToggle(connection: Connection): void {
-    const resolved = this.resolveRoomParticipant(connection);
-    if (!resolved) {
-      return;
-    }
-
-    const { room, participant } = resolved;
-    if (room.phase !== "lobby") {
-      connection.sendError(
-        "phase_invalid",
-        "readyToggle is only valid in lobby",
-      );
-      return;
-    }
-
-    if (participant.isBot) {
-      connection.sendError("invalid_action", "Bots cannot toggle ready");
-      return;
-    }
-
-    room.toggleReady(participant.playerId);
-    this.broadcastLobbyState(room);
   }
 
   handlePickArchetype(connection: Connection, archetypeId: ArchetypeId): void {
@@ -640,12 +614,8 @@ export class MatchmakingService {
       this.config.reclaimGraceMs,
     );
     if (changed) {
-      if (room.phase === "lobby") {
-        this.broadcastLobbyState(room);
-      } else {
-        this.broadcastRosterState(room);
-        this.broadcastFullSnapshots(room);
-      }
+      this.broadcastRosterState(room);
+      this.broadcastFullSnapshots(room);
     }
 
     this.drainWaitlist();
@@ -678,12 +648,8 @@ export class MatchmakingService {
     for (const room of this.#rooms.values()) {
       const changed = room.releaseExpiredReclaims(nowMs);
       if (changed) {
-        if (room.phase === "lobby") {
-          this.broadcastLobbyState(room);
-        } else {
-          this.broadcastRosterState(room);
-          this.broadcastFullSnapshots(room);
-        }
+        this.broadcastRosterState(room);
+        this.broadcastFullSnapshots(room);
       }
 
       this.processRoomEvents(room, room.advance(nowMs));
@@ -961,7 +927,6 @@ export class MatchmakingService {
   private sendCurrentPhaseState(connection: Connection, room: Room): void {
     switch (room.phase) {
       case "lobby":
-        connection.send(room.lobbyState());
         break;
       case "pick":
         connection.send(room.pickState());
@@ -995,9 +960,6 @@ export class MatchmakingService {
   private processRoomEvents(room: Room, events: RoomAdvanceEvent[]): void {
     for (const event of events) {
       switch (event) {
-        case "lobbyState":
-          this.broadcastLobbyState(room);
-          break;
         case "pickState":
           this.broadcastPickState(room);
           break;
@@ -1045,14 +1007,6 @@ export class MatchmakingService {
 
     if (!ticker.running) {
       ticker.start();
-    }
-  }
-
-  private broadcastLobbyState(room: Room): void {
-    const message = room.lobbyState();
-
-    for (const connId of room.activeConnectionIds()) {
-      this.#connections.get(connId)?.send(message);
     }
   }
 

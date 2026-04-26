@@ -10,8 +10,6 @@ import {
   type FireRocketMsg,
   type FullSnapshotMsg,
   type InputMsg,
-  type LobbyPlayerSummary,
-  type LobbyStateMsg,
   type MatchEndMsg,
   type MatchMvp,
   type MatchStats,
@@ -47,7 +45,6 @@ const snapshotWorld = (world: World): World => ({
 type RoomPhase = "lobby" | "pick" | "combat" | "ended";
 
 export type RoomAdvanceEvent =
-  | "lobbyState"
   | "pickState"
   | "combatStarted"
   | "rematchState"
@@ -153,7 +150,6 @@ interface RoomParticipant {
   seat: number;
   isBot: boolean;
   connected: boolean;
-  ready: boolean;
   connId?: string;
   resumeToken: ResumeToken;
   profileTokenHash: string;
@@ -175,7 +171,6 @@ const botNameForSeat = (seat: number): PlayerName =>
 
 export class Room {
   readonly entityIds = new EntityIdSequence();
-  readonly autoStartAtMs: number;
   readonly participants = new Map<PlayerId, RoomParticipant>();
   readonly botControllers = new Map<PlayerId, Bot>();
   readonly spectatorConnIds = new Set<string>();
@@ -215,7 +210,6 @@ export class Room {
     readonly id: string,
     readonly createdAtMs = Date.now(),
   ) {
-    this.autoStartAtMs = createdAtMs + MATCH_TIMERS.lobbySec * 1000;
     this.seed = crypto.getRandomValues(new Uint32Array(1))[0]!;
     this.rng = mulberry32(this.seed ^ 0x9e3779b9);
   }
@@ -258,7 +252,6 @@ export class Room {
       seat,
       isBot: false,
       connected: true,
-      ready: false,
       connId: input.connId,
       resumeToken: input.resumeToken,
       profileTokenHash: input.profileTokenHash,
@@ -379,28 +372,6 @@ export class Room {
       seat: participant.seat,
       isBot: participant.isBot,
     }));
-  }
-
-  lobbyState(): LobbyStateMsg {
-    const players: LobbyPlayerSummary[] = this.sortedParticipants().map(
-      (participant) => ({
-        playerId: participant.playerId,
-        name: participant.name,
-        seat: participant.seat,
-        isBot: participant.isBot,
-        connected: participant.connected,
-        ready: participant.ready,
-        archetypeId: participant.archetypeId,
-        difficulty: participant.difficulty,
-      }),
-    );
-
-    return {
-      type: "lobbyState",
-      players,
-      autoStartAtMs: this.autoStartAtMs,
-      botDifficulty: this.botDifficulty,
-    };
   }
 
   pickState(): PickStateMsg {
@@ -700,16 +671,6 @@ export class Room {
         return difficulty !== null && activePlayers.has(participant.playerId);
       })
       .map((participant) => participant.playerId);
-  }
-
-  toggleReady(playerId: PlayerId): boolean {
-    const participant = this.participants.get(playerId);
-    if (!participant || participant.isBot) {
-      return false;
-    }
-
-    participant.ready = !participant.ready;
-    return true;
   }
 
   finalizeMatch(nowMs: number, tickHz: number): boolean {
@@ -1083,7 +1044,6 @@ export class Room {
     this.pickDeadlineAtMs = nowMs + MATCH_TIMERS.pickSec * 1000;
 
     for (const participant of this.sortedParticipants()) {
-      participant.ready = false;
       participant.lockedIn = false;
       participant.archetypeId = undefined;
     }
@@ -1130,7 +1090,6 @@ export class Room {
         seat,
         isBot: true,
         connected: false,
-        ready: true,
         resumeToken: `bot:${playerId}` as ResumeToken,
         profileTokenHash: `bot:${playerId}`,
         difficulty: this.botDifficulty,

@@ -1811,7 +1811,6 @@ export const DEFAULT_GAME_TUNING: GameTuningDocument = {
     timers: {
       cycleCountdownSec: 15,
       cycleSec: 600,
-      lobbySec: 10,
       pickSec: 30,
       countdownSec: 3,
       rematchVoteSec: 20,
@@ -2405,7 +2404,6 @@ const sanitizeMatchTimerSpec = (
       1,
       30,
     ),
-    lobbySec: sanitizeInteger(source.lobbySec, fallback.lobbySec, 1, 300),
     pickSec: sanitizeInteger(source.pickSec, fallback.pickSec, 1, 300),
     rematchVoteSec: sanitizeInteger(
       source.rematchVoteSec,

@@ -214,9 +214,7 @@ describe("combatSandbox", () => {
     const focusedIndex = state.planets.findIndex(
       (planet) => planet.id === state.player.planetId,
     );
-    expect(focusedPlanet?.displayName).toBe(
-      getPlanetNameForSeat(focusedIndex),
-    );
+    expect(focusedPlanet?.displayName).toBe(getPlanetNameForSeat(focusedIndex));
   });
 
   it("uses runtime orbit tuning for the default sandbox seeds", () => {

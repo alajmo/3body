@@ -793,9 +793,7 @@ export function CombatHud({
                     type="button"
                     className="hud-button"
                     disabled={controller === null}
-                    onClick={() =>
-                      controller?.setBotsEnabled(!hud.botsEnabled)
-                    }
+                    onClick={() => controller?.setBotsEnabled(!hud.botsEnabled)}
                   >
                     {hud.botsEnabled ? "Disable AI" : "Enable AI"}
                   </button>

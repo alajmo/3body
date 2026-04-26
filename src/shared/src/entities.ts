@@ -56,6 +56,11 @@ export interface PlanetCooldowns {
   nextBoostChargeAtTick?: number;
 }
 
+export interface SeekerLockState {
+  targetId: EntityId;
+  startedAtTick: number;
+}
+
 export interface PlanetPrivateState {
   planetId: EntityId;
   ammo: PlanetPrivateAmmo;
@@ -63,6 +68,7 @@ export interface PlanetPrivateState {
   boostCharges: number;
   gravityPulseHeld: boolean;
   nextShieldExt: boolean;
+  seekerLock: SeekerLockState | null;
 }
 
 export type PlanetState = PlanetPublic & PlanetPrivateState;

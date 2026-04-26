@@ -32,6 +32,7 @@ import {
   getBoundaryAsteroidExplosionPieces,
   getBoundaryAsteroidExplosionSpeedVariance,
   getBoundaryAsteroidImpactRadius,
+  getSeekerLockTicks,
   getUmbraDragDurationTicks,
   getUmbraDragStepMultiplier,
   hasSweptCircleOverlap,
@@ -758,6 +759,69 @@ const refreshBoostLoad = (
     privateState.boostCharges >= maxBoostLoad ? undefined : 0;
 };
 
+const SEEKER_LOCK_TARGET_TOLERANCE = 96;
+
+const findSeekerLockTarget = (
+  planets: readonly PlanetPublic[],
+  selfPlanetId: number,
+  selfPos: Vec2,
+  aimDir: Vec2,
+): number | null => {
+  if (len(aimDir) === 0) {
+    return null;
+  }
+
+  let bestId: number | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+
+  for (const candidate of planets) {
+    if (candidate.id === selfPlanetId || candidate.hp <= 0) {
+      continue;
+    }
+
+    const offset = sub(candidate.pos, selfPos);
+    const forward = dot(offset, aimDir);
+    if (forward <= 0) {
+      continue;
+    }
+
+    const offsetLenSq = offset.x * offset.x + offset.y * offset.y;
+    const perpDistSq = Math.max(0, offsetLenSq - forward * forward);
+    const perpDist = Math.sqrt(perpDistSq);
+    const effectiveDistance = perpDist - candidate.radius;
+    if (
+      effectiveDistance <= SEEKER_LOCK_TARGET_TOLERANCE &&
+      effectiveDistance < bestDistance
+    ) {
+      bestDistance = effectiveDistance;
+      bestId = candidate.id;
+    }
+  }
+
+  return bestId;
+};
+
+const updateSeekerLock = (
+  privateState: PlanetPrivateState,
+  planet: PlanetPublic,
+  planets: readonly PlanetPublic[],
+  aimDir: Vec2,
+  tick: number,
+): void => {
+  const targetId = findSeekerLockTarget(planets, planet.id, planet.pos, aimDir);
+  if (targetId === null) {
+    privateState.seekerLock = null;
+    return;
+  }
+
+  if (
+    privateState.seekerLock === null ||
+    privateState.seekerLock.targetId !== targetId
+  ) {
+    privateState.seekerLock = { targetId, startedAtTick: tick };
+  }
+};
+
 const spawnRocket = (
   room: Room,
   playerId: PlayerId,
@@ -790,6 +854,19 @@ const spawnRocket = (
     return;
   }
 
+  if (rocketKind === "seeker") {
+    const lockTicks = getSeekerLockTicks();
+    const lock = privateState.seekerLock;
+    if (
+      lockTicks > 0 &&
+      (lock === null ||
+        room.tick - lock.startedAtTick < lockTicks ||
+        (targetId !== undefined && lock.targetId !== targetId))
+    ) {
+      return;
+    }
+  }
+
   const normalizedAimDir = normalizeDir(aimDir);
   const archetype = ARCHETYPES[planet.archetype];
   const oldestAllowedTick = Math.max(
@@ -816,6 +893,13 @@ const spawnRocket = (
   privateState.ammo[rocketKind] -= 1;
   privateState.cooldowns[cooldownKey] =
     room.tick + weaponReloadTicks(rocketKind, planet.archetype, tickHz);
+
+  if (rocketKind === "seeker" && privateState.seekerLock !== null) {
+    privateState.seekerLock = {
+      ...privateState.seekerLock,
+      startedAtTick: room.tick,
+    };
+  }
 
   if (
     rocketKind === "light" &&
@@ -1868,15 +1952,16 @@ const applyRocketCollisions = (
           attackerPlayerId: rocket.ownerId,
           rocketId: rocket.id,
           rocketKind: rocket.rocketKind,
-          damage: absorbedByShield ? 0 : runtime.damage,
+          damage: runtime.damage,
           hpAfter,
           absorbedByShield,
         });
 
+        room.combatRuntimeFor(rocket.ownerId).damageDealt += runtime.damage;
+
         if (absorbedByShield) {
           planets[planetIndex] = applyShieldDamage(planet, runtime.damage);
         } else {
-          room.combatRuntimeFor(rocket.ownerId).damageDealt += runtime.damage;
           planets[planetIndex] = {
             ...planet,
             hp: hpAfter,
@@ -2154,12 +2239,39 @@ const applyCooldownsAndRegen = (
   }
 };
 
+const advanceSeekerLocks = (room: Room): void => {
+  if (!room.world) {
+    return;
+  }
+
+  for (const planet of room.world.planets) {
+    const privateState = room.privateStates.get(planet.playerId);
+    if (!privateState) {
+      continue;
+    }
+    if (planet.hp <= 0) {
+      privateState.seekerLock = null;
+      continue;
+    }
+
+    const intent = room.intentFor(planet.playerId);
+    updateSeekerLock(
+      privateState,
+      planet,
+      room.world.planets,
+      intent.mouseDir,
+      room.tick,
+    );
+  }
+};
+
 const updateWorld = (room: Room, config: AppConfig): void => {
   if (!room.world) {
     return;
   }
 
   enqueueBotCombatMessages(room, config);
+  advanceSeekerLocks(room);
   applyQueuedCombatMessages(room, config);
 
   const nextTick = room.tick + 1;

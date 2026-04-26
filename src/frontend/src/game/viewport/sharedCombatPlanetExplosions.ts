@@ -6,6 +6,7 @@ import {
   type MeshBasicMaterial,
   type Vector3,
 } from "three/webgpu";
+import { playPlanetExplosionSound } from "../planetExplosionSound";
 
 const PLANET_EXPLOSION_DURATION_SEC = 1.55;
 const PLANET_EXPLOSION_FLASH_DURATION_SEC = 0.34;
@@ -372,6 +373,8 @@ export const queueSharedCombatPlanetExplosion = ({
   if (explosionVisual === null) {
     return;
   }
+
+  playPlanetExplosionSound();
 
   activePlanetExplosions.push(
     armSharedCombatPlanetExplosion({

@@ -82,6 +82,7 @@ import {
   createSharedCombatViewportLifecycle,
   createSharedCombatViewportRenderContext,
 } from "./viewport/sharedCombatViewport";
+import { createVibeJamPortal } from "./viewport/vibeJamPortal";
 import { resizeViewportCameraFrame } from "./viewport/viewportCameraFrame";
 import { screenToViewportWorld } from "./viewport/viewportScreenToWorld";
 import {
@@ -356,6 +357,16 @@ export function createGameViewport(
           });
           const { reticleDotMesh, reticleRingMesh } = visualResources;
 
+          const vibeJamPortal = createVibeJamPortal({
+            scene,
+            position: { x: ARENA_RADIUS * 0.7, y: 0 },
+          });
+          disposables.push({
+            dispose: () => {
+              vibeJamPortal.dispose();
+            },
+          });
+
           const simulationState =
             createLocalSandboxSimulationState(initialState);
           const runtimeAdapter =
@@ -529,6 +540,12 @@ export function createGameViewport(
                   0,
                 );
               }
+              vibeJamPortal.update(
+                simulationFrame.playerPlanet?.alive
+                  ? simulationFrame.playerPlanet.pos
+                  : null,
+                nowSec,
+              );
 
               if (restartOnDeath && !sandboxPaused) {
                 const playerDead =

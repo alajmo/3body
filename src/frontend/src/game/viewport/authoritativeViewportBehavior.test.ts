@@ -47,6 +47,7 @@ describe("authoritativeViewportBehavior", () => {
     gravityPulseHeld: false,
     nextShieldExt: false,
     planetId: 1,
+    seekerLock: null,
     ...overrides,
   });
 
@@ -147,6 +148,7 @@ describe("authoritativeViewportBehavior", () => {
         gravityPulseHeld: false,
         nextShieldExt: false,
         planetId: playerPlanet.id,
+        seekerLock: null,
       },
       shieldAimSendIntervalMs: inputSendIntervalMs,
       timeMs: inputSendIntervalMs + 1,
@@ -206,6 +208,7 @@ describe("authoritativeViewportBehavior", () => {
         gravityPulseHeld: false,
         nextShieldExt: false,
         planetId: playerPlanet.id,
+        seekerLock: null,
       },
       shieldAimSendIntervalMs: inputSendIntervalMs,
       timeMs: inputSendIntervalMs + 1,

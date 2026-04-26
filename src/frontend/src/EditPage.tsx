@@ -16,7 +16,14 @@ import {
   sanitizeGameTuning,
   type TuningMode,
 } from "@3body/shared";
-import { startTransition, useEffect, useMemo, useRef, useState } from "react";
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { EditGameViewportPanel } from "./EditGameViewportPanel";
 import { EditorPreviewStage } from "./EditorPreviewStage";
 import {
@@ -322,6 +329,82 @@ const AI_GAMEPLAY_DIFFICULTIES = [
 
 const formatBotDifficultyLabel = (difficulty: BotDifficulty): string =>
   difficulty.charAt(0).toUpperCase() + difficulty.slice(1);
+
+const AI_GAMEPLAY_DIFFICULTY_STORAGE_KEY = "3body.editor.aiGameplayDifficulty";
+
+const loadStoredAiGameplayDifficulty = (): BotDifficulty => {
+  if (typeof window === "undefined") {
+    return "normal";
+  }
+  try {
+    const stored = window.localStorage.getItem(
+      AI_GAMEPLAY_DIFFICULTY_STORAGE_KEY,
+    );
+    if (
+      stored !== null &&
+      (BOT_DIFFICULTY_VALUES as readonly string[]).includes(stored)
+    ) {
+      return stored as BotDifficulty;
+    }
+  } catch {
+    // localStorage may be unavailable (e.g. private mode); fall through to default
+  }
+  return "normal";
+};
+
+const AI_GAMEPLAY_PARTICIPANT_COUNT_STORAGE_KEY =
+  "3body.editor.aiGameplayParticipantCount";
+
+const loadStoredAiGameplayParticipantCount = (): number => {
+  if (typeof window === "undefined") {
+    return AI_GAMEPLAY_MAX_PARTICIPANTS;
+  }
+  try {
+    const stored = window.localStorage.getItem(
+      AI_GAMEPLAY_PARTICIPANT_COUNT_STORAGE_KEY,
+    );
+    if (stored !== null) {
+      const parsed = Number.parseInt(stored, 10);
+      if (Number.isFinite(parsed)) {
+        return Math.min(
+          AI_GAMEPLAY_MAX_PARTICIPANTS,
+          Math.max(AI_GAMEPLAY_MIN_PARTICIPANTS, parsed),
+        );
+      }
+    }
+  } catch {
+    // localStorage may be unavailable; fall through to default
+  }
+  return AI_GAMEPLAY_MAX_PARTICIPANTS;
+};
+
+const persistAiGameplayParticipantCount = (count: number): void => {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(
+      AI_GAMEPLAY_PARTICIPANT_COUNT_STORAGE_KEY,
+      String(count),
+    );
+  } catch {
+    // ignore quota / availability errors
+  }
+};
+
+const persistAiGameplayDifficulty = (difficulty: BotDifficulty): void => {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(
+      AI_GAMEPLAY_DIFFICULTY_STORAGE_KEY,
+      difficulty,
+    );
+  } catch {
+    // ignore quota / availability errors
+  }
+};
 
 type NumericFieldConfig<Key extends string> = {
   key: Key;
@@ -1524,10 +1607,14 @@ export function EditPage({ mode }: { mode: TuningMode }) {
   const [_saveError, setSaveError] = useState<string | null>(null);
   const [previewResetRevision, setPreviewResetRevision] = useState(0);
   const [aiGameplayParticipantCount, setAiGameplayParticipantCount] = useState(
-    AI_GAMEPLAY_MAX_PARTICIPANTS,
+    loadStoredAiGameplayParticipantCount,
   );
-  const [aiGameplayDifficulty, setAiGameplayDifficulty] =
-    useState<BotDifficulty>("normal");
+  const [aiGameplayDifficulty, setAiGameplayDifficultyState] =
+    useState<BotDifficulty>(loadStoredAiGameplayDifficulty);
+  const setAiGameplayDifficulty = useCallback((difficulty: BotDifficulty) => {
+    persistAiGameplayDifficulty(difficulty);
+    setAiGameplayDifficultyState(difficulty);
+  }, []);
   const [aiGameplayController, setAiGameplayController] =
     useState<GameViewportController | null>(null);
   const [aiGameplayFullscreen, setAiGameplayFullscreen] = useState(false);
@@ -5499,13 +5586,13 @@ export function EditPage({ mode }: { mode: TuningMode }) {
     [aiGameplayDifficulty, aiGameplayParticipantCount],
   );
   const setClampedAiGameplayParticipantCount = (value: number) => {
-    setAiGameplayParticipantCount(
-      clamp(
-        Math.round(value),
-        AI_GAMEPLAY_MIN_PARTICIPANTS,
-        AI_GAMEPLAY_MAX_PARTICIPANTS,
-      ),
+    const clamped = clamp(
+      Math.round(value),
+      AI_GAMEPLAY_MIN_PARTICIPANTS,
+      AI_GAMEPLAY_MAX_PARTICIPANTS,
     );
+    persistAiGameplayParticipantCount(clamped);
+    setAiGameplayParticipantCount(clamped);
   };
   const toggleAiGameplayPlayback = () => {
     if (aiGameplayController === null) {

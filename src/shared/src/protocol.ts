@@ -48,17 +48,6 @@ export interface RoomRosterEntry {
   isBot: boolean;
 }
 
-export interface LobbyPlayerSummary {
-  playerId: PlayerId;
-  name: PlayerName;
-  seat: number;
-  isBot: boolean;
-  connected: boolean;
-  ready: boolean;
-  archetypeId?: ArchetypeId;
-  difficulty?: BotDifficulty;
-}
-
 export interface PickEntry {
   playerId: PlayerId;
   archetypeId?: ArchetypeId;
@@ -254,10 +243,6 @@ export interface PickArchetypeMsg {
   id: ArchetypeId;
 }
 
-export interface ReadyToggleMsg {
-  type: "readyToggle";
-}
-
 export interface InputMsg {
   type: "input";
   mouseDir: Vec2;
@@ -312,7 +297,6 @@ export interface RejoinMsg {
 export type ClientMsg =
   | HelloMsg
   | PickArchetypeMsg
-  | ReadyToggleMsg
   | InputMsg
   | AckSnapshotMsg
   | PingMsg
@@ -344,13 +328,6 @@ export interface PongMsg {
   id: string;
   clientSentAtMs: number;
   serverSentAtMs: number;
-}
-
-export interface LobbyStateMsg {
-  type: "lobbyState";
-  players: LobbyPlayerSummary[];
-  autoStartAtMs: number;
-  botDifficulty: BotDifficulty;
 }
 
 export interface PickStateMsg {
@@ -436,7 +413,6 @@ export type ServerMsg =
   | WelcomeMsg
   | ErrorMsg
   | PongMsg
-  | LobbyStateMsg
   | PickStateMsg
   | FullSnapshotMsg
   | DeltaSnapshotMsg

@@ -25,6 +25,7 @@ import {
   findAbsorbingNeutronStar,
   getNeutronStarAbsorptionExplosionRadius,
 } from "../neutronStarAbsorption";
+import { playRocketFireSound } from "../rocketFireSound";
 import { getRuntimeTuningDocument } from "../runtimeTuning";
 import {
   CAMERA_SHAKE_DURATION_SEC,
@@ -399,6 +400,18 @@ export const runLocalSandboxSimulationFrame = ({
       blackHoleSettings,
     );
     inputController?.clearStepScopedRequests();
+    if (fireRequestedThisStep) {
+      const playerId = nextState.player.playerId;
+      for (const burst of nextState.launchBursts) {
+        if (
+          burst.startedAtTick === nextState.tick &&
+          burst.ownerId === playerId
+        ) {
+          playRocketFireSound();
+          break;
+        }
+      }
+    }
     simulationState.previousState = simulationState.currentState;
     simulationState.currentState = nextState;
     const currentSunIds = new Set(

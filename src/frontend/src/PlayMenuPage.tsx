@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 
 const ZOOM_DURATION_MS = 1100;
+const INTRO_MUSIC_SRC = "/sounds/intro.ogg";
+const INTRO_MUSIC_VOLUME = 0.20;
 
 const navigate = (href: string) => {
   window.history.pushState({}, "", href);
@@ -10,12 +12,44 @@ const navigate = (href: string) => {
 export function PlayMenuPage() {
   const [zoomTarget, setZoomTarget] = useState<string | null>(null);
   const timeoutRef = useRef<number | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     return () => {
       if (timeoutRef.current !== null) {
         window.clearTimeout(timeoutRef.current);
       }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof Audio === "undefined") {
+      return;
+    }
+    const audio = new Audio(INTRO_MUSIC_SRC);
+    audio.loop = true;
+    audio.volume = INTRO_MUSIC_VOLUME;
+    audioRef.current = audio;
+
+    const tryPlay = () => {
+      void audio.play().catch(() => {});
+    };
+
+    tryPlay();
+    const startOnInteract = () => {
+      tryPlay();
+      window.removeEventListener("pointerdown", startOnInteract);
+      window.removeEventListener("keydown", startOnInteract);
+    };
+    window.addEventListener("pointerdown", startOnInteract);
+    window.addEventListener("keydown", startOnInteract);
+
+    return () => {
+      window.removeEventListener("pointerdown", startOnInteract);
+      window.removeEventListener("keydown", startOnInteract);
+      audio.pause();
+      audio.src = "";
+      audioRef.current = null;
     };
   }, []);
 

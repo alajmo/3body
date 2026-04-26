@@ -256,6 +256,7 @@ const createPlanet = (
       boostCharges,
       gravityPulseHeld: false,
       nextShieldExt: false,
+      seekerLock: null,
     },
   };
 };

@@ -681,18 +681,18 @@
     },
     "rockets": {
       "light": {
-        "damage": 15,
+        "damage": 5,
         "lockSec": 0,
         "maxAmmo": 5,
         "radius": 50,
-        "reloadSec": 0.5,
+        "reloadSec": 2,
         "speed": 4000,
         "startAmmo": 5,
         "turnRate": 10,
         "ttlSec": 8
       },
       "heavy": {
-        "damage": 70,
+        "damage": 20,
         "lockSec": 0,
         "maxAmmo": 2,
         "radius": 14,
@@ -703,13 +703,13 @@
         "ttlSec": 8
       },
       "seeker": {
-        "damage": 35,
-        "lockSec": 1,
-        "maxAmmo": 3,
+        "damage": 10,
+        "lockSec": 0.5,
+        "maxAmmo": 2,
         "radius": 12,
-        "reloadSec": 4,
+        "reloadSec": 3,
         "speed": 3500,
-        "startAmmo": 3,
+        "startAmmo": 2,
         "turnRate": 2.356194490192345,
         "ttlSec": 8
       }
@@ -717,14 +717,14 @@
     "abilities": {
       "shield": {
         "cooldownSec": 15,
-        "durationSec": 4,
-        "arcDeg": 120
+        "durationSec": 6,
+        "arcDeg": 160
       },
       "boost": {
         "charges": 1,
         "cooldownSec": 1,
         "depleteSec": 3,
-        "magnitude": 2000
+        "magnitude": 1500
       },
       "gravityPulse": {
         "force": 3000,
@@ -741,7 +741,6 @@
       "cycleCountdownSec": 15,
       "cycleSec": 600,
       "countdownSec": 3,
-      "lobbySec": 3,
       "pickSec": 30,
       "rematchVoteSec": 20,
       "spawnInvulnSec": 3

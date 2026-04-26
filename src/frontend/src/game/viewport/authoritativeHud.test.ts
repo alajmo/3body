@@ -93,6 +93,7 @@ const createSelf = (): PlanetPrivateState =>
     },
     gravityPulseHeld: false,
     nextShieldExt: false,
+    seekerLock: null,
   }) satisfies PlanetPrivateState;
 
 const createPlayerPlanet = (): PlanetPublic =>

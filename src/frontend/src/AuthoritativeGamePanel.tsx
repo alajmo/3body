@@ -8,12 +8,10 @@ import {
   type EventMsg,
   encodeProtocolMessage,
   type FullSnapshotMsg,
-  type LobbyStateMsg,
   type MatchEndMsg,
   type PickStateMsg,
   type PongMsg,
   type RematchStateMsg,
-  ROOM_CAPACITY,
   type RosterStateMsg,
   SIM_HZ,
   type SnapshotV2Msg,
@@ -71,7 +69,6 @@ const readStoredViewportProfilingEnabled = (): boolean => {
 interface MatchPanelUiState {
   connectionError: string | null;
   connectionState: AuthoritativeMatchRuntimeState["connectionState"];
-  lobbyState: AuthoritativeMatchRuntimeState["lobbyState"];
   matchEnd: AuthoritativeMatchRuntimeState["matchEnd"];
   phase: AuthoritativeMatchRuntimeState["phase"];
   pickState: AuthoritativeMatchRuntimeState["pickState"];
@@ -168,7 +165,6 @@ const snapshotUiState = (
 ): MatchPanelUiState => ({
   connectionError: runtime.connectionError,
   connectionState: runtime.connectionState,
-  lobbyState: runtime.lobbyState,
   matchEnd: runtime.matchEnd,
   phase: runtime.phase,
   pickState: runtime.pickState,
@@ -224,7 +220,6 @@ const areMatchPanelUiStatesEqual = (
 ): boolean =>
   current.connectionError === next.connectionError &&
   current.connectionState === next.connectionState &&
-  current.lobbyState === next.lobbyState &&
   current.matchEnd === next.matchEnd &&
   current.phase === next.phase &&
   current.pickState === next.pickState &&
@@ -300,18 +295,6 @@ const describePhase = (uiState: MatchPanelUiState, nowMs: number) => {
         body: "Rejoining the current room with the stored resume token.",
         eyebrow: "Network Runtime",
         title: "Reconnecting",
-      };
-    case "lobby":
-      return {
-        body:
-          uiState.lobbyState === null
-            ? "Waiting for lobby state."
-            : `${uiState.lobbyState.players.length} pilots staged. Auto-start in ${formatCountdown(
-                uiState.lobbyState.autoStartAtMs,
-                nowMs,
-              )}.`,
-        eyebrow: "Lobby",
-        title: uiState.roomId ?? "Public Room",
       };
     case "pick":
       return {
@@ -714,7 +697,6 @@ export function AuthoritativeGamePanel({
             storage.setItem(PROFILE_TOKEN_STORAGE_KEY, message.profileToken);
             storage.setItem(RESUME_TOKEN_STORAGE_KEY, message.resumeToken);
             storage.setItem(ROOM_ID_STORAGE_KEY, message.roomId);
-            runtimeRef.current.phase = "lobby";
             syncUiState();
             return;
           }
@@ -733,20 +715,6 @@ export function AuthoritativeGamePanel({
           case "rosterState": {
             const message = parsed as RosterStateMsg;
             runtimeRef.current.roomRoster = message.roster;
-            syncUiState();
-            return;
-          }
-
-          case "lobbyState": {
-            const message = parsed as LobbyStateMsg;
-            runtimeRef.current.lobbyState = message;
-            runtimeRef.current.roomRoster = message.players.map((player) => ({
-              isBot: player.isBot,
-              name: player.name,
-              playerId: player.playerId,
-              seat: player.seat,
-            }));
-            runtimeRef.current.phase = "lobby";
             syncUiState();
             return;
           }
@@ -1024,9 +992,7 @@ export function AuthoritativeGamePanel({
         return (
           <div className="match-modal-overlay">
             <section className="match-modal">
-              {uiState.phase === "lobby" ? (
-                <LobbyRoomBody lobbyState={uiState.lobbyState} nowMs={nowMs} />
-              ) : uiState.phase === "combat" ? (
+              {uiState.phase === "combat" ? (
                 <>
                   <div className="match-modal__eyebrow">Eliminated</div>
                   <h1 className="match-modal__title">Your planet is gone</h1>
@@ -1119,57 +1085,3 @@ export function AuthoritativeGamePanel({
   );
 }
 
-function LobbyRoomBody({
-  lobbyState,
-  nowMs,
-}: {
-  lobbyState: LobbyStateMsg | null;
-  nowMs: number;
-}) {
-  const playerBySeat = new Map<number, LobbyStateMsg["players"][number]>();
-  for (const player of lobbyState?.players ?? []) {
-    playerBySeat.set(player.seat, player);
-  }
-
-  const remainingSec =
-    lobbyState === null
-      ? null
-      : Math.max(0, Math.ceil((lobbyState.autoStartAtMs - nowMs) / 1000));
-
-  return (
-    <>
-      <div className="match-modal__eyebrow">Lobby</div>
-      <h1 className="match-modal__title">
-        {remainingSec === null
-          ? "Preparing match..."
-          : `Game starts in ${remainingSec}s`}
-      </h1>
-      <ol className="lobby-room__slots">
-        {Array.from({ length: ROOM_CAPACITY }, (_, index) => index + 1).map(
-          (seatNumber) => {
-            const seat = seatNumber - 1;
-            const player = playerBySeat.get(seat);
-            const isHuman = player !== undefined && !player.isBot;
-            const label = isHuman ? player.name : `Bot ${seat + 1}`;
-            return (
-              <li
-                key={`lobby-seat-${seatNumber}`}
-                className={`lobby-room__slot${
-                  isHuman ? " lobby-room__slot--filled" : ""
-                }`}
-              >
-                <span className="lobby-room__slot-index">
-                  {String(seat + 1).padStart(2, "0")}
-                </span>
-                <span className="lobby-room__slot-name">{label}</span>
-                <span className="lobby-room__slot-status">
-                  {isHuman ? "joined" : "open"}
-                </span>
-              </li>
-            );
-          },
-        )}
-      </ol>
-    </>
-  );
-}

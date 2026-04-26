@@ -196,8 +196,8 @@ describe("local sandbox held ability visuals", () => {
     const initialState = createSandboxState();
     const playerPlanetId = initialState.player.planetId;
     const targetPlanetId =
-      initialState.planets.find((planet) => planet.id !== playerPlanetId)
-        ?.id ?? null;
+      initialState.planets.find((planet) => planet.id !== playerPlanetId)?.id ??
+      null;
     if (targetPlanetId === null) {
       throw new Error("missing target planet");
     }

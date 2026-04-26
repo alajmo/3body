@@ -581,15 +581,6 @@ export class Connection {
         return;
       }
 
-      case "readyToggle":
-        if (
-          !this.enforceRateLimit("meta", "room_action", "Too many room actions")
-        ) {
-          return;
-        }
-        this.service.handleReadyToggle(this);
-        return;
-
       case "pickArchetype":
         if (!isArchetypeId(parsed.id)) {
           this.rejectInvalidMessage("Invalid archetype id", "invalid_pick");

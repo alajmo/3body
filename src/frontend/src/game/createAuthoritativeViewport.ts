@@ -1,5 +1,5 @@
 import type { ClientMsg, PlanetPublic, RocketKind, World } from "@3body/shared";
-import { clamp, lerp, SIM_HZ, SNAPSHOT_HZ } from "@3body/shared";
+import { ARENA_RADIUS, clamp, lerp, SIM_HZ, SNAPSHOT_HZ } from "@3body/shared";
 import type {
   Mesh,
   Object3D,
@@ -7,6 +7,7 @@ import type {
   WebGPURenderer,
 } from "three/webgpu";
 import type { AuthoritativeMatchRuntimeState } from "./authoritativeMatchRuntime";
+import { playRocketFireSound } from "./rocketFireSound";
 import { getRuntimeTuningDocument } from "./runtimeTuning";
 import type { ShowcaseDisplayMode } from "./showcaseDisplayMode";
 import { createViewportAnimationLoopController } from "./viewport/animationLoopController";
@@ -72,6 +73,7 @@ import {
   createSharedCombatViewportLifecycle,
   createSharedCombatViewportRenderContext,
 } from "./viewport/sharedCombatViewport";
+import { createVibeJamPortal } from "./viewport/vibeJamPortal";
 import {
   applyViewportCameraFrame,
   resizeViewportCameraFrame,
@@ -397,6 +399,16 @@ export function createAuthoritativeViewport(
             scene,
           });
 
+          const vibeJamPortal = createVibeJamPortal({
+            scene,
+            position: { x: ARENA_RADIUS * 0.7, y: 0 },
+          });
+          disposables.push({
+            dispose: () => {
+              vibeJamPortal.dispose();
+            },
+          });
+
           const emitConnectionHud = (
             timeMs: number,
             extrapolating: boolean,
@@ -699,6 +711,7 @@ export function createAuthoritativeViewport(
                   frameDeltaSec,
                 );
               }
+              vibeJamPortal.update(playerPlanet?.pos ?? null, nowSec);
               ({ cameraShake, damageFlash, hudFlicker } =
                 decayAuthoritativeFeedbackLevels({
                   cameraShake,
@@ -856,6 +869,7 @@ export function createAuthoritativeViewport(
                       targetId: seekerTargetId,
                       type: "fireRocket",
                     });
+                    playRocketFireSound();
                     lastFireSentAtTickByKind[selectedRocketKind] = actionTick;
                     ({
                       immediateCannonFlashState,

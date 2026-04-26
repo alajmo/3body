@@ -71,7 +71,6 @@ export interface NeutronStarSpec {
 export interface MatchTimerSpec {
   cycleCountdownSec: number;
   cycleSec: number;
-  lobbySec: number;
   pickSec: number;
   countdownSec: number;
   rematchVoteSec: number;

@@ -2,7 +2,6 @@ import type {
   Cache,
   Debris,
   DeltaSnapshotMsg,
-  LobbyStateMsg,
   MatchEndMsg,
   NeutronStar,
   PickStateMsg,
@@ -29,7 +28,6 @@ export type AuthoritativeMatchPhase =
   | "connecting"
   | "ended"
   | "error"
-  | "lobby"
   | "pick"
   | "reconnecting"
   | "waitlist";
@@ -71,7 +69,6 @@ export interface AuthoritativeDeathInfo {
 export interface AuthoritativeMatchRuntimeState {
   connectionError: string | null;
   connectionState: AuthoritativeConnectionState;
-  lobbyState: LobbyStateMsg | null;
   matchEnd: MatchEndMsg | null;
   nextEventId: number;
   phase: AuthoritativeMatchPhase;
@@ -431,7 +428,6 @@ export const createInitialAuthoritativeMatchRuntimeState =
   (): AuthoritativeMatchRuntimeState => ({
     connectionError: null,
     connectionState: "connecting",
-    lobbyState: null,
     matchEnd: null,
     nextEventId: 1,
     phase: "connecting",

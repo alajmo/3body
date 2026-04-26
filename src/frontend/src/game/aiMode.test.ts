@@ -75,6 +75,7 @@ const createPrivateState = (
   boostCharges: overrides.boostCharges ?? 2,
   gravityPulseHeld: overrides.gravityPulseHeld ?? false,
   nextShieldExt: overrides.nextShieldExt ?? false,
+  seekerLock: overrides.seekerLock ?? null,
 });
 
 const createWorld = (
