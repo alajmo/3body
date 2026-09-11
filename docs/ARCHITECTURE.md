@@ -31,13 +31,14 @@ App.tsx
    |                                 +--> rocketPools / rocketLaunchBurstPools
    |                                 +--> older local rocket/effects path
    |
-   +--> "/edit" --------------------> EditPage
-   |                                 |
-   |                                 v
-   |                         editor preview panels
-   |                                 |
-   |                                 +--> createModelShowcaseViewport()
-   |                                 +--> createEditorItemPreviewViewport()
+   +--> "/offline/edit" ------------> EditPage
+   +--> "/online/edit" -------------> EditPage
+                                     |
+                                     v
+                             editor preview panels
+                                     |
+                                     +--> createModelShowcaseViewport()
+                                     +--> createEditorItemPreviewViewport()
 ```
 
 ## Why `/offline` Still Matters

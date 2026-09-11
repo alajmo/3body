@@ -537,7 +537,7 @@
       "killRadius": 150,
       "mass": 50000000,
       "rampSec": 30,
-      "spawnSec": 300
+      "spawnSec": 120
     },
     "camera": {
       "gameplayCameraWorldHeight": 14000,
@@ -681,7 +681,7 @@
     },
     "rockets": {
       "light": {
-        "damage": 5,
+        "damage": 25,
         "lockSec": 0,
         "maxAmmo": 5,
         "radius": 50,
@@ -692,7 +692,7 @@
         "ttlSec": 8
       },
       "heavy": {
-        "damage": 20,
+        "damage": 70,
         "lockSec": 0,
         "maxAmmo": 2,
         "radius": 14,
@@ -703,7 +703,7 @@
         "ttlSec": 8
       },
       "seeker": {
-        "damage": 10,
+        "damage": 15,
         "lockSec": 0.5,
         "maxAmmo": 2,
         "radius": 12,
@@ -728,7 +728,7 @@
       },
       "gravityPulse": {
         "force": 3000,
-        "radius": 2000
+        "radius": 4000
       }
     },
     "cache": {
